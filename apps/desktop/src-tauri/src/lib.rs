@@ -643,6 +643,7 @@ pub fn run() {
         browser_host_proof::open,
         browser_host_proof::navigate,
         browser_host_proof::evaluate,
+        browser_host_proof::capture,
         browser_host_proof::geometry,
         browser_host_proof::close
     ]);

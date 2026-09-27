@@ -35,11 +35,13 @@ objc2-app-kit = { version = "0.3", features = [
   "NSEvent",
   "NSApplication",
   "NSButton",
+  "NSBitmapImageRep",
   "NSColor",
   "NSControl",
   "NSDockTile",
   "NSGraphics",
   "NSImage",
+  "NSImageRep",
   "NSLayoutAnchor",
   "NSLayoutConstraint",
   "NSMenu",
@@ -51,5 +53,17 @@ objc2-app-kit = { version = "0.3", features = [
   "NSWindow",
   "objc2-core-foundation",
 ] }
-objc2-foundation = { version = "0.3", features = ["NSGeometry", "NSError", "NSString"] }
+objc2-foundation = { version = "0.3", features = [
+  "NSData",
+  "NSDictionary",
+  "NSGeometry",
+  "NSError",
+  "NSString",
+] }
+objc2-web-kit = { version = "0.3", default-features = false, features = [
+  "std",
+  "WKSnapshotConfiguration",
+  "WKWebView",
+  "block2",
+] }
 raw-window-handle = "0.6"

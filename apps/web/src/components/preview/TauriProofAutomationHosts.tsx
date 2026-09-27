@@ -56,6 +56,12 @@ function TauriProofAutomationHost({ environmentId }: { readonly environmentId: E
   const closingPages = useRef(new Set<string>());
   const currentByThread = useRef(new Map<string, string>());
   const [openPages, setOpenPages] = useState<ReadonlyArray<NativePage>>([]);
+  const [captureResult, setCaptureResult] = useState<{
+    tabId: string;
+    data: string;
+    width: number;
+    height: number;
+  } | null>(null);
   const [closeResult, setCloseResult] = useState("");
   const [clientId] = useState(createPreviewAutomationClientId);
   const [connectionAtom] = useState(() => Atom.make<string | null>(null));
@@ -290,6 +296,17 @@ function TauriProofAutomationHost({ environmentId }: { readonly environmentId: E
     };
   }, [clientId, connectionId, environmentId, focusHost]);
 
+  const requestCapture = async (page: NativePage) => {
+    const image = await invoke<{ data: string; width: number; height: number }>("capture", {
+      tab: page.slot,
+    });
+    if (pages.current.get(page.tabId) !== page) return;
+    setCaptureResult({ tabId: page.tabId, ...image });
+    setCloseResult(
+      `Captured ${page.tabId} from native slot ${page.slot}: ${image.width}×${image.height}.`,
+    );
+  };
+
   const requestClose = async (page: NativePage) => {
     if (closingPages.current.has(page.tabId)) return;
     closingPages.current.add(page.tabId);
@@ -308,6 +325,7 @@ function TauriProofAutomationHost({ environmentId }: { readonly environmentId: E
       }
       await invoke("close", { tab: page.slot });
       pages.current.delete(page.tabId);
+      setCaptureResult((captured) => (captured?.tabId === page.tabId ? null : captured));
       if (currentByThread.current.get(page.threadId) === page.tabId) {
         const remaining = Array.from(pages.current.values()).find(
           (candidate) => candidate.threadId === page.threadId,
@@ -339,17 +357,34 @@ function TauriProofAutomationHost({ environmentId }: { readonly environmentId: E
       <div className="font-semibold">Agent browser proof (debug)</div>
       <div>{connectionId ? "Broker connected" : "Waiting for broker"}</div>
       {openPages.map((page) => (
-        <button
-          key={page.tabId}
-          type="button"
-          className="block underline"
-          onClick={() =>
-            void requestClose(page).catch((error: unknown) => setCloseResult(String(error)))
-          }
-        >
-          Close {page.slot}: {page.tabId}
-        </button>
+        <div key={page.tabId}>
+          <button
+            type="button"
+            className="block underline"
+            onClick={() =>
+              void requestCapture(page).catch((error: unknown) => setCloseResult(String(error)))
+            }
+          >
+            Capture {page.slot}: {page.tabId}
+          </button>
+          <button
+            type="button"
+            className="block underline"
+            onClick={() =>
+              void requestClose(page).catch((error: unknown) => setCloseResult(String(error)))
+            }
+          >
+            Close {page.slot}: {page.tabId}
+          </button>
+        </div>
       ))}
+      {captureResult ? (
+        <img
+          alt={`Native capture of ${captureResult.tabId}`}
+          className="max-h-44 max-w-full border"
+          src={`data:image/png;base64,${captureResult.data}`}
+        />
+      ) : null}
       {closeResult ? <div role="status">{closeResult}</div> : null}
     </aside>
   );

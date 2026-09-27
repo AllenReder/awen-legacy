@@ -99,7 +99,9 @@ it("keeps the native page open until the visible confirmation is accepted", asyn
       decide = resolve;
     }),
   );
-  const closeButton = renderer!.root.findByType("button");
+  const closeButton = renderer!.root
+    .findAllByType("button")
+    .find((button) => button.props.children.join("") === "Close a: tab_1")!;
 
   await act(async () => {
     closeButton.props.onClick();
@@ -124,4 +126,40 @@ it("keeps the native page open until the visible confirmation is accepted", asyn
   await act(async () => decide(true));
   expect(mocks.invoke).toHaveBeenCalledWith("close", { tab: "a" });
   expect(mocks.close).toHaveBeenCalledOnce();
+});
+
+it("shows a native capture of the second displayed Agent page", async () => {
+  mocks.open.mockResolvedValueOnce(AsyncResult.success({ tabId: "tab_2" }));
+  mocks.invoke.mockImplementation(async (command: string) =>
+    command === "evaluate"
+      ? {
+          url: "http://localhost:6933/browser-host-proof-page.html",
+          title: "Native proof page",
+          loading: false,
+          width: 430,
+          height: 510,
+        }
+      : command === "capture"
+        ? { data: "iVBORw0KGgo=", width: 430, height: 510 }
+        : undefined,
+  );
+  await act(async () => {
+    await mocks.handler!.handle({
+      requestId: "proof-open-second",
+      operation: "open",
+      threadId: ThreadId.make("proof-thread"),
+      input: { url: "http://localhost:6933/browser-host-proof-page.html", reuseExistingTab: false },
+      timeoutMs: 1_000,
+    });
+  });
+
+  const captureButton = renderer!.root
+    .findAllByType("button")
+    .find((button) => button.props.children.join("") === "Capture b: tab_2");
+  expect(captureButton).toBeDefined();
+  await act(async () => captureButton!.props.onClick());
+  expect(mocks.invoke).toHaveBeenCalledWith("capture", { tab: "b" });
+  expect(renderer!.root.findByProps({ alt: "Native capture of tab_2" }).props.src).toBe(
+    "data:image/png;base64,iVBORw0KGgo=",
+  );
 });

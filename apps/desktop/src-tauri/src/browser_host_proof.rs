@@ -7,6 +7,15 @@ use serde_json::Value;
 use std::time::Duration;
 use tauri::{AppHandle, LogicalPosition, LogicalSize, Manager, Url, WebviewBuilder, WebviewUrl};
 
+#[cfg(target_os = "macos")]
+use block2::RcBlock;
+#[cfg(target_os = "macos")]
+use objc2_app_kit::{NSBitmapImageFileType, NSBitmapImageRep, NSImage};
+#[cfg(target_os = "macos")]
+use objc2_foundation::{NSDataBase64EncodingOptions, NSDictionary, NSError};
+#[cfg(target_os = "macos")]
+use objc2_web_kit::WKWebView;
+
 fn proof_url(path: &str) -> Result<Url, String> {
     let origin = std::env::var("AWEN_PROOF_WEB_ORIGIN")
         .map_err(|_| "AWEN_PROOF_WEB_ORIGIN is missing; use the desktop dev runner".to_string())?;
@@ -125,6 +134,81 @@ pub async fn evaluate(app: AppHandle, tab: String, script: String) -> Result<Val
             .map_err(|error| error.to_string())?
             .map_err(|error| error.to_string())?;
     serde_json::from_str(&result).map_err(|error| error.to_string())
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CaptureResult {
+    data: String,
+    width: i64,
+    height: i64,
+}
+
+/// Capture the displayed child WKWebView itself, without substituting the
+/// desktop window or a second offscreen browser. The proof controller renders
+/// this PNG beside the live guest for visual comparison.
+#[tauri::command]
+pub async fn capture(app: AppHandle, tab: String) -> Result<CaptureResult, String> {
+    let guest = webview(&app, &tab)?;
+    #[cfg(target_os = "macos")]
+    {
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        guest
+            .with_webview(move |platform| {
+                let view: &WKWebView = unsafe { &*platform.inner().cast() };
+                let completion = RcBlock::new(move |image: *mut NSImage, error: *mut NSError| {
+                    let result = (|| -> Result<CaptureResult, String> {
+                        unsafe {
+                            if !error.is_null() {
+                                Err(format!(
+                                    "WKWebView snapshot failed: {}",
+                                    (*error).localizedDescription()
+                                ))
+                            } else if let Some(image) = image.as_ref() {
+                                let tiff = image
+                                    .TIFFRepresentation()
+                                    .ok_or_else(|| "Snapshot has no image data".to_string())?;
+                                let bitmap = NSBitmapImageRep::imageRepWithData(&tiff)
+                                    .ok_or_else(|| "Snapshot could not be decoded".to_string())?;
+                                let png = bitmap
+                                    .representationUsingType_properties(
+                                        NSBitmapImageFileType::PNG,
+                                        &NSDictionary::new(),
+                                    )
+                                    .ok_or_else(|| {
+                                        "Snapshot could not be encoded as PNG".to_string()
+                                    })?;
+                                Ok(CaptureResult {
+                                    data: png
+                                        .base64EncodedStringWithOptions(
+                                            NSDataBase64EncodingOptions::empty(),
+                                        )
+                                        .to_string(),
+                                    width: bitmap.pixelsWide() as i64,
+                                    height: bitmap.pixelsHigh() as i64,
+                                })
+                            } else {
+                                Err("WKWebView returned no snapshot image".to_string())
+                            }
+                        }
+                    })();
+                    let _ = sender.send(result);
+                });
+                unsafe { view.takeSnapshotWithConfiguration_completionHandler(None, &completion) };
+            })
+            .map_err(|error| error.to_string())?;
+        return tauri::async_runtime::spawn_blocking(move || {
+            receiver.recv_timeout(Duration::from_secs(10))
+        })
+        .await
+        .map_err(|error| error.to_string())?
+        .map_err(|error| error.to_string())?;
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = guest;
+        Err("Native child-webview capture has only been implemented for macOS".to_string())
+    }
 }
 
 #[derive(Serialize)]

@@ -36,6 +36,12 @@
         max-height: 45vh;
         overflow-y: auto;
       }
+      #capture-preview {
+        display: none;
+        max-width: 100%;
+        max-height: 180px;
+        border: 1px solid #9aa8b5;
+      }
     </style>
     <script type="module" src="/src/browser-host-proof.ts"></script>
   </head>
@@ -47,6 +53,8 @@
         native pages.
       </p>
       <button id="run">Run capability sequence</button>
+      <button id="capture">Capture displayed page A</button>
+      <img id="capture-preview" alt="Native capture of displayed page A" />
       <button id="cancel">Check page A is still open</button>
       <button id="close">Confirm close of page A</button>
       <button id="reopen">Reopen page A</button>

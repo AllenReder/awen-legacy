@@ -87,6 +87,22 @@ async function run(): Promise<void> {
 document.querySelector("#run")?.addEventListener("click", () => {
   void run().catch((error: unknown) => log("error", String(error)));
 });
+document.querySelector("#capture")?.addEventListener("click", () => {
+  void invoke<{ data: string; width: number; height: number }>("capture", { tab: "a" })
+    .then((result) => {
+      const preview = document.querySelector<HTMLImageElement>("#capture-preview");
+      if (preview) {
+        preview.src = `data:image/png;base64,${result.data}`;
+        preview.style.display = "block";
+      }
+      log("native page A capture", {
+        width: result.width,
+        height: result.height,
+        pngBytesApprox: Math.floor((result.data.length * 3) / 4),
+      });
+    })
+    .catch((error: unknown) => log("capture error", String(error)));
+});
 document.querySelector("#cancel")?.addEventListener("click", () => {
   // A production browser Pane asks for confirmation before releasing a page
   // under Agent control. Cancellation deliberately leaves the native guest.
