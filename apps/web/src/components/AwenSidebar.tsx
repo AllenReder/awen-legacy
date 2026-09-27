@@ -137,7 +137,7 @@ function SidebarHoverName({
       <span
         data-testid={actualTestId}
         aria-hidden="true"
-        className="pointer-events-none absolute inset-0 block truncate opacity-0 blur-[3px] transition-[opacity,filter] duration-200 ease-in-out group-hover/rename:opacity-100 group-hover/rename:blur-0 group-focus-visible/rename:opacity-100 group-focus-visible/rename:blur-0 motion-reduce:transition-none"
+        className="pointer-events-none absolute inset-0 block truncate opacity-0 blur-[3px] transition-[opacity,filter] duration-200 ease-in-out group-hover/rename:opacity-100 group-hover/rename:blur-[0px] group-focus-visible/rename:opacity-100 group-focus-visible/rename:blur-[0px] motion-reduce:transition-none"
       >
         {actualName}
       </span>
