@@ -598,26 +598,7 @@ fn set_window_background_blur(window: tauri::WebviewWindow, radius: u8) {
 }
 
 pub fn run() {
-    #[cfg(all(debug_assertions, feature = "browser-host-proof"))]
-    let commands = tauri::generate_handler![
-        read_desktop_runtime_config,
-        stop_desktop_daemon,
-        set_window_glass_enabled,
-        set_window_background_blur,
-        browser_host_proof::open,
-        browser_host_proof::navigate,
-        browser_host_proof::evaluate,
-        browser_host_proof::geometry,
-        browser_host_proof::close
-    ];
-    #[cfg(not(all(debug_assertions, feature = "browser-host-proof")))]
-    let commands = tauri::generate_handler![
-        read_desktop_runtime_config,
-        stop_desktop_daemon,
-        set_window_glass_enabled,
-        set_window_background_blur
-    ];
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(navigation_guard())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
@@ -642,8 +623,27 @@ pub fn run() {
             }
             let _ = app;
             Ok(())
-        })
-        .invoke_handler(commands)
+        });
+    #[cfg(all(debug_assertions, feature = "browser-host-proof"))]
+    let builder = builder.invoke_handler(tauri::generate_handler![
+        read_desktop_runtime_config,
+        stop_desktop_daemon,
+        set_window_glass_enabled,
+        set_window_background_blur,
+        browser_host_proof::open,
+        browser_host_proof::navigate,
+        browser_host_proof::evaluate,
+        browser_host_proof::geometry,
+        browser_host_proof::close
+    ]);
+    #[cfg(not(all(debug_assertions, feature = "browser-host-proof")))]
+    let builder = builder.invoke_handler(tauri::generate_handler![
+        read_desktop_runtime_config,
+        stop_desktop_daemon,
+        set_window_glass_enabled,
+        set_window_background_blur
+    ]);
+    builder
         .run(tauri::generate_context!())
         .expect("error while running Awen desktop");
 }
