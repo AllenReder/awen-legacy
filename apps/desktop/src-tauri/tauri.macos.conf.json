@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "bundle": {
     "macOS": {
-      "bundleVersion": "49",
+      "bundleVersion": "50",
       "signingIdentity": "-"
     }
   }
