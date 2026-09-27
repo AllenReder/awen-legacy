@@ -10,11 +10,8 @@ export interface ScrollRevealInput {
   };
   readonly paneGap: number;
   readonly canvasWidth: number;
-  readonly canvasHeight: number;
   readonly viewportWidth: number;
-  readonly viewportHeight: number;
   readonly currentScrollLeft: number;
-  readonly currentScrollTop: number;
   /**
    * Set on the commit that makes this Tab active, to the direction the incoming
    * Tab sits in: `+1` arriving from a Tab on the left, `-1` from one on the
@@ -297,38 +294,27 @@ export interface TabEntry {
 }
 
 /**
- * Advance a Tab's entry state for one reveal pass (ADR-0025).
+ * Advance a Tab's entry for one reveal pass, returning the entry that still
+ * owns the Viewport, or `null` when reveal should speak for itself (ADR-0025).
  *
  * `entryDir` is present only on the commit that activates the Tab, but the
  * entry must outlive that commit: the Tab re-runs reveal as it gains its real
  * size and as its Columns change, and each of those would otherwise pull the
  * Viewport inward to the focused Pane.
+ *
+ * The entry speaks only for that focused-Pane reveal, which it exists to
+ * suppress. It therefore ends when the user takes over — focusing another Pane,
+ * or scrolling the Viewport away from where the entry left it, since direct
+ * manipulation outranks the entry. Without the scroll check the entry would
+ * keep writing the edge back over the user's own scroll.
  */
-export function resolveTabEntry(
+export function holdTabEntry(
   current: TabEntry | null,
   entryDir: -1 | 1 | undefined,
   focusedPaneId: string,
   scrollLeft: number,
 ): TabEntry | null {
   if (entryDir !== undefined) return { dir: entryDir, focusedPaneId, settledAt: scrollLeft };
-  if (current !== null && current.focusedPaneId !== focusedPaneId) return null;
-  return current;
-}
-
-/**
- * Whether an entry still owns the Viewport, so its edge survives the reveals
- * that follow activation.
- *
- * The entry speaks only for the focused-Pane reveal, which it exists to
- * suppress. A Viewport that has left where the entry put it is the user
- * scrolling, and direct manipulation outranks the entry: it yields, so the
- * next reveal passes through instead of dragging the Viewport back.
- */
-export function shouldHoldTabEntry(
-  entry: TabEntry | null,
-  focusedPaneId: string,
-  scrollLeft: number,
-): boolean {
-  if (entry === null || entry.focusedPaneId !== focusedPaneId) return false;
-  return Math.abs(scrollLeft - entry.settledAt) < 1;
+  if (current === null || current.focusedPaneId !== focusedPaneId) return null;
+  return Math.abs(scrollLeft - current.settledAt) < 1 ? current : null;
 }

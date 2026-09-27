@@ -9,7 +9,6 @@ describe("resolveViewportIndicatorGeometry", () => {
   it("keeps the full Tab geometry when the canvas does not overflow", () => {
     expect(
       resolveViewportIndicatorGeometry(TAB, {
-        tabId: "a",
         clientWidth: 800,
         scrollWidth: 800,
         scrollLeft: 0,
@@ -21,7 +20,6 @@ describe("resolveViewportIndicatorGeometry", () => {
     // The Trailing Canvas Area: Columns end short of the Viewport edge.
     expect(
       resolveViewportIndicatorGeometry(TAB, {
-        tabId: "a",
         clientWidth: 600,
         scrollWidth: 400,
         scrollLeft: 0,
@@ -32,7 +30,6 @@ describe("resolveViewportIndicatorGeometry", () => {
   it("renders the Viewport's share of the canvas as the bar width", () => {
     // Half the canvas is visible, so the bar is half the Tab wide.
     const geometry = resolveViewportIndicatorGeometry(TAB, {
-      tabId: "a",
       clientWidth: 500,
       scrollWidth: 1000,
       scrollLeft: 0,
@@ -43,7 +40,6 @@ describe("resolveViewportIndicatorGeometry", () => {
   it("starts the bar at the Tab's left edge when scrolled fully left", () => {
     expect(
       resolveViewportIndicatorGeometry(TAB, {
-        tabId: "a",
         clientWidth: 500,
         scrollWidth: 1000,
         scrollLeft: 0,
@@ -53,7 +49,6 @@ describe("resolveViewportIndicatorGeometry", () => {
 
   it("ends the bar at the Tab's right edge when scrolled fully right", () => {
     const geometry = resolveViewportIndicatorGeometry(TAB, {
-      tabId: "a",
       clientWidth: 500,
       scrollWidth: 1000,
       scrollLeft: 500,
@@ -65,7 +60,6 @@ describe("resolveViewportIndicatorGeometry", () => {
   it("interpolates linearly between the two edges", () => {
     expect(
       resolveViewportIndicatorGeometry(TAB, {
-        tabId: "a",
         clientWidth: 500,
         scrollWidth: 1000,
         scrollLeft: 250,
@@ -76,7 +70,6 @@ describe("resolveViewportIndicatorGeometry", () => {
   it("clamps the bar to a visible minimum on a very wide canvas", () => {
     // 500/100000 of a 200px Tab rounds to 1px; the floor keeps it grabbable.
     const left = resolveViewportIndicatorGeometry(TAB, {
-      tabId: "a",
       clientWidth: 500,
       scrollWidth: 100_000,
       scrollLeft: 0,
@@ -84,7 +77,6 @@ describe("resolveViewportIndicatorGeometry", () => {
     expect(left).toEqual({ left: 100, width: MIN_VIEWPORT_BAR_WIDTH });
 
     const right = resolveViewportIndicatorGeometry(TAB, {
-      tabId: "a",
       clientWidth: 500,
       scrollWidth: 100_000,
       scrollLeft: 99_500,
@@ -95,7 +87,6 @@ describe("resolveViewportIndicatorGeometry", () => {
 
   it("never renders the bar wider than the Tab", () => {
     const geometry = resolveViewportIndicatorGeometry(TAB, {
-      tabId: "a",
       clientWidth: 999,
       scrollWidth: 1000,
       scrollLeft: 0,
@@ -106,7 +97,6 @@ describe("resolveViewportIndicatorGeometry", () => {
   it("ignores a degenerate zero-width canvas", () => {
     expect(
       resolveViewportIndicatorGeometry(TAB, {
-        tabId: "a",
         clientWidth: 0,
         scrollWidth: 0,
         scrollLeft: 0,

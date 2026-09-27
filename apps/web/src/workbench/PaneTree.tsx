@@ -41,8 +41,7 @@ import {
   animateScrollTo,
   cancelActiveScrollAnimation,
   computeScrollingRevealTarget,
-  resolveTabEntry,
-  shouldHoldTabEntry,
+  holdTabEntry,
   type TabEntry,
 } from "./scrollingAnimation";
 import { usePublishViewportMetrics } from "./viewportTracking";
@@ -159,7 +158,7 @@ export function PaneTree({ snapshot, projects = EMPTY_PROJECTS }: PaneTreeProps)
             // — creating a Tab, or one closing onto another — ends the switch
             // instead of running one, so it carries no direction and keeps
             // ordinary reveal.
-            entryDir={activeTransition?.toTabId === tab.id ? activeTransition.dir : undefined}
+            {...(activeTransition?.toTabId === tab.id ? { entryDir: activeTransition.dir } : {})}
           />
         ))}
       </div>
@@ -290,17 +289,14 @@ const TabPaneTree = memo(
         return;
       }
 
-      entryRef.current = resolveTabEntry(
+      // Scrolling away from where the entry left the Viewport is direct
+      // manipulation, and outranks the entry, so this yields on its own.
+      entryRef.current = holdTabEntry(
         entryRef.current,
         entryDir,
         tab.focusedPaneId,
         viewport.scrollLeft,
       );
-      // Scrolling away from where the entry left the Viewport is direct
-      // manipulation, and outranks the entry.
-      if (!shouldHoldTabEntry(entryRef.current, tab.focusedPaneId, viewport.scrollLeft)) {
-        entryRef.current = null;
-      }
       const heldEntry = entryRef.current;
 
       const rect = layout.rects.get(tab.focusedPaneId);
@@ -311,11 +307,8 @@ const TabPaneTree = memo(
         rect,
         paneGap,
         canvasWidth: layout.canvasWidth,
-        canvasHeight: layout.canvasHeight,
         viewportWidth: viewport.clientWidth,
-        viewportHeight: viewport.clientHeight,
         currentScrollLeft: viewport.scrollLeft,
-        currentScrollTop: viewport.scrollTop,
         ...(heldEntry === null ? {} : { entryDir: heldEntry.dir }),
       });
 

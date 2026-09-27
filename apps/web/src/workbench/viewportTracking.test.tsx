@@ -69,6 +69,15 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
+/** Mount one Tab's publisher and return its Viewport's readings when asked. */
+async function mount(viewport: ReturnType<typeof fakeViewport>, tabId: string, enabled: boolean) {
+  await act(() => {
+    renderer = create(<Host viewport={viewport.element} tabId={tabId} enabled={enabled} />, {
+      createNodeMock: () => null,
+    });
+  });
+}
+
 function Host(props: { viewport: HTMLElement; tabId: string; enabled: boolean }) {
   usePublishViewportMetrics({
     ref: { current: props.viewport },
@@ -80,11 +89,7 @@ function Host(props: { viewport: HTMLElement; tabId: string; enabled: boolean })
 
 it("publishes a mounted Scrolling Viewport under its Tab", async () => {
   const viewport = fakeViewport({ clientWidth: 500, scrollWidth: 1000, scrollLeft: 0 });
-  await act(() => {
-    renderer = create(<Host viewport={viewport.element} tabId="a" enabled />, {
-      createNodeMock: () => null,
-    });
-  });
+  await mount(viewport, "a", true);
   expect(getViewportMetrics("a")).toEqual({ clientWidth: 500, scrollWidth: 1000, scrollLeft: 0 });
 });
 
@@ -106,11 +111,7 @@ it("publishes every mounted Scrolling Tab, not just one", async () => {
 
 it("updates the published scroll offset as the Viewport scrolls", async () => {
   const viewport = fakeViewport({ clientWidth: 500, scrollWidth: 1000, scrollLeft: 0 });
-  await act(() => {
-    renderer = create(<Host viewport={viewport.element} tabId="a" enabled />, {
-      createNodeMock: () => null,
-    });
-  });
+  await mount(viewport, "a", true);
   const seen: number[] = [];
   const unsubscribe = subscribeViewportMetrics(() => {
     seen.push(getViewportMetrics("a")?.scrollLeft ?? -1);
@@ -123,11 +124,7 @@ it("updates the published scroll offset as the Viewport scrolls", async () => {
 
 it("does not notify when a scroll event reports the same offset", async () => {
   const viewport = fakeViewport({ clientWidth: 500, scrollWidth: 1000, scrollLeft: 120 });
-  await act(() => {
-    renderer = create(<Host viewport={viewport.element} tabId="a" enabled />, {
-      createNodeMock: () => null,
-    });
-  });
+  await mount(viewport, "a", true);
   let notifications = 0;
   const unsubscribe = subscribeViewportMetrics(() => {
     notifications += 1;
@@ -139,21 +136,13 @@ it("does not notify when a scroll event reports the same offset", async () => {
 
 it("publishes nothing for a Tab whose layout cannot scroll", async () => {
   const viewport = fakeViewport({ clientWidth: 500, scrollWidth: 1000, scrollLeft: 90 });
-  await act(() => {
-    renderer = create(<Host viewport={viewport.element} tabId="a" enabled={false} />, {
-      createNodeMock: () => null,
-    });
-  });
+  await mount(viewport, "a", false);
   expect(getViewportMetrics("a")).toBeNull();
 });
 
 it("keeps the last real reading while a Tab is not laid out", async () => {
   const viewport = fakeViewport({ clientWidth: 500, scrollWidth: 1000, scrollLeft: 240 });
-  await act(() => {
-    renderer = create(<Host viewport={viewport.element} tabId="a" enabled />, {
-      createNodeMock: () => null,
-    });
-  });
+  await mount(viewport, "a", true);
   // A hidden Tab is display-none, so a resize reports a zero-width box.
   viewport.resize({ clientWidth: 0, scrollWidth: 0 });
   expect(getViewportMetrics("a")?.scrollLeft).toBe(240);
@@ -161,11 +150,7 @@ it("keeps the last real reading while a Tab is not laid out", async () => {
 
 it("withdraws a Tab's reading when it unmounts", async () => {
   const viewport = fakeViewport({ clientWidth: 500, scrollWidth: 1000, scrollLeft: 0 });
-  await act(() => {
-    renderer = create(<Host viewport={viewport.element} tabId="a" enabled />, {
-      createNodeMock: () => null,
-    });
-  });
+  await mount(viewport, "a", true);
   expect(getViewportMetrics("a")).not.toBeNull();
   await act(() => renderer!.update(<Host viewport={viewport.element} tabId="a" enabled={false} />));
   expect(getViewportMetrics("a")).toBeNull();
@@ -173,11 +158,7 @@ it("withdraws a Tab's reading when it unmounts", async () => {
 
 it("stops listening once the Tab no longer publishes", async () => {
   const viewport = fakeViewport({ clientWidth: 500, scrollWidth: 1000, scrollLeft: 0 });
-  await act(() => {
-    renderer = create(<Host viewport={viewport.element} tabId="a" enabled />, {
-      createNodeMock: () => null,
-    });
-  });
+  await mount(viewport, "a", true);
   await act(() => renderer!.update(<Host viewport={viewport.element} tabId="a" enabled={false} />));
   await act(() => viewport.scrollTo(400));
   expect(getViewportMetrics("a")).toBeNull();
@@ -185,11 +166,7 @@ it("stops listening once the Tab no longer publishes", async () => {
 
 it("re-reads the Viewport's box when the canvas resizes", async () => {
   const viewport = fakeViewport({ clientWidth: 500, scrollWidth: 1000, scrollLeft: 0 });
-  await act(() => {
-    renderer = create(<Host viewport={viewport.element} tabId="a" enabled />, {
-      createNodeMock: () => null,
-    });
-  });
+  await mount(viewport, "a", true);
   // A Column resize widens the canvas without scrolling.
   viewport.resize({ clientWidth: 500, scrollWidth: 1400 });
   expect(getViewportMetrics("a")?.scrollWidth).toBe(1400);
@@ -197,11 +174,7 @@ it("re-reads the Viewport's box when the canvas resizes", async () => {
 
 it("forgets a Tab's reading when it unmounts entirely", async () => {
   const viewport = fakeViewport({ clientWidth: 500, scrollWidth: 1000, scrollLeft: 0 });
-  await act(() => {
-    renderer = create(<Host viewport={viewport.element} tabId="a" enabled />, {
-      createNodeMock: () => null,
-    });
-  });
+  await mount(viewport, "a", true);
   await act(() => renderer!.unmount());
   renderer = undefined;
   expect(getViewportMetrics("a")).toBeNull();

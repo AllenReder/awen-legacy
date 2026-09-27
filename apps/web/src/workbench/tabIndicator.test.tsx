@@ -19,6 +19,7 @@ beforeEach(() => {
   resetWorkbenchStore();
   resetTabTransitionForTest();
   resetViewportMetricsForTest();
+  // The hook reads `matchMedia`; every case here runs motion that asks for it.
 });
 
 it("renders a shared theme underbar and drops bold from the active Tab", () => {
@@ -49,8 +50,6 @@ afterEach(async () => {
 });
 
 it("lands the underbar without replaying the animation when a gesture finishes", async () => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  vi.stubGlobal("window", { matchMedia: () => ({ matches: false }) });
   const animate = vi.fn(() => ({ cancel: vi.fn() }));
   const indicator = { style: { transform: "", width: "" }, animate };
   const tabs = [0, 1].map((index) => ({
@@ -124,8 +123,6 @@ function viewportIndicator(strip: unknown, activeTabId = "a") {
 }
 
 it("spans the whole active Tab when the Scrolling canvas does not overflow", async () => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  vi.stubGlobal("window", { matchMedia: () => ({ matches: false }) });
   const indicator = { style: { transform: "", width: "" } };
   publishViewportMetrics("a", { clientWidth: 800, scrollWidth: 800, scrollLeft: 0 });
   const { Indicator } = viewportIndicator(viewportStrip());
@@ -137,8 +134,6 @@ it("spans the whole active Tab when the Scrolling canvas does not overflow", asy
 });
 
 it("narrows the active Tab's underbar to the Viewport's share of the canvas", async () => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  vi.stubGlobal("window", { matchMedia: () => ({ matches: false }) });
   const indicator = { style: { transform: "", width: "" } };
   publishViewportMetrics("a", { clientWidth: 500, scrollWidth: 1000, scrollLeft: 0 });
   const { Indicator } = viewportIndicator(viewportStrip());
@@ -151,8 +146,6 @@ it("narrows the active Tab's underbar to the Viewport's share of the canvas", as
 });
 
 it("travels the underbar across the active Tab as the Viewport scrolls", async () => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  vi.stubGlobal("window", { matchMedia: () => ({ matches: false }) });
   const indicator = { style: { transform: "", width: "" } };
   publishViewportMetrics("a", { clientWidth: 500, scrollWidth: 1000, scrollLeft: 0 });
   const { Indicator } = viewportIndicator(viewportStrip());
@@ -168,8 +161,6 @@ it("travels the underbar across the active Tab as the Viewport scrolls", async (
 });
 
 it("ignores metrics published by a different Tab", async () => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  vi.stubGlobal("window", { matchMedia: () => ({ matches: false }) });
   const indicator = { style: { transform: "", width: "" } };
   publishViewportMetrics("other", { clientWidth: 500, scrollWidth: 1000, scrollLeft: 0 });
   const { Indicator } = viewportIndicator(viewportStrip());
@@ -203,8 +194,6 @@ function publishScrolledToEnd() {
 }
 
 it("grows the bar out of the Scrolling Tab's resting position when switching to BSP", async () => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  vi.stubGlobal("window", { matchMedia: () => ({ matches: false }) });
   const indicator = { style: { transform: "", width: "" } };
   publishScrolledToEnd();
   const { Indicator } = viewportIndicator(mixedLayoutStrip(), "s");
@@ -239,8 +228,6 @@ it("grows the bar out of the Scrolling Tab's resting position when switching to 
 });
 
 it("shrinks the bar into the Scrolling Tab's resting position when switching from BSP", async () => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  vi.stubGlobal("window", { matchMedia: () => ({ matches: false }) });
   const indicator = { style: { transform: "", width: "" } };
   publishScrolledToEnd();
   const { Indicator } = viewportIndicator(mixedLayoutStrip(), "b");
@@ -270,8 +257,6 @@ it("shrinks the bar into the Scrolling Tab's resting position when switching fro
 });
 
 it("re-places the bar when the incoming Tab's Viewport scrolls mid-switch", async () => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  vi.stubGlobal("window", { matchMedia: () => ({ matches: false }) });
   const indicator = { style: { transform: "", width: "" } };
   // The Scrolling Tab's Viewport starts at the left of its canvas, so its
   // resting bar is the short one at its left edge.
