@@ -49,11 +49,8 @@ describe("computeScrollingRevealTarget", () => {
       rect: { left: 16, top: 16, width: 600, height: 800 },
       paneGap: 16,
       canvasWidth: 632,
-      canvasHeight: 832,
       viewportWidth: 1000,
-      viewportHeight: 900,
       currentScrollLeft: 0,
-      currentScrollTop: 0,
     };
     const result = computeScrollingRevealTarget(input);
     // Canvas is smaller than viewport, maxScrollLeft is 0, so targetLeft clamped to 0
@@ -77,11 +74,8 @@ describe("computeScrollingRevealTarget", () => {
       rect: { left: 100, top: 16, width: 560, height: 800 },
       paneGap: 16,
       canvasWidth: 2000,
-      canvasHeight: 832,
       viewportWidth: 1000,
-      viewportHeight: 900,
       currentScrollLeft: 50,
-      currentScrollTop: 0,
     };
     // Safe bounds are [100 - 16, 100 + 560 + 16] = [84, 676]
     // Current viewport window is [50, 1050] -> 84 >= 50 and 676 <= 1050 -> already visible!
@@ -96,11 +90,8 @@ describe("computeScrollingRevealTarget", () => {
       rect: { left: 600, top: 16, width: 560, height: 800 },
       paneGap: 16,
       canvasWidth: 2000,
-      canvasHeight: 832,
       viewportWidth: 1000,
-      viewportHeight: 900,
       currentScrollLeft: 0,
-      currentScrollTop: 0,
     };
     // Safe right is 600 + 560 + 16 = 1176. Viewport right is 0 + 1000 = 1000.
     // Must scroll right so right edge + gap aligns with viewport right edge:
@@ -116,11 +107,8 @@ describe("computeScrollingRevealTarget", () => {
       rect: { left: 300, top: 16, width: 560, height: 800 },
       paneGap: 16,
       canvasWidth: 2000,
-      canvasHeight: 832,
       viewportWidth: 1000,
-      viewportHeight: 900,
       currentScrollLeft: 400,
-      currentScrollTop: 0,
     };
     // Safe left is 300 - 16 = 284. Current scrollLeft is 400.
     // Must scroll left so left edge - gap aligns with viewport left edge:
@@ -130,17 +118,101 @@ describe("computeScrollingRevealTarget", () => {
     expect(result.targetLeft).toBe(284);
   });
 
+  it("enters at the left edge when arriving from a Tab on the left", () => {
+    // The focused Pane sits mid-canvas, so reveal alone would scroll inward.
+    // Arriving from the left enters at the edge the user was travelling away
+    // from, so the strip reads as continuing rather than jumping.
+    const input: ScrollRevealInput = {
+      isSingleColumn: false,
+      rect: { left: 900, top: 16, width: 560, height: 800 },
+      paneGap: 16,
+      canvasWidth: 2000,
+      viewportWidth: 1000,
+      currentScrollLeft: 0,
+      entryDir: 1,
+    };
+    const result = computeScrollingRevealTarget(input);
+    expect(result.targetLeft).toBe(0);
+  });
+
+  it("enters at the right edge when arriving from a Tab on the right", () => {
+    const input: ScrollRevealInput = {
+      isSingleColumn: false,
+      rect: { left: 100, top: 16, width: 560, height: 800 },
+      paneGap: 16,
+      canvasWidth: 2000,
+      viewportWidth: 1000,
+      currentScrollLeft: 0,
+      entryDir: -1,
+    };
+    const result = computeScrollingRevealTarget(input);
+    // The horizontal limit is the canvas minus the viewport.
+    expect(result.targetLeft).toBe(1000);
+  });
+
+  it("enters at the edge even when the focused Pane is already visible", () => {
+    const input: ScrollRevealInput = {
+      isSingleColumn: false,
+      rect: { left: 100, top: 16, width: 560, height: 800 },
+      paneGap: 16,
+      canvasWidth: 2000,
+      viewportWidth: 1000,
+      currentScrollLeft: 0,
+      entryDir: -1,
+    };
+    // Reveal alone would report no scroll needed; entering still moves.
+    expect(computeScrollingRevealTarget(input).needsScroll).toBe(true);
+  });
+
+  it("enters at the edge in a single-Column Tab too", () => {
+    const input: ScrollRevealInput = {
+      isSingleColumn: true,
+      rect: { left: 100, top: 16, width: 560, height: 800 },
+      paneGap: 16,
+      canvasWidth: 2000,
+      viewportWidth: 1000,
+      currentScrollLeft: 700,
+      entryDir: -1,
+    };
+    const result = computeScrollingRevealTarget(input);
+    // Centering the single Column would land at 0 - 500 + 100 = -400 -> 0,
+    // so the entry edge must win over the single-Column centering rule.
+    expect(result.targetLeft).toBe(1000);
+  });
+
+  it("keeps the reveal behaviour when no entry direction is given", () => {
+    const input: ScrollRevealInput = {
+      isSingleColumn: false,
+      rect: { left: 600, top: 16, width: 560, height: 800 },
+      paneGap: 16,
+      canvasWidth: 2000,
+      viewportWidth: 1000,
+      currentScrollLeft: 0,
+    };
+    expect(computeScrollingRevealTarget(input).targetLeft).toBe(176);
+  });
+
+  it("reports no scroll for an entry edge the Viewport is already at", () => {
+    const input: ScrollRevealInput = {
+      isSingleColumn: false,
+      rect: { left: 900, top: 16, width: 560, height: 800 },
+      paneGap: 16,
+      canvasWidth: 2000,
+      viewportWidth: 1000,
+      currentScrollLeft: 0,
+      entryDir: 1,
+    };
+    expect(computeScrollingRevealTarget(input).needsScroll).toBe(false);
+  });
+
   it("keeps targetTop at 0 because Workbench Viewport never scrolls vertically (ADR 0015)", () => {
     const input: ScrollRevealInput = {
       isSingleColumn: false,
       rect: { left: 16, top: 500, width: 560, height: 400 },
       paneGap: 16,
       canvasWidth: 1000,
-      canvasHeight: 1200,
       viewportWidth: 1000,
-      viewportHeight: 600,
       currentScrollLeft: 0,
-      currentScrollTop: 0,
     };
     const result = computeScrollingRevealTarget(input);
     expect(result.targetTop).toBe(0);

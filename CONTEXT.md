@@ -177,8 +177,10 @@ _Avoid_: Scroll offset, swipe amount
 
 **Tab indicator**:
 The theme-colored underbar beneath the active Tab in the Topbar Surface. It
-conveys the active Tab and any Tab switch progress; it is presentation chrome and
-owns neither Tab focus nor Tab order.
+conveys the active Tab, any Tab switch progress, and — on a Scrolling layout
+whose canvas overflows — how much of that canvas the Viewport shows and where in
+it the Viewport sits. It is presentation chrome and owns neither Tab focus nor
+Tab order.
 _Avoid_: Tab highlight, underline, selection bar
 
 **Pane**:
@@ -257,6 +259,13 @@ _Avoid_: Scroll bar, scrolling Split
 A first-class unit inside a Scrolling layout. It owns one width policy and a
 vertically ordered set of Panes whose shares fill the Column's height.
 _Avoid_: Split (when referring to a Scrolling layout Column)
+
+**Viewport**:
+The window onto one Tab's laid-out Panes: it holds the canvas the layout
+computes and can move that canvas horizontally in a Scrolling layout. It scrolls
+only horizontally, and its scroll position is presentation, not Tab or Pane
+state.
+_Avoid_: Scroll area, scroll pane, canvas (the canvas is what the Viewport holds)
 
 **Trailing Canvas Area**:
 The unoccupied horizontal space in a Scrolling layout extending from the right
@@ -413,9 +422,10 @@ _Avoid_: Chat wallpaper, Session background, View background
 - Splitting within an active Tab is explicit through keyboard modifiers or drag-and-drop.
 - The Workbench Viewport never scrolls vertically; vertical scrolling belongs strictly to the Content Layer of individual Panes.
 - In a Scrolling layout, the Viewport scrolls purely horizontally, and the Trailing Canvas Area beyond the rightmost Column is a valid drop target that appends a new Column at the far right.
+- The Viewport paints no native horizontal scrollbar; the Tab indicator carries its position and width instead (ADR-0025).
 - A user-navigated Tab change (click, keyboard, Layout pan, or wheel notch) presents a Sliding Tab switch; a Tab change caused by creating or closing a Tab lands instantly.
 - A Layout pan is unavailable in a BSP layout; a horizontal gesture a layout cannot consume promotes to a Sliding Tab switch instead.
-- The Tab indicator tracks the active Tab and any Tab switch progress and never spans more than one Tab's width.
+- The Tab indicator tracks the active Tab, any Tab switch progress, and — on a Scrolling layout whose canvas overflows — the Viewport's share of that canvas and its position in it. It never spans more than the active Tab's width.
 - Runtime and provider implementation details must not define Awen domain
   identity.
 - Provider-native lifecycle commands may implement Awen Session operations,

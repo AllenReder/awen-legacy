@@ -3,8 +3,11 @@
 **Status: accepted**
 
 ADR-0024 amends this decision's fixed-duration settle, two-card presentation,
-and unmodified macOS trackpad rules. The glass-compatible flat translation and
-right-button Layout pan constraints still apply.
+and unmodified macOS trackpad rules. ADR-0025 amends the "never stretches"
+rule below: the underbar now interpolates between the two Tabs' resting widths
+when those widths differ, because a Scrolling Tab's resting bar is narrower
+than its box. The glass-compatible flat translation and right-button Layout pan
+constraints still apply.
 
 The Workbench gains a unified horizontal navigation gesture built on the right mouse
 button: a right-drag inside the Workbench canvas pans a Scrolling layout, and — once
@@ -97,10 +100,16 @@ more cleanly anyway.
   ramp, use the settle easing above.
 - **Tab indicator replaces bold text.** The active Tab keeps its `bg-foreground/5`
   background but is no longer `font-medium`. A single shared underbar, 2px tall and
-  colored `--primary`, is pinned to the bottom edge of the Topbar. Its width tracks the
-  active Tab's measured width and it translates as a whole — it never stretches between
-  Tabs. It follows gesture progress directly, and animates with the Apple easing when the
-  active Tab changes without a transition (including Tab reordering and close/new).
+  colored `--primary`, is pinned to the bottom edge of the Topbar. At rest its width
+  tracks the active Tab's measured width. It follows gesture progress directly, and
+  animates with the Apple easing when the active Tab changes without a transition
+  (including Tab reordering and close/new).
+  It does not carry gesture state and never stretched _with the gesture_ — the
+  elastic drag-time stretch rejected in Context above stays rejected. ADR-0025
+  amends what its width does across a switch: the underbar interpolates position
+  and width together between the two Tabs' resting geometry. When both Tabs rest
+  at full width that is a pure translation, as before; when one is a Scrolling Tab
+  the bar grows out of, or shrinks into, that Tab's narrowing.
 - **Reduced motion skips automatic motion.** When `prefers-reduced-motion: reduce` is
   set, a Tab change lands immediately, the eased settle never runs, and the indicator
   jumps without animation. A right-drag in progress still tracks the pointer directly,

@@ -2392,8 +2392,15 @@ html[data-workbench-window-chrome] {
   overflow-y: hidden;
   overscroll-behavior-x: contain;
   background: transparent;
-  scrollbar-width: thin;
   scroll-padding: 12px;
+  /* The native horizontal bar is hidden unconditionally: the Topbar Tab
+     indicator carries the Viewport's position and width instead (ADR-0025).
+     Hiding it conditionally on overflow would feed back on itself, since
+     hiding a classic scrollbar widens the Viewport the canvas is sized from. */
+  scrollbar-width: none;
+}
+.workbench-viewport::-webkit-scrollbar {
+  display: none;
 }
 .workbench-viewport[data-layout-mode="bsp"] {
   overflow: hidden;

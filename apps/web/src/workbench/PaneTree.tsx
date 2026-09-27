@@ -41,7 +41,10 @@ import {
   animateScrollTo,
   cancelActiveScrollAnimation,
   computeScrollingRevealTarget,
+  holdTabEntry,
+  type TabEntry,
 } from "./scrollingAnimation";
+import { usePublishViewportMetrics } from "./viewportTracking";
 
 interface PaneTreeProps {
   readonly snapshot: WorkbenchSnapshot;
@@ -150,6 +153,12 @@ export function PaneTree({ snapshot, projects = EMPTY_PROJECTS }: PaneTreeProps)
             projects={projects}
             isActive={tab.id === snapshot.activeTabId}
             transitionRole={roleFor(tab.id)}
+            // A Sliding Tab switch is a navigation, so its incoming Tab knows
+            // which side it was entered from (ADR-0025). Structural activation
+            // — creating a Tab, or one closing onto another — ends the switch
+            // instead of running one, so it carries no direction and keeps
+            // ordinary reveal.
+            {...(activeTransition?.toTabId === tab.id ? { entryDir: activeTransition.dir } : {})}
           />
         ))}
       </div>
@@ -164,10 +173,12 @@ interface TabPaneTreeProps {
   readonly projects: ReadonlyArray<EnvironmentAwenProject>;
   readonly isActive: boolean;
   readonly transitionRole: TabTransitionRole;
+  /** Direction this Tab was entered from, only on the commit it became active. */
+  readonly entryDir?: -1 | 1;
 }
 
 const TabPaneTree = memo(
-  function TabPaneTree({ tab, projects, isActive, transitionRole }: TabPaneTreeProps) {
+  function TabPaneTree({ tab, projects, isActive, transitionRole, entryDir }: TabPaneTreeProps) {
     const dragState = useWorkbenchDragState();
     const previewTab =
       isActive && dragState?.phase === "dragging" && dragState.valid
@@ -180,6 +191,11 @@ const TabPaneTree = memo(
     const setFocused = useWorkbenchStore((s) => s.setFocused);
     const paneMotions = useRef(new Map<string, ReturnType<typeof createPaneRectMotion>>());
     const paneMotionSize = useRef({ width: 0, height: 0 });
+    // An entry holds the Tab at the edge it was entered from. It outlives the
+    // commit that activates the Tab — later reveals would otherwise pull the
+    // Viewport inward — and ends when the user picks a Pane, which is the point
+    // ordinary reveal speaks for.
+    const entryRef = useRef<TabEntry | null>(null);
 
     const paneGap = usePrimarySettings((s) => s.paneGap);
     const paneRadius = usePrimarySettings((s) => s.paneRadius);
@@ -204,6 +220,13 @@ const TabPaneTree = memo(
     const isInitialMountRef = useRef(true);
 
     const layout = useMemo(() => computePaneLayoutRects(tab, size, paneGap), [tab, size, paneGap]);
+
+    // The Topbar Tab indicator expresses this Tab's Viewport position
+    // (ADR-0025). Every Scrolling Tab publishes, not just the active one: a
+    // switch interpolates the underbar toward the incoming Tab's resting
+    // position, which is its Viewport's scroll position. A BSP Viewport never
+    // overflows, so it has nothing to publish.
+    usePublishViewportMetrics({ ref: viewportRef, tabId: tab.id, enabled: scrolling });
 
     const previewLayout = useMemo(
       () => (previewTab ? computePaneLayoutRects(previewTab, size, paneGap) : undefined),
@@ -266,6 +289,16 @@ const TabPaneTree = memo(
         return;
       }
 
+      // Scrolling away from where the entry left the Viewport is direct
+      // manipulation, and outranks the entry, so this yields on its own.
+      entryRef.current = holdTabEntry(
+        entryRef.current,
+        entryDir,
+        tab.focusedPaneId,
+        viewport.scrollLeft,
+      );
+      const heldEntry = entryRef.current;
+
       const rect = layout.rects.get(tab.focusedPaneId);
       if (!rect) return;
 
@@ -274,11 +307,9 @@ const TabPaneTree = memo(
         rect,
         paneGap,
         canvasWidth: layout.canvasWidth,
-        canvasHeight: layout.canvasHeight,
         viewportWidth: viewport.clientWidth,
-        viewportHeight: viewport.clientHeight,
         currentScrollLeft: viewport.scrollLeft,
-        currentScrollTop: viewport.scrollTop,
+        ...(heldEntry === null ? {} : { entryDir: heldEntry.dir }),
       });
 
       if (!target) return;
@@ -294,17 +325,28 @@ const TabPaneTree = memo(
       const isInitialMount = isInitialMountRef.current;
       isInitialMountRef.current = false;
 
-      if (!target.needsScroll) return;
+      if (!target.needsScroll) {
+        // The Viewport is already where it belongs, but the entry must record
+        // that offset, or the next pass reads the entry as abandoned.
+        if (heldEntry !== null) {
+          entryRef.current = { ...heldEntry, settledAt: viewport.scrollLeft };
+        }
+        return;
+      }
 
       if (
         isInitialMount ||
         isTabSwitch ||
+        heldEntry !== null ||
         isWindowResize ||
         window.matchMedia?.("(prefers-reduced-motion: reduce)").matches
       ) {
         cancelActiveScrollAnimation(viewport);
         viewport.scrollLeft = target.targetLeft;
         viewport.scrollTop = target.targetTop;
+        if (entryRef.current !== null) {
+          entryRef.current = { ...entryRef.current, settledAt: target.targetLeft };
+        }
         return;
       }
 
@@ -319,6 +361,7 @@ const TabPaneTree = memo(
       size,
       paneGap,
       dragState?.phase,
+      entryDir,
     ]);
 
     useEffect(() => {
