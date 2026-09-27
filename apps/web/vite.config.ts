@@ -1,4 +1,5 @@
 import * as NodeZlib from "node:zlib";
+import * as NodeURL from "node:url";
 
 import react, { reactCompilerPreset } from "@vitejs/plugin-react";
 import babel from "@rolldown/plugin-babel";
@@ -253,6 +254,18 @@ export default defineConfig(() => {
       emptyOutDir: true,
       manifest: true,
       sourcemap: sourcemapMode.build,
+      ...(process.env.AWEN_BROWSER_HOST_PROOF === "1"
+        ? {
+            rolldownOptions: {
+              input: {
+                main: NodeURL.fileURLToPath(new URL("./index.html", import.meta.url)),
+                browserProof: NodeURL.fileURLToPath(
+                  new URL("./browser-host-proof.html", import.meta.url),
+                ),
+              },
+            },
+          }
+        : {}),
     },
     test: {
       projects: [defineProject(unitTestProject)],

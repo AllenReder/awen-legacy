@@ -3,6 +3,8 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
+import { resolveDesktopDevPorts } from "../../../packages/shared/src/daemonPort.ts";
+
 const desktopRoot = NodePath.resolve(
   NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)),
   "..",
@@ -10,16 +12,38 @@ const desktopRoot = NodePath.resolve(
 const repositoryRoot = NodePath.resolve(desktopRoot, "../..");
 const developmentHome = process.env.AWEN_HOME?.trim() || NodePath.resolve(repositoryRoot, ".awen");
 const devConfig = NodePath.resolve(desktopRoot, "src-tauri/tauri.dev.conf.json");
+const browserProof = process.env.AWEN_BROWSER_HOST_PROOF === "1";
+const resolvedPorts = resolveDesktopDevPorts(process.env, repositoryRoot);
+if (resolvedPorts._tag === "invalid") {
+  console.error(`[awen] ${resolvedPorts.message}`);
+  process.exit(1);
+}
 
 const environment = {
   ...process.env,
   AWEN_HOME: process.env.AWEN_HOME?.trim() || developmentHome,
   AWEN_PORT_OFFSET: process.env.AWEN_PORT_OFFSET?.trim() || "0",
+  ...(browserProof
+    ? {
+        AWEN_PORT_OFFSET: String(resolvedPorts.ports.offset),
+        AWEN_PROOF_WEB_ORIGIN: `http://localhost:${String(resolvedPorts.ports.webPort)}`,
+        VITE_BROWSER_HOST_PROOF_AGENT:
+          process.env.AWEN_BROWSER_HOST_PROOF_AGENT === "1" ? "1" : "0",
+      }
+    : {}),
 };
 
 const build = NodeChildProcess.spawnSync(
   "pnpm",
-  ["exec", "tauri", "build", "--debug", "--config", devConfig],
+  [
+    "exec",
+    "tauri",
+    "build",
+    "--debug",
+    "--config",
+    devConfig,
+    ...(browserProof ? ["--features", "browser-host-proof"] : []),
+  ],
   {
     cwd: desktopRoot,
     env: environment,
