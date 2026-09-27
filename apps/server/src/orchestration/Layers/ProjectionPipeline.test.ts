@@ -111,13 +111,15 @@ it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("awen-projection-cu
           }>`
             SELECT
               projects.awen_project_id AS "awenProjectId",
-              workspaces.workspace_id AS "workspaceId",
+              'workspace:' || workspaces.project_id AS "workspaceId",
               workspaces.project_id AS "projectId",
-              workspaces.workspace_root AS "workspaceRoot",
+              directories.workspace_root AS "workspaceRoot",
               workspaces.role
             FROM projection_awen_projects AS projects
             INNER JOIN projection_awen_workspaces AS workspaces
               ON workspaces.awen_project_id = projects.awen_project_id
+            INNER JOIN projection_projects AS directories
+              ON directories.project_id = workspaces.project_id
           `,
           [
             {
@@ -4729,16 +4731,18 @@ it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("awen-projection-aw
           }>`
         SELECT
           projects.awen_project_id AS "awenProjectId",
-          workspaces.workspace_id AS "workspaceId",
+          'workspace:' || workspaces.project_id AS "workspaceId",
           workspaces.project_id AS "projectId",
-          workspaces.workspace_root AS "workspaceRoot",
+          directories.workspace_root AS "workspaceRoot",
           workspaces.role,
           workspaces.origin
         FROM projection_awen_projects AS projects
         INNER JOIN projection_awen_workspaces AS workspaces
           ON workspaces.awen_project_id = projects.awen_project_id
+        INNER JOIN projection_projects AS directories
+          ON directories.project_id = workspaces.project_id
         WHERE projects.awen_project_id = ${awenProjectId}
-        ORDER BY workspaces.workspace_id ASC
+        ORDER BY workspaces.project_id ASC
       `,
       );
 

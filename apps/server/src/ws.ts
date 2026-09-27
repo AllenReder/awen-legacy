@@ -532,6 +532,11 @@ const makeWsRpcLayer = (
   const awenWorkspaceRpcLayer = WsAwenWorkspaceRpcGroup.toLayer(
     Effect.gen(function* () {
       return WsAwenWorkspaceRpcGroup.of({
+        [WS_METHODS.awenWorkspaceRegister]: (input) =>
+          observeAwenWorkspaceRpcEffect(
+            WS_METHODS.awenWorkspaceRegister,
+            workspaceService.register(input),
+          ),
         [WS_METHODS.awenWorkspaceAssociate]: (input) =>
           observeAwenWorkspaceRpcEffect(
             WS_METHODS.awenWorkspaceAssociate,

@@ -3790,7 +3790,6 @@ pending_approval_requests AS (
     getAwenProjectByAwenProjectId: awenProjectRepository.getByProjectId,
     getAwenProjectById: awenProjectRepository.getProjectById,
     getAwenWorkspaceById: awenProjectRepository.getWorkspaceById,
-    updateAwenWorkspaceTitle: awenProjectRepository.updateWorkspaceTitle,
     updateAwenProjectTitle: awenProjectRepository.updateProjectTitle,
     getAwenProjectByThreadId: awenProjectRepository.getByThreadId,
     getAwenAgentSessionByThreadId: awenProjectRepository.getAgentSessionByThreadId,

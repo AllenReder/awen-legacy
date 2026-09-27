@@ -59,11 +59,13 @@ import {
   resolveTerminalSessionStatus,
 } from "./sidebar/sidebarSessionPresentation";
 import { AddWorkspaceDialog, NewWorkspaceDialog } from "./sidebar/WorkspaceDialogs";
+import { SidebarRenameDialog } from "./sidebar/SidebarRenameDialog";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { nextWorkspaceTerminalId } from "./Sidebar.logic";
 import { requestDestructiveConfirmation } from "../lib/destructiveConfirmation";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { SidebarContent, SidebarGroup } from "./ui/sidebar";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { sessionRouteForTarget } from "../workbench/deepLinks";
 import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
 import { runtimeTerminalIdForTarget, terminalTargetForRuntime } from "../workbench/sessionTarget";
@@ -100,6 +102,74 @@ function commandFailureToast(title: string, error: unknown) {
     }),
   );
 }
+
+function directoryName(path: string | undefined, fallback: string): string {
+  return (
+    path
+      ?.replace(/[\\/]+$/, "")
+      .split(/[\\/]/)
+      .pop() || fallback
+  );
+}
+
+function SidebarHoverName({
+  displayName,
+  actualName,
+  actualTestId,
+  className,
+}: {
+  readonly displayName: string;
+  readonly actualName: string;
+  readonly actualTestId?: string;
+  readonly className: string;
+}) {
+  if (displayName === actualName) {
+    return (
+      <span data-testid={actualTestId} className={className}>
+        {displayName}
+      </span>
+    );
+  }
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span className={`relative min-w-0 ${className}`}>
+            <span className="block truncate transition-[opacity,filter] duration-200 ease-in-out group-hover/rename:opacity-0 group-hover/rename:blur-[3px] group-focus-visible/rename:opacity-0 group-focus-visible/rename:blur-[3px] motion-reduce:transition-none">
+              {displayName}
+            </span>
+            <span
+              data-testid={actualTestId}
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-0 block truncate opacity-0 blur-[3px] transition-[opacity,filter] duration-200 ease-in-out group-hover/rename:opacity-100 group-hover/rename:blur-[0px] group-focus-visible/rename:opacity-100 group-focus-visible/rename:blur-[0px] motion-reduce:transition-none"
+            >
+              {actualName}
+            </span>
+          </span>
+        }
+      />
+      <TooltipPopup side="right" className="max-w-72 break-all whitespace-normal">
+        {actualName}
+      </TooltipPopup>
+    </Tooltip>
+  );
+}
+
+type SidebarRenameTarget =
+  | {
+      readonly kind: "Project";
+      readonly environmentId: EnvironmentId;
+      readonly projectId: EnvironmentAwenProject["id"];
+      readonly title: string;
+      readonly directoryName: string;
+    }
+  | {
+      readonly kind: "Workspace";
+      readonly environmentId: EnvironmentId;
+      readonly workspaceId: WorkspaceId;
+      readonly title: string;
+      readonly directoryName: string;
+    };
 
 export function projectMenuItems(input: {
   readonly canManageWorkspaces: boolean;
@@ -239,6 +309,7 @@ export function AwenSidebar() {
   const [newWorkspaceProject, setNewWorkspaceProject] = useState<EnvironmentAwenProject | null>(
     null,
   );
+  const [renameTarget, setRenameTarget] = useState<SidebarRenameTarget | null>(null);
   const [collapsedProjects, setCollapsedProjects] = useState<ReadonlySet<string>>(new Set());
   const [expandedWorkspaces, setExpandedWorkspaces] = useState<ReadonlySet<string>>(new Set());
   const [historyExpanded, setHistoryExpanded] = useState<ReadonlySet<string>>(new Set());
@@ -257,6 +328,26 @@ export function AwenSidebar() {
   const dragController = useWorkbenchDragController();
 
   const openAddProject = useCallback(() => openCommandPalette({ open: "add-project" }), []);
+
+  const submitSidebarRename = useCallback(
+    async (target: SidebarRenameTarget, title: string) => {
+      const result =
+        target.kind === "Project"
+          ? await renameProject({
+              environmentId: target.environmentId,
+              input: { projectId: target.projectId, title },
+            })
+          : await renameWorkspace({
+              environmentId: target.environmentId,
+              input: { workspaceId: target.workspaceId, title },
+            });
+      if (result._tag === "Failure") {
+        const error = squashAtomCommandFailure(result);
+        throw error instanceof Error ? error : new Error(`Could not rename ${target.kind}.`);
+      }
+    },
+    [renameProject, renameWorkspace],
+  );
 
   const toggleWorkspaceExpanded = useCallback((workspaceKey: string) => {
     setExpandedWorkspaces((current) => {
@@ -436,21 +527,21 @@ export function AwenSidebar() {
           setNewWorkspaceProject(project);
         }
         if (clicked === "rename-project") {
-          const title = window.prompt("Project name", project.title)?.trim();
-          if (!title) return;
-          void renameProject({
+          const workspace =
+            project.workspaces.find((candidate) => candidate.role === "main") ??
+            project.workspaces[0];
+          setRenameTarget({
+            kind: "Project",
             environmentId: project.environmentId,
-            input: { projectId: project.id, title },
-          }).then((result) => {
-            if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-              commandFailureToast("Could not rename project", squashAtomCommandFailure(result));
-            }
+            projectId: project.id,
+            title: project.title,
+            directoryName: directoryName(workspace?.workspaceRoot, project.title),
           });
         }
         if (clicked === "remove-project") await removeAwenProject(project);
       })();
     },
-    [removeAwenProject, renameProject, serverConfigs],
+    [removeAwenProject, serverConfigs],
   );
 
   const handleWorkspaceMenu = useCallback(
@@ -568,15 +659,12 @@ export function AwenSidebar() {
         if (clicked === "new-agent-session") newAgentSession(project, workspace);
         if (clicked === "new-terminal-session") newTerminalSession(project, workspace);
         if (clicked === "rename-workspace") {
-          const title = window.prompt("Workspace name", workspace.title)?.trim();
-          if (!title) return;
-          void renameWorkspace({
+          setRenameTarget({
+            kind: "Workspace",
             environmentId: project.environmentId,
-            input: { workspaceId: workspace.id, title },
-          }).then((result) => {
-            if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-              commandFailureToast("Could not rename Workspace", squashAtomCommandFailure(result));
-            }
+            workspaceId: workspace.id,
+            title: workspace.title,
+            directoryName: directoryName(workspace.workspaceRoot, workspace.title),
           });
         }
         if (clicked === "remove-workspace" || (clicked as string) === "remove-registration") {
@@ -619,7 +707,6 @@ export function AwenSidebar() {
       newTerminalSession,
       openTerminal,
       removeWorkspace,
-      renameWorkspace,
     ],
   );
 
@@ -700,7 +787,7 @@ export function AwenSidebar() {
                   <button
                     type="button"
                     data-testid="sidebar-project-row"
-                    className="flex h-7 w-full items-center gap-1.5 rounded-md px-2 text-left text-xs font-medium hover:bg-sidebar-row-hover"
+                    className="group/rename flex h-7 w-full items-center gap-1.5 rounded-md px-2 text-left text-xs font-medium hover:bg-sidebar-row-hover"
                     onClick={() =>
                       setCollapsedProjects((current) => {
                         const next = new Set(current);
@@ -731,7 +818,17 @@ export function AwenSidebar() {
                     ) : (
                       <FolderIcon className="size-3.5 shrink-0 text-sidebar-muted-foreground" />
                     )}
-                    <span className="min-w-0 flex-1 truncate">{project.title}</span>
+                    <SidebarHoverName
+                      displayName={project.title}
+                      actualName={directoryName(
+                        (
+                          project.workspaces.find((workspace) => workspace.role === "main") ??
+                          project.workspaces[0]
+                        )?.workspaceRoot,
+                        project.title,
+                      )}
+                      className="min-w-0 flex-1 truncate"
+                    />
                   </button>
                   {!projectCollapsed ? (
                     <div className="ms-4 flex flex-col gap-px border-s border-sidebar-border ps-1.5">
@@ -777,7 +874,7 @@ export function AwenSidebar() {
                                   project.environmentId,
                                 )}
                                 role="treeitem"
-                                className="flex min-h-7 min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 text-left text-xs text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
+                                className="group/rename flex min-h-7 min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 text-left text-xs text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
                                 onClick={() => toggleWorkspaceExpanded(workspaceKey)}
                                 onContextMenu={(event) => {
                                   event.preventDefault();
@@ -802,13 +899,15 @@ export function AwenSidebar() {
                                   {workspace.branch ||
                                     (workspace.role === "main" ? "main" : workspace.title)}
                                 </span>
-                                <span
-                                  data-testid="sidebar-workspace-dir"
-                                  className="shrink-0 text-[10px] text-sidebar-muted-foreground"
-                                >
-                                  {workspace.workspaceRoot?.split(/[\\/]/).filter(Boolean).pop() ||
-                                    workspace.title}
-                                </span>
+                                <SidebarHoverName
+                                  displayName={workspace.title}
+                                  actualName={directoryName(
+                                    workspace.workspaceRoot,
+                                    workspace.title,
+                                  )}
+                                  actualTestId="sidebar-workspace-dir"
+                                  className="max-w-[52%] shrink-0 truncate text-[10px] text-sidebar-muted-foreground"
+                                />
                               </button>
                             </div>
                             {workspaceExpanded ? (
@@ -907,6 +1006,20 @@ export function AwenSidebar() {
         }}
         onCreate={handleCreateWorkspace}
       />
+      {renameTarget !== null ? (
+        <SidebarRenameDialog
+          key={
+            renameTarget.kind === "Project"
+              ? `project:${renameTarget.projectId}`
+              : `workspace:${renameTarget.workspaceId}`
+          }
+          kind={renameTarget.kind}
+          title={renameTarget.title}
+          directoryName={renameTarget.directoryName}
+          onClose={() => setRenameTarget(null)}
+          onRename={(title) => submitSidebarRename(renameTarget, title)}
+        />
+      ) : null}
     </>
   );
 }

@@ -78,7 +78,7 @@ import { useTheme } from "../hooks/useTheme";
 import { readLocalApi } from "../localApi";
 import { desktopLocalBackendId } from "../connection/desktopLocal";
 import { filesystemEnvironment } from "../state/filesystem";
-import { projectEnvironment } from "../state/projects";
+import { workspaceEnvironment } from "../state/projects";
 import { useEnvironmentQuery } from "../state/query";
 import { sourceControlEnvironment } from "../state/sourceControl";
 import { useAtomCommand } from "../state/use-atom-command";
@@ -630,7 +630,7 @@ function OpenCommandPaletteDialog(props: {
   const isActionsOnly = deferredQuery.startsWith(">");
   const [highlightedItemValue, setHighlightedItemValue] = useState<string | null>(null);
   const clientSettings = useClientSettings();
-  const createProject = useAtomCommand(projectEnvironment.create, {
+  const registerWorkspace = useAtomCommand(workspaceEnvironment.register, {
     reportFailure: false,
   });
   const lookupRepository = useAtomQueryRunner(sourceControlEnvironment.repository, {
@@ -2006,15 +2006,12 @@ function OpenCommandPaletteDialog(props: {
         return;
       }
 
-      const projectId = newProjectId();
-      const createResult = await createProject({
+      const createResult = await registerWorkspace({
         environmentId: input.environmentId,
         input: {
-          projectId,
           title: inferProjectTitleFromPath(cwd),
-          workspaceRoot: cwd,
-          createWorkspaceRootIfMissing: true,
-          defaultModelSelection: null,
+          path: cwd,
+          createIfMissing: true,
         },
       });
       if (createResult._tag === "Failure") {
@@ -2032,7 +2029,9 @@ function OpenCommandPaletteDialog(props: {
       }
 
       const navigationResult = await settlePromise(() =>
-        handleNewThread(scopeProjectRef(input.environmentId, projectId)),
+        handleNewThread(
+          scopeProjectRef(input.environmentId, createResult.value.workspace.awenProjectId),
+        ),
       );
       if (navigationResult._tag === "Failure") {
         const error = squashAtomCommandFailure(navigationResult);
@@ -2049,7 +2048,7 @@ function OpenCommandPaletteDialog(props: {
     },
     [
       handleNewThread,
-      createProject,
+      registerWorkspace,
       environments,
       navigate,
       primaryEnvironmentId,

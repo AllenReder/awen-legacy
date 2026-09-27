@@ -2,6 +2,7 @@
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeChildProcess from "node:child_process";
 
 import {
   agentSessionsIn,
@@ -55,6 +56,12 @@ import {
 } from "../Services/ProjectionPipeline.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import { ServerConfig } from "../../config.ts";
+import * as AwenWorkspaceService from "../../workspace/AwenWorkspaceService.ts";
+import * as WorkspacePaths from "../../workspace/WorkspacePaths.ts";
+import * as GitWorkflowService from "../../git/GitWorkflowService.ts";
+import * as GitVcsDriver from "../../vcs/GitVcsDriver.ts";
+import * as VcsDriverRegistry from "../../vcs/VcsDriverRegistry.ts";
+import * as VcsProcess from "../../vcs/VcsProcess.ts";
 
 const asProjectId = (value: string): ProjectId => ProjectId.make(value);
 const asMessageId = (value: string): MessageId => MessageId.make(value);
@@ -116,6 +123,19 @@ async function createOrchestrationSystem(
   };
 }
 
+function workspaceSystemLayer(databasePath: string, realGit = false) {
+  const registryLayer = realGit
+    ? VcsDriverRegistry.layer.pipe(Layer.provide(VcsProcess.layer))
+    : Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({ detect: () => Effect.succeed(null) });
+  const workspaceLayer = AwenWorkspaceService.layer.pipe(
+    Layer.provide(WorkspacePaths.layer),
+    Layer.provide(registryLayer),
+    Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
+    Layer.provide(Layer.mock(GitWorkflowService.GitWorkflowService)({})),
+  );
+  return workspaceLayer.pipe(Layer.provideMerge(makeOrchestrationLayer(databasePath)));
+}
+
 function now() {
   return "2026-01-01T00:00:00.000Z";
 }
@@ -132,6 +152,136 @@ const hasMetricSnapshot = (
   );
 
 describe("OrchestrationEngine", () => {
+  effectIt.effect(
+    "registers and renames through public Workspace commands with durable Environment scope",
+    () =>
+      Effect.gen(function* () {
+        const directory = yield* Effect.promise(() =>
+          NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "awen-workspace-rpc-")),
+        );
+        const workspaceRoot = NodePath.join(directory, "ordinary-directory");
+        yield* Effect.promise(() => NodeFSP.mkdir(workspaceRoot));
+        const firstDatabase = NodePath.join(directory, "first.sqlite");
+        const secondDatabase = NodePath.join(directory, "second.sqlite");
+
+        const firstWorkspaceId = yield* Effect.gen(function* () {
+          const service = yield* AwenWorkspaceService.AwenWorkspaceService;
+          const query = yield* ProjectionSnapshotQuery;
+          const registered = yield* service.register({ path: workspaceRoot });
+          const repeated = yield* service.register({ path: workspaceRoot });
+          expect(registered.reused).toBe(false);
+          expect(repeated.reused).toBe(true);
+          expect(repeated.workspace.id).toBe(registered.workspace.id);
+
+          yield* service.rename({
+            workspaceId: registered.workspace.id,
+            title: "Renamed Workspace",
+          });
+          yield* service.renameProject({
+            projectId: registered.workspace.projectId,
+            title: "Renamed Project",
+          });
+          const project = (yield* query.getShellSnapshot()).awenProjects?.[0];
+          expect(project?.title).toBe("Renamed Project");
+          expect(project?.workspaces[0]?.title).toBe("Renamed Workspace");
+          expect(project?.workspaces[0]?.workspaceRoot).toBe(workspaceRoot);
+          return registered.workspace.id;
+        }).pipe(Effect.provide(workspaceSystemLayer(firstDatabase)));
+
+        yield* Effect.gen(function* () {
+          const service = yield* AwenWorkspaceService.AwenWorkspaceService;
+          const query = yield* ProjectionSnapshotQuery;
+          const registered = yield* service.register({ path: workspaceRoot });
+          expect(registered.workspace.id).not.toBe(firstWorkspaceId);
+          expect((yield* query.getShellSnapshot()).awenProjects?.[0]?.title).toBe(
+            "ordinary-directory",
+          );
+        }).pipe(Effect.provide(workspaceSystemLayer(secondDatabase)));
+
+        yield* Effect.gen(function* () {
+          const service = yield* AwenWorkspaceService.AwenWorkspaceService;
+          const query = yield* ProjectionSnapshotQuery;
+          const project = (yield* query.getShellSnapshot()).awenProjects?.[0];
+          expect(project?.title).toBe("Renamed Project");
+          expect(project?.workspaces[0]?.title).toBe("Renamed Workspace");
+          const missing = yield* service
+            .register({ path: NodePath.join(directory, "missing") })
+            .pipe(Effect.flip);
+          expect(missing.reason).toBe("path-not-found");
+          expect((yield* query.getShellSnapshot()).awenProjects).toHaveLength(1);
+          const removed = yield* service.remove({ workspaceId: project!.workspaces[0]!.id });
+          expect(removed).toMatchObject({ removed: true, deletedDirectory: false });
+          expect((yield* query.getShellSnapshot()).awenProjects).toHaveLength(0);
+          expect(yield* Effect.promise(() => NodeFSP.stat(workspaceRoot))).toBeDefined();
+        }).pipe(Effect.provide(workspaceSystemLayer(firstDatabase)));
+      }),
+  );
+
+  effectIt.effect(
+    "registers a Git checkout and its existing worktree under one durable Project",
+    () =>
+      Effect.gen(function* () {
+        const directory = yield* Effect.promise(() =>
+          NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "awen-workspace-git-")),
+        );
+        const main = NodePath.join(directory, "main");
+        const worktree = NodePath.join(directory, "feature");
+        yield* Effect.sync(() =>
+          NodeChildProcess.execFileSync("git", ["init", "--initial-branch=main", main]),
+        );
+        yield* Effect.sync(() =>
+          NodeChildProcess.execFileSync("git", [
+            "-C",
+            main,
+            "-c",
+            "user.name=Awen Test",
+            "-c",
+            "user.email=awen@example.invalid",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "initial",
+          ]),
+        );
+        yield* Effect.sync(() =>
+          NodeChildProcess.execFileSync("git", [
+            "-C",
+            main,
+            "worktree",
+            "add",
+            "-b",
+            "feature",
+            worktree,
+          ]),
+        );
+        const databasePath = NodePath.join(directory, "state.sqlite");
+
+        yield* Effect.gen(function* () {
+          const service = yield* AwenWorkspaceService.AwenWorkspaceService;
+          const query = yield* ProjectionSnapshotQuery;
+          const primary = yield* service.register({ path: main });
+          const associated = yield* service.register({ path: worktree });
+          expect(associated.workspace.projectId).toBe(primary.workspace.projectId);
+          expect(associated.workspace.role).toBe("worktree");
+          expect(associated.workspace.workspaceRoot).toBe(worktree);
+          yield* Effect.sync(() =>
+            NodeChildProcess.execFileSync("git", ["-C", worktree, "switch", "-c", "later"]),
+          );
+          const repeated = yield* service.register({ path: worktree });
+          expect(repeated.reused).toBe(true);
+          expect(repeated.workspace.id).toBe(associated.workspace.id);
+          expect((yield* query.getShellSnapshot()).awenProjects?.[0]?.workspaces).toHaveLength(2);
+        }).pipe(Effect.provide(workspaceSystemLayer(databasePath, true)));
+
+        yield* Effect.gen(function* () {
+          const service = yield* AwenWorkspaceService.AwenWorkspaceService;
+          const query = yield* ProjectionSnapshotQuery;
+          expect((yield* query.getShellSnapshot()).awenProjects?.[0]?.workspaces).toHaveLength(2);
+          expect((yield* service.register({ path: worktree })).reused).toBe(true);
+        }).pipe(Effect.provide(workspaceSystemLayer(databasePath, true)));
+      }),
+  );
+
   it("persists one Awen session per Awen thread under its owning workspace", async () => {
     const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "awen-awen-sessions-"));
     const databasePath = NodePath.join(directory, "state.sqlite");
@@ -285,14 +435,24 @@ describe("OrchestrationEngine", () => {
     const first = await createOrchestrationSystem(databasePath);
     const firstResult = await first.run(first.engine.dispatch(command));
     expect(firstResult.sequence).toBeGreaterThan(0);
+    await first.run(
+      first.engine.dispatch({
+        type: "project.meta.update",
+        commandId: CommandId.make("registration-workspace-rename"),
+        projectId,
+        title: "Renamed Workspace",
+      }),
+    );
     const firstShell = await first.shell();
     expect(firstShell.awenProjects).toMatchObject([
       {
         id: "awen-project:registration-project",
+        title: "Registration project",
         workspaces: [
           {
             id: "workspace:registration-project",
             awenProjectId: "registration-project",
+            title: "Renamed Workspace",
             workspaceRoot,
             role: "main",
           },

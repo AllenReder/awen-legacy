@@ -147,14 +147,12 @@ export const AwenProjectShell = Schema.Struct({
 });
 export type AwenProjectShell = typeof AwenProjectShell.Type;
 
-/**
- * Stable fallback identities for legacy project.create callers. The mapping
- * is deterministic but still keeps the Awen and Awen identifiers distinct.
- */
+/** Product Project identity for a newly registered directory. */
 export function awenProjectIdForAwenProject(projectId: ProjectId): AwenProjectId {
   return AwenProjectId.make(`awen-project:${projectId}`);
 }
 
+/** Workspace address derived from the canonical directory record identity. */
 export function workspaceIdForAwenProject(projectId: ProjectId): WorkspaceId {
   return WorkspaceId.make(`workspace:${projectId}`);
 }
@@ -165,6 +163,20 @@ export function agentSessionIdForThreadCreatedEvent(eventId: EventId): AgentSess
 }
 
 // --- Workspace management RPC (awenWorkspace.*) ---
+
+/** Register a directory or checkout, reusing its Workspace when already known. */
+export const AwenWorkspaceRegisterInput = Schema.Struct({
+  path: TrimmedNonEmptyString,
+  title: Schema.optional(TrimmedNonEmptyString),
+  createIfMissing: Schema.optional(Schema.Boolean),
+});
+export type AwenWorkspaceRegisterInput = typeof AwenWorkspaceRegisterInput.Type;
+
+export const AwenWorkspaceRegisterResult = Schema.Struct({
+  workspace: AwenWorkspaceShell,
+  reused: Schema.Boolean,
+});
+export type AwenWorkspaceRegisterResult = typeof AwenWorkspaceRegisterResult.Type;
 
 /** Attach an existing on-disk checkout as a sibling Workspace of the Project. */
 export const AwenWorkspaceAssociateInput = Schema.Struct({

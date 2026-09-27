@@ -111,12 +111,6 @@ export interface ProjectionAwenProjectRepositoryShape {
   readonly removeForProject: (
     projectId: ProjectId,
   ) => Effect.Effect<void, ProjectionRepositoryError>;
-  /** Change a Workspace display title without changing Project or checkout identity. */
-  readonly updateWorkspaceTitle: (input: {
-    readonly workspaceId: WorkspaceId;
-    readonly title: string;
-    readonly updatedAt: string;
-  }) => Effect.Effect<void, ProjectionRepositoryError>;
   /** Change an Awen Project display title without changing its Workspaces. */
   readonly updateProjectTitle: (input: {
     readonly awenProjectId: AwenProjectId;

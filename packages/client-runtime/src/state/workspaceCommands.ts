@@ -21,6 +21,15 @@ export function createEnvironmentWorkspaceCommandAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
 ) {
   return {
+    register: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:workspace:register",
+      tag: RpcMethods.awenWorkspaceRegister,
+      scheduler: workspaceCommandScheduler,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.path]),
+      },
+    }),
     associate: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:workspace:associate",
       tag: RpcMethods.awenWorkspaceAssociate,

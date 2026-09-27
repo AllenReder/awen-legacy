@@ -2,7 +2,6 @@ import { useAtomValue } from "@effect/atom-react";
 import type {
   AgentSessionProjectCandidate,
   EnvironmentId,
-  ProjectId,
   ScopedProjectRef,
   ServerConfig,
   ServerProvider,
@@ -12,7 +11,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@awen/client-runtime/state/runtime";
-import { CommandId, ProviderDriverKind, ThreadId } from "@awen/contracts";
+import { ProviderDriverKind, ThreadId } from "@awen/contracts";
 import * as Schema from "effect/Schema";
 import {
   ArrowRightIcon,
@@ -43,12 +42,12 @@ import {
   selectOnboardingProvidersByDriver,
 } from "../../onboarding/providerReadiness.logic";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
-import { newProjectId, randomUUID } from "../../lib/utils";
+import { randomUUID } from "../../lib/utils";
 import { agentSessionImport } from "../../state/agentSessions";
 import { readProjects, useProjects } from "../../state/entities";
 import { useEnvironments, usePrimaryEnvironment } from "../../state/environments";
 import { useProjectScans } from "../../onboarding/useProjectScans";
-import { projectEnvironment } from "../../state/projects";
+import { workspaceEnvironment } from "../../state/projects";
 import { serverEnvironment } from "../../state/server";
 import { terminalEnvironment } from "../../state/terminal";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -823,19 +822,15 @@ function ImportStep({
   readonly onDone: (projectRef?: ScopedProjectRef) => Promise<boolean>;
 }) {
   const { environments } = useEnvironments();
-  const createProject = useAtomCommand(projectEnvironment.create, { reportFailure: false });
+  const registerWorkspace = useAtomCommand(workspaceEnvironment.register, { reportFailure: false });
   const importThreads = useAtomCommand(agentSessionImport, { reportFailure: false });
   const projects = useProjects();
   const [selectedPaths, setSelectedPaths] = useState<ReadonlySet<string> | null>(null);
   const [importError, setImportError] = useState("");
   const [landingProject, setLandingProject] = useState<ScopedProjectRef | null>(null);
-  // Keep project creation attempts separate from completed history imports so both can retry.
   const importedProjectsRef = useRef(new Map<string, ScopedProjectRef>());
   const projectsWithImportedHistoryRef = useRef(new Map<string, ScopedProjectRef>());
   const lastImportSelectionRef = useRef<ReadonlyArray<string>>([]);
-  const projectAttemptsRef = useRef(
-    new Map<string, { readonly projectId: ProjectId; readonly commandId: CommandId }>(),
-  );
   const importGenerationRef = useRef(0);
 
   // Ignore command completions after leaving the import step.
@@ -906,7 +901,6 @@ function ImportStep({
     lastImportSelectionRef.current = selection.map((candidate) => candidate.key);
     const importGeneration = importGenerationRef.current;
     const importedProjects = importedProjectsRef.current;
-    const projectAttempts = projectAttemptsRef.current;
     // Interrupted imports are neither failures nor successes — the command was
     // superseded or the environment dropped — but they still didn't land, so
     // they must not read as "imported everything". Retries skip paths that
@@ -930,25 +924,11 @@ function ImportStep({
       if (importedProjects.has(candidate.key)) continue;
       let projectId = resolveOnboardingProjectId(readProjects(), environmentId, candidate);
       if (projectId === null) {
-        let attempt = projectAttempts.get(candidate.key);
-        if (attempt === undefined) {
-          const nextProjectId = newProjectId();
-          attempt = {
-            projectId: nextProjectId,
-            commandId: CommandId.make(`onboarding:project:create:${nextProjectId}`),
-          };
-          projectAttempts.set(candidate.key, attempt);
-        }
-        projectId = attempt.projectId;
-        const result = await createProject({
+        const result = await registerWorkspace({
           environmentId,
           input: {
-            projectId,
-            commandId: attempt.commandId,
             title: candidate.title,
-            workspaceRoot: candidate.path,
-            createWorkspaceRootIfMissing: false,
-            defaultModelSelection: null,
+            path: candidate.path,
           },
         });
         if (
@@ -959,11 +939,11 @@ function ImportStep({
         }
         if (result._tag !== "Success") {
           if (!isAtomCommandInterrupted(result)) {
-            projectAttempts.delete(candidate.key);
             refreshEnvironments.add(environmentId);
           }
           continue;
         }
+        projectId = result.value.workspace.awenProjectId;
       }
 
       const threadImportResult = await importThreads({
@@ -990,7 +970,6 @@ function ImportStep({
           importedProjects.set(candidate.key, scopeProjectRef(environmentId, projectId));
         }
       } else if (!isAtomCommandInterrupted(threadImportResult)) {
-        projectAttempts.delete(candidate.key);
         refreshEnvironments.add(environmentId);
       }
     }

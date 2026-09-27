@@ -129,6 +129,7 @@ export const RPC_REQUIRED_SCOPES = {
   // All three workspace mutations register work, create checkouts, or remove
   // them, so they share the operate scope of the VCS mutations they compose.
   [WS_METHODS.awenWorkspaceAssociate]: AuthOrchestrationOperateScope,
+  [WS_METHODS.awenWorkspaceRegister]: AuthOrchestrationOperateScope,
   [WS_METHODS.awenWorkspaceCreateWorktree]: AuthOrchestrationOperateScope,
   [WS_METHODS.awenWorkspaceRemove]: AuthOrchestrationOperateScope,
   [WS_METHODS.awenWorkspaceRename]: AuthOrchestrationOperateScope,

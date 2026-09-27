@@ -301,6 +301,41 @@ describe("AwenSidebar", () => {
     );
   });
 
+  it("exposes the full directory name when a custom Workspace name is truncated", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    mockState.projects = [
+      {
+        id: "p1",
+        environmentId: "local",
+        title: "Repository",
+        workspaces: [
+          {
+            id: "w1",
+            title: "Short name",
+            workspaceRoot: "/code\\very-long-directory-name/",
+            role: "main",
+            branch: "main",
+            sessions: [],
+            historySessions: [],
+          },
+        ],
+      },
+    ];
+
+    await act(() => {
+      renderer = create(<AwenSidebar />);
+    });
+
+    const directory = renderer.root.findByProps({ "data-testid": "sidebar-workspace-dir" });
+    expect(directory.props.children).toBe("very-long-directory-name");
+    expect(directory.parent?.props.className).toContain("truncate");
+    expect(
+      renderer.root
+        .findAllByType("div")
+        .some((popup) => popup.props.children === "very-long-directory-name"),
+    ).toBe(true);
+  });
+
   it("renders agent sessions with provider icon and terminal sessions with terminal/agent icon and 14px status gutter", async () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     mockState.projects = [
