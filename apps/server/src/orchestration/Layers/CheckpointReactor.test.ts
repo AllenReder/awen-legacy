@@ -2120,7 +2120,7 @@ describe("CheckpointReactor", () => {
       const threadId = ThreadId.make("thread-1");
       const createdAt = "2026-01-01T00:00:00.000Z";
       for (const count of [1, 2]) {
-        await Effect.runPromise(
+        await runtime!.runPromise(
           harness.engine.dispatch({
             type: "thread.turn.diff.complete",
             commandId: CommandId.make(`cmd-guard-diff-${count}`),
@@ -2149,7 +2149,7 @@ describe("CheckpointReactor", () => {
       } else {
         const otherCwd = createGitRepository();
         tempDirs.push(otherCwd);
-        await Effect.runPromise(
+        await runtime!.runPromise(
           harness.engine.dispatch({
             type: "thread.meta.update",
             commandId: CommandId.make("cmd-move-before-revert"),
@@ -2160,7 +2160,7 @@ describe("CheckpointReactor", () => {
       }
 
       const fileBefore = NodeFS.readFileSync(NodePath.join(harness.cwd, "README.md"), "utf8");
-      await Effect.runPromise(
+      await runtime!.runPromise(
         harness.engine.dispatch({
           type: "thread.checkpoint.revert",
           commandId: CommandId.make(`cmd-reject-revert-${scenario}`),
@@ -2179,6 +2179,26 @@ describe("CheckpointReactor", () => {
       expect(after?.activities).toContainEqual(
         expect.objectContaining({ kind: "checkpoint.revert.failed" }),
       );
+
+      if (scenario === "different branch") {
+        await runtime!.runPromise(
+          harness.engine.dispatch({
+            type: "thread.conversation.revert",
+            commandId: CommandId.make("cmd-conversation-only-after-branch-change"),
+            threadId,
+            turnCount: 1,
+            createdAt,
+          }),
+        );
+        await harness.drain();
+        expect(harness.provider.rollbackConversation).toHaveBeenCalledWith({
+          threadId,
+          numTurns: 1,
+        });
+        expect(NodeFS.readFileSync(NodePath.join(harness.cwd, "README.md"), "utf8")).toBe(
+          fileBefore,
+        );
+      }
     },
   );
 
@@ -2192,7 +2212,7 @@ describe("CheckpointReactor", () => {
     tempDirs.push(otherParent);
     const otherCwd = NodePath.join(otherParent, "checkout");
     runGit(harness.cwd, ["worktree", "add", "-b", "feature", otherCwd]);
-    await Effect.runPromise(
+    await runtime!.runPromise(
       harness.engine.dispatch({
         type: "project.create",
         commandId: CommandId.make("cmd-register-other-checkout"),
@@ -2233,7 +2253,7 @@ describe("CheckpointReactor", () => {
     expect(before?.checkpoints[0]?.status).toBe("ready");
 
     harness.provider.setSessionCwd(harness.cwd);
-    await Effect.runPromise(
+    await runtime!.runPromise(
       harness.engine.dispatch({
         type: "thread.checkpoint.revert",
         commandId: CommandId.make("cmd-restore-other-checkout-in-original"),
@@ -2255,7 +2275,7 @@ describe("CheckpointReactor", () => {
       expect.objectContaining({ kind: "checkpoint.revert.failed" }),
     );
 
-    await Effect.runPromise(
+    await runtime!.runPromise(
       harness.engine.dispatch({
         type: "thread.meta.update",
         commandId: CommandId.make("cmd-assign-captured-checkout"),
@@ -2265,7 +2285,7 @@ describe("CheckpointReactor", () => {
     );
     harness.provider.setSessionCwd(otherCwd);
     NodeFS.writeFileSync(NodePath.join(otherCwd, "README.md"), "later edit\n");
-    await Effect.runPromise(
+    await runtime!.runPromise(
       harness.engine.dispatch({
         type: "thread.checkpoint.revert",
         commandId: CommandId.make("cmd-restore-in-captured-checkout"),
@@ -2281,14 +2301,14 @@ describe("CheckpointReactor", () => {
     expect(NodeFS.readFileSync(NodePath.join(harness.cwd, "README.md"), "utf8")).toBe("v1\n");
 
     NodeFS.writeFileSync(NodePath.join(otherCwd, "README.md"), "foreign ref contents\n");
-    await Effect.runPromise(
+    await runtime!.runPromise(
       harness.checkpointStore.captureCheckpoint({
         cwd: otherCwd,
         checkpointRef: checkpointRefForThreadTurn(threadId, 1),
       }),
     );
     NodeFS.writeFileSync(NodePath.join(otherCwd, "README.md"), "later edit\n");
-    await Effect.runPromise(
+    await runtime!.runPromise(
       harness.engine.dispatch({
         type: "thread.checkpoint.revert",
         commandId: CommandId.make("cmd-reject-changed-checkpoint-ref"),
@@ -2332,7 +2352,7 @@ describe("CheckpointReactor", () => {
       expect.objectContaining({ path: "README.md", additions: 1, deletions: 1 }),
     );
 
-    await Effect.runPromise(
+    await runtime!.runPromise(
       harness.engine.dispatch({
         type: "thread.checkpoint.revert",
         commandId: CommandId.make("cmd-reject-before-branch-change"),
@@ -2346,7 +2366,7 @@ describe("CheckpointReactor", () => {
     expect(harness.provider.rollbackConversation).not.toHaveBeenCalled();
 
     NodeFS.writeFileSync(NodePath.join(harness.cwd, "README.md"), "v4\n");
-    await Effect.runPromise(
+    await runtime!.runPromise(
       harness.engine.dispatch({
         type: "thread.checkpoint.revert",
         commandId: CommandId.make("cmd-restore-after-branch-change"),
@@ -2388,7 +2408,7 @@ describe("CheckpointReactor", () => {
     expect((await harness.readModel()).threads[0]?.checkpoints[0]?.status).toBe("missing");
     expect(gitRefExists(harness.cwd, checkpointRefForThreadTurn(threadId, 1))).toBe(false);
     NodeFS.writeFileSync(NodePath.join(harness.cwd, "README.md"), "later edit\n");
-    await Effect.runPromise(
+    await runtime!.runPromise(
       harness.engine.dispatch({
         type: "thread.checkpoint.revert",
         commandId: CommandId.make("cmd-revert-mid-turn-checkout"),
@@ -2445,7 +2465,7 @@ describe("CheckpointReactor", () => {
     await harness.drain();
 
     NodeFS.writeFileSync(NodePath.join(harness.cwd, "README.md"), "unsaved edit\n");
-    await Effect.runPromise(
+    await runtime!.runPromise(
       harness.engine.dispatch({
         type: "thread.checkpoint.revert",
         commandId: CommandId.make("cmd-revert-retried-completion"),
