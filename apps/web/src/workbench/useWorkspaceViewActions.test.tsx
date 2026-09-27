@@ -13,7 +13,6 @@ describe("useWorkspaceViewActions", () => {
     const initial = {
       kind: "agentSession" as const,
       environmentId: envId,
-      workspaceId: wsId,
       agentSessionId: AgentSessionId.make("agent-1"),
     };
     useWorkbenchStore.getState().openTarget(initial);
@@ -54,7 +53,6 @@ describe("useWorkspaceViewActions", () => {
     const initial = {
       kind: "agentSession" as const,
       environmentId: envId,
-      workspaceId: wsId,
       agentSessionId: AgentSessionId.make("agent-1"),
     };
     useWorkbenchStore.getState().openTarget(initial);

@@ -11,19 +11,11 @@ import type {
 } from "@awen/contracts";
 import type { EnvironmentAwenProject } from "@awen/client-runtime/state/models";
 
-import {
-  deepLinkInputFromParams,
-  draftIdFromParams,
-  newAgentSessionTargetForDraft,
-  resolveDraftRecoveryTarget,
-  resolveNewAgentSessionTarget,
-  resolveDeepLink,
-  sessionRouteForTarget,
-} from "./deepLinks";
+import { deepLinkInputFromParams, resolveDeepLink, sessionRouteForTarget } from "./deepLinks";
 
 const ENV: EnvironmentId = "env-a" as EnvironmentId;
 const WS: WorkspaceId = "ws-a" as WorkspaceId;
-const AGENT: AgentSessionId = "agent-x" as AgentSessionId;
+const AGENT: AgentSessionId = "thread-x" as AgentSessionId;
 const TERMINAL: TerminalSessionId = "terminal-x" as TerminalSessionId;
 const THREAD: ThreadId = "thread-x" as ThreadId;
 const PROJECT_ID: ProjectId = "project-a" as ProjectId;
@@ -67,7 +59,6 @@ function project(
 const agentTarget = {
   kind: "agentSession",
   environmentId: ENV,
-  workspaceId: WS,
   agentSessionId: AGENT,
 } as const;
 
@@ -78,38 +69,23 @@ const terminalTarget = {
   terminalSessionId: TERMINAL,
 } as const;
 
-describe("canonical route helpers", () => {
-  it("builds separate Agent and Terminal canonical routes", () => {
+describe("canonical Session links", () => {
+  it("addresses Agent Sessions without a Workspace and Terminal Sessions within one", () => {
     expect(sessionRouteForTarget(agentTarget)).toEqual({
-      to: "/$environmentId/workspaces/$workspaceId/agent-sessions/$agentSessionId",
-      params: {
-        environmentId: ENV,
-        workspaceId: WS,
-        agentSessionId: AGENT,
-      },
+      to: "/$environmentId/$threadId",
+      params: { environmentId: ENV, threadId: AGENT },
     });
     expect(sessionRouteForTarget(terminalTarget)).toEqual({
       to: "/$environmentId/workspaces/$workspaceId/terminal-sessions/$terminalSessionId",
-      params: {
-        environmentId: ENV,
-        workspaceId: WS,
-        terminalSessionId: TERMINAL,
-      },
+      params: { environmentId: ENV, workspaceId: WS, terminalSessionId: TERMINAL },
     });
   });
 
-  it("parses canonical params and rejects mixed or incomplete inputs", () => {
-    expect(
-      deepLinkInputFromParams({
-        environmentId: ENV,
-        workspaceId: WS,
-        agentSessionId: AGENT,
-      }),
-    ).toEqual({
+  it("parses canonical links and rejects mixed identities", () => {
+    expect(deepLinkInputFromParams({ environmentId: ENV, threadId: THREAD })).toEqual({
       kind: "agentSession",
       environmentId: ENV,
-      workspaceId: WS,
-      agentSessionId: AGENT,
+      threadId: THREAD,
     });
     expect(
       deepLinkInputFromParams({
@@ -127,277 +103,78 @@ describe("canonical route helpers", () => {
       deepLinkInputFromParams({
         environmentId: ENV,
         workspaceId: WS,
-        agentSessionId: AGENT,
-        terminalSessionId: TERMINAL,
+        threadId: THREAD,
       }),
     ).toBeNull();
     expect(deepLinkInputFromParams({ environmentId: ENV, workspaceId: WS })).toBeNull();
   });
 });
 
-describe("New Agent Session recovery", () => {
-  it("recovers a client-local draft target without treating it as an Awen Deep Link", () => {
-    expect(deepLinkInputFromParams({ draftId: "draft-one" })).toBeNull();
-    expect(draftIdFromParams({ draftId: "draft-one" })).toBe("draft-one");
-    expect(
-      newAgentSessionTargetForDraft(
-        "draft-one" as Parameters<typeof newAgentSessionTargetForDraft>[0],
-        {
-          environmentId: ENV,
-          workspaceId: WS,
-        },
-      ),
-    ).toEqual({
-      kind: "newAgentSession",
-      environmentId: ENV,
-      workspaceId: WS,
-      draftId: "draft-one",
-    });
-  });
+describe("resolving Session links", () => {
+  const assignedWorkspace = "ws-moved" as WorkspaceId;
+  const projects = [
+    project([
+      { id: WS },
+      {
+        id: assignedWorkspace,
+        sessions: [
+          {
+            kind: "agent",
+            id: AGENT,
+            workspaceId: assignedWorkspace,
+            threadId: THREAD,
+            title: "Agent",
+            createdAt: "2026-01-01T00:00:00Z",
+            updatedAt: "2026-01-01T00:00:00Z",
+          },
+        ],
+        historySessions: [
+          {
+            kind: "agent",
+            id: "closed-thread" as AgentSessionId,
+            workspaceId: assignedWorkspace,
+            threadId: "closed-thread" as ThreadId,
+            title: "Closed Agent",
+            status: "closed",
+            createdAt: "2026-01-01T00:00:00Z",
+            updatedAt: "2026-01-01T00:00:00Z",
+          },
+        ],
+      },
+    ]),
+  ];
 
-  it("binds a worktree draft by checkout path before falling back to its stored Workspace", () => {
-    const worktreeWorkspace = "ws-worktree" as WorkspaceId;
-    const projects = [project([{ id: WS }, { id: worktreeWorkspace }])];
-    const worktreeProject = projects[0]!;
-    projects[0] = {
-      ...worktreeProject,
-      workspaces: worktreeProject.workspaces.map((workspace) =>
-        workspace.id === worktreeWorkspace
-          ? {
-              ...workspace,
-              title: "Worktree",
-              workspaceRoot: "/tmp/worktree",
-              role: "worktree" as const,
-            }
-          : workspace,
-      ),
-    };
-
+  it("waits for the environment snapshot", () => {
+    const input = deepLinkInputFromParams({ environmentId: ENV, threadId: THREAD });
     expect(
-      resolveNewAgentSessionTarget(
-        "draft-worktree" as Parameters<typeof resolveNewAgentSessionTarget>[0],
-        {
-          environmentId: ENV,
-          workspaceId: WS,
-          worktreePath: "/tmp/worktree/",
-        },
-        projects,
-      ),
-    ).toMatchObject({ kind: "newAgentSession", workspaceId: worktreeWorkspace });
-  });
-
-  it("recovers a draft route as the Agent Session that already owns its thread", () => {
-    const projects = [
-      project([
-        {
-          id: WS,
-          sessions: [
-            {
-              kind: "agent",
-              id: AGENT,
-              workspaceId: WS,
-              title: "Promoted draft",
-              status: "open",
-              threadId: THREAD,
-              createdAt: "2026-01-01T00:00:00Z",
-              updatedAt: "2026-01-01T00:00:00Z",
-            },
-          ],
-        },
-      ]),
-    ];
-
-    expect(
-      resolveDraftRecoveryTarget(
-        "draft-one" as Parameters<typeof resolveDraftRecoveryTarget>[0],
-        { environmentId: ENV, workspaceId: WS, threadId: THREAD },
-        projects,
-      ),
-    ).toEqual(agentTarget);
-  });
-});
-
-describe("resolveDeepLink", () => {
-  it("waits for catalog and environment snapshots", () => {
-    const projects = [project([{ id: WS }])];
-    expect(
-      resolveDeepLink(
-        deepLinkInputFromParams({
-          environmentId: ENV,
-          workspaceId: WS,
-          agentSessionId: AGENT,
-        }),
-        projects,
-        { ...ENVIRONMENT_READY, catalogReady: false },
-      ),
-    ).toEqual({ state: "pending" });
-    expect(
-      resolveDeepLink(
-        deepLinkInputFromParams({
-          environmentId: ENV,
-          workspaceId: WS,
-          agentSessionId: AGENT,
-        }),
-        projects,
-        { ...ENVIRONMENT_READY, environmentSnapshotPresent: false },
-      ),
-    ).toEqual({ state: "pending" });
-  });
-
-  it("reports unknown, disabled, missing-workspace, and missing-session targets", () => {
-    const projects = [project([{ id: WS }])];
-    expect(
-      resolveDeepLink(
-        deepLinkInputFromParams({
-          environmentId: "missing" as EnvironmentId,
-          workspaceId: WS,
-          agentSessionId: AGENT,
-        }),
-        projects,
-        { ...ENVIRONMENT_READY, environmentExists: false },
-      ),
-    ).toEqual({ state: "missing", reason: "environment" });
-    expect(
-      resolveDeepLink(
-        deepLinkInputFromParams({
-          environmentId: ENV,
-          workspaceId: "missing" as WorkspaceId,
-          agentSessionId: AGENT,
-        }),
-        projects,
-        ENVIRONMENT_READY,
-      ),
-    ).toEqual({ state: "missing", reason: "workspace" });
-    expect(
-      resolveDeepLink(
-        deepLinkInputFromParams({
-          environmentId: ENV,
-          workspaceId: WS,
-          agentSessionId: AGENT,
-        }),
-        projects,
-        ENVIRONMENT_READY,
-      ),
-    ).toEqual({ state: "missing", reason: "session" });
-  });
-
-  it("resolves active and history Agent and Terminal Sessions", () => {
-    const projects = [
-      project([
-        {
-          id: WS,
-          sessions: [
-            {
-              kind: "agent",
-              id: AGENT,
-              workspaceId: WS,
-              threadId: THREAD,
-              title: "Agent",
-              createdAt: "2026-01-01T00:00:00Z",
-              updatedAt: "2026-01-01T00:00:00Z",
-            },
-            {
-              kind: "terminal",
-              id: TERMINAL,
-              workspaceId: WS,
-              title: "Terminal",
-              createdAt: "2026-01-01T00:00:00Z",
-              updatedAt: "2026-01-01T00:00:00Z",
-            },
-          ],
-          historySessions: [
-            {
-              kind: "agent",
-              id: "closed-agent" as AgentSessionId,
-              workspaceId: WS,
-              threadId: "closed-thread" as ThreadId,
-              title: "Closed Agent",
-              status: "closed",
-              createdAt: "2026-01-01T00:00:00Z",
-              updatedAt: "2026-01-01T00:00:00Z",
-            },
-          ],
-        },
-      ]),
-    ];
-
-    expect(
-      resolveDeepLink(
-        deepLinkInputFromParams({
-          environmentId: ENV,
-          workspaceId: WS,
-          agentSessionId: AGENT,
-        }),
-        projects,
-        ENVIRONMENT_READY,
-      ),
-    ).toMatchObject({ state: "ready", target: agentTarget });
-    expect(
-      resolveDeepLink(
-        deepLinkInputFromParams({
-          environmentId: ENV,
-          workspaceId: WS,
-          terminalSessionId: TERMINAL,
-        }),
-        projects,
-        ENVIRONMENT_READY,
-      ),
-    ).toMatchObject({ state: "ready", target: terminalTarget });
-    expect(
-      resolveDeepLink(
-        deepLinkInputFromParams({
-          environmentId: ENV,
-          workspaceId: WS,
-          agentSessionId: "closed-agent" as AgentSessionId,
-        }),
-        projects,
-        ENVIRONMENT_READY,
-      ),
-    ).toMatchObject({ state: "ready", target: { agentSessionId: "closed-agent" } });
-  });
-
-  it("resolves legacy Thread links to canonical Agent Session routes", () => {
-    const projects = [
-      project([
-        {
-          id: WS,
-          historySessions: [
-            {
-              kind: "agent",
-              id: AGENT,
-              workspaceId: WS,
-              threadId: THREAD,
-              title: "Closed Agent",
-              status: "closed",
-              createdAt: "2026-01-01T00:00:00Z",
-              updatedAt: "2026-01-01T00:00:00Z",
-            },
-          ],
-        },
-      ]),
-    ];
-
-    expect(
-      resolveDeepLink(deepLinkInputFromParams({ environmentId: ENV, threadId: THREAD }), projects, {
+      resolveDeepLink(input, projects, {
         ...ENVIRONMENT_READY,
         environmentSnapshotPresent: false,
       }),
     ).toEqual({ state: "pending" });
+  });
+
+  it("reopens the same Agent Session after its Workspace changes", () => {
     expect(
       resolveDeepLink(
         deepLinkInputFromParams({ environmentId: ENV, threadId: THREAD }),
         projects,
         ENVIRONMENT_READY,
       ),
-    ).toMatchObject({
-      state: "ready",
-      legacy: true,
-      target: agentTarget,
-      canonicalRoute: sessionRouteForTarget(agentTarget),
-    });
+    ).toMatchObject({ state: "ready", target: agentTarget });
     expect(
       resolveDeepLink(
-        deepLinkInputFromParams({ environmentId: ENV, threadId: "missing" as ThreadId }),
+        deepLinkInputFromParams({ environmentId: ENV, threadId: "closed-thread" }),
+        projects,
+        ENVIRONMENT_READY,
+      ),
+    ).toMatchObject({ state: "ready", target: { agentSessionId: "closed-thread" } });
+  });
+
+  it("reports a missing Session without requiring its old Workspace", () => {
+    expect(
+      resolveDeepLink(
+        deepLinkInputFromParams({ environmentId: ENV, threadId: "missing" }),
         projects,
         ENVIRONMENT_READY,
       ),

@@ -37,7 +37,6 @@ it("opens, splits and focuses Agent Sessions by Awen identity, including reopeni
   const target = {
     kind: "agentSession",
     environmentId: "local" as EnvironmentId,
-    workspaceId: "workspace" as WorkspaceId,
     agentSessionId: "one" as AgentSessionId,
   } as const;
   const navigate = vi.fn();
@@ -65,8 +64,8 @@ it("opens, splits and focuses Agent Sessions by Awen identity, including reopeni
   expect(navigate).toHaveBeenCalledTimes(2);
   expect(navigate).toHaveBeenCalledWith(
     expect.objectContaining({
-      to: "/$environmentId/workspaces/$workspaceId/agent-sessions/$agentSessionId",
-      params: expect.objectContaining({ agentSessionId: "one" }),
+      to: "/$environmentId/$threadId",
+      params: expect.objectContaining({ threadId: "one" }),
       replace: true,
     }),
   );
@@ -96,7 +95,6 @@ it("mixes Agent and Terminal Views, splits down and reopens the same Terminal Se
   useWorkbenchStore.getState().openTarget({
     kind: "agentSession",
     environmentId: target.environmentId,
-    workspaceId: target.workspaceId,
     agentSessionId: "agent" as AgentSessionId,
   });
   await act(() => {
@@ -133,7 +131,6 @@ it("requests keyboard focus again when the already-focused Session row is clicke
   const target = {
     kind: "agentSession",
     environmentId: "local" as EnvironmentId,
-    workspaceId: "workspace" as WorkspaceId,
     agentSessionId: "one" as AgentSessionId,
   } as const;
   registerViewDefinition({
@@ -168,7 +165,6 @@ it("keeps the URL unchanged for split commands", async () => {
   const target = {
     kind: "agentSession",
     environmentId: "local" as EnvironmentId,
-    workspaceId: "workspace" as WorkspaceId,
     agentSessionId: "one" as AgentSessionId,
   } as const;
   const navigate = vi.fn();
@@ -191,7 +187,6 @@ it("opens capability-gated menu on right-click without navigating", async () => 
   const target = {
     kind: "agentSession",
     environmentId: "local" as EnvironmentId,
-    workspaceId: "workspace" as WorkspaceId,
     agentSessionId: "one" as AgentSessionId,
   } as const;
 
@@ -242,7 +237,6 @@ it("supports keyboard context-menu invocation via ContextMenu and Shift+F10", as
   const target = {
     kind: "agentSession",
     environmentId: "local" as EnvironmentId,
-    workspaceId: "workspace" as WorkspaceId,
     agentSessionId: "one" as AgentSessionId,
   } as const;
 
@@ -286,19 +280,16 @@ it("distinguishes the focused Session from other opened and unopened Sessions", 
   const target1 = {
     kind: "agentSession",
     environmentId: "local" as EnvironmentId,
-    workspaceId: "workspace" as WorkspaceId,
     agentSessionId: "s1" as AgentSessionId,
   } as const;
   const target2 = {
     kind: "agentSession",
     environmentId: "local" as EnvironmentId,
-    workspaceId: "workspace" as WorkspaceId,
     agentSessionId: "s2" as AgentSessionId,
   } as const;
   const targeawen = {
     kind: "agentSession",
     environmentId: "local" as EnvironmentId,
-    workspaceId: "workspace" as WorkspaceId,
     agentSessionId: "s3" as AgentSessionId,
   } as const;
 
@@ -345,25 +336,21 @@ it("tracks and differentiates all four Session Row Tab States: active-focused, a
   const target1 = {
     kind: "agentSession",
     environmentId: "local" as EnvironmentId,
-    workspaceId: "workspace" as WorkspaceId,
     agentSessionId: "tab_s1" as AgentSessionId,
   } as const;
   const target2 = {
     kind: "agentSession",
     environmentId: "local" as EnvironmentId,
-    workspaceId: "workspace" as WorkspaceId,
     agentSessionId: "tab_s2" as AgentSessionId,
   } as const;
   const target3 = {
     kind: "agentSession",
     environmentId: "local" as EnvironmentId,
-    workspaceId: "workspace" as WorkspaceId,
     agentSessionId: "tab_s3" as AgentSessionId,
   } as const;
   const targetUnopened = {
     kind: "agentSession",
     environmentId: "local" as EnvironmentId,
-    workspaceId: "workspace" as WorkspaceId,
     agentSessionId: "tab_s4" as AgentSessionId,
   } as const;
 
@@ -417,7 +404,6 @@ it("renders one Session Status dot per row and the Unread Completion dot on a re
   const target = {
     kind: "agentSession",
     environmentId: "local" as EnvironmentId,
-    workspaceId: "workspace" as WorkspaceId,
     agentSessionId: "status_s1" as AgentSessionId,
   } as const;
 
@@ -492,7 +478,6 @@ it("keeps a failure dot visible while the row is focused and after focus moves a
   const target = {
     kind: "agentSession",
     environmentId: "local" as EnvironmentId,
-    workspaceId: "workspace" as WorkspaceId,
     agentSessionId: "focus_status_1" as AgentSessionId,
   } as const;
   const other = {
@@ -528,7 +513,6 @@ it("marks closed sessions with data-session-closed and suppresses drag initiatio
   const target = {
     kind: "agentSession",
     environmentId: "local" as EnvironmentId,
-    workspaceId: "workspace" as WorkspaceId,
     agentSessionId: "closed_1" as AgentSessionId,
   } as const;
 
@@ -563,7 +547,6 @@ it("renders with sidebar-session-row-item class and will-change-transform for fl
   const target = {
     kind: "agentSession",
     environmentId: "local" as EnvironmentId,
-    workspaceId: "workspace" as WorkspaceId,
     agentSessionId: "s1" as AgentSessionId,
   } as const;
 
@@ -581,7 +564,6 @@ it("renders data-session-closing and suppresses drag initiation when isClosing i
   const target = {
     kind: "agentSession",
     environmentId: "local" as EnvironmentId,
-    workspaceId: "workspace" as WorkspaceId,
     agentSessionId: "s1" as AgentSessionId,
   } as const;
 
@@ -615,7 +597,6 @@ it("clears inline style during closing to prevent overriding CSS collapse transi
   const target = {
     kind: "agentSession",
     environmentId: "local" as EnvironmentId,
-    workspaceId: "workspace" as WorkspaceId,
     agentSessionId: "s1" as AgentSessionId,
   } as const;
 
@@ -641,7 +622,6 @@ it("prevents default on pointerdown and mousedown for middle-click (button 1)", 
   const target = {
     kind: "agentSession",
     environmentId: "local" as EnvironmentId,
-    workspaceId: "workspace" as WorkspaceId,
     agentSessionId: "s1" as AgentSessionId,
   } as const;
 
@@ -792,7 +772,6 @@ it("ignores middle-click when isClosing is true or button is not 1", async () =>
   const target = {
     kind: "agentSession",
     environmentId: "local" as EnvironmentId,
-    workspaceId: "workspace" as WorkspaceId,
     agentSessionId: "s1" as AgentSessionId,
   } as const;
 

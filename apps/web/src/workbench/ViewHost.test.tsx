@@ -119,7 +119,6 @@ it("renders a Session extension with canonical identity and unsubscribes on targ
     kind: "agentSession",
     definitionId: "session-summary",
     environmentId: "local" as EnvironmentId,
-    workspaceId: "w1" as WorkspaceId,
     agentSessionId: "s1" as AgentSessionId,
   } as const;
   const definition = resolveViewDefinition(target)!;

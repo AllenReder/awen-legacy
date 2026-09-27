@@ -25,8 +25,8 @@ that exist only because one Session could be displayed twice.
 
 - A Session View is unique across the Workbench: one Session, one Tab, one Pane.
   Agent and Terminal Sessions follow the same rule.
-- Opening an already open Session (Sidebar click, ACode Deep Link, draft
-  promotion) focuses the existing View and activates its Tab. It never creates a
+- Opening an already open Session (Sidebar click or Awen Deep Link) focuses the
+  existing View and activates its Tab. It never creates a
   second View.
 - An explicit split or a drag/drop of an already open Session **moves** that View:
   the source Pane is closed and the View lands at the requested position, including
@@ -34,8 +34,9 @@ that exist only because one Session could be displayed twice.
   the single existing View and honours the drop zone.
 - Presentation copying does not exist in v1: no menu action, button, shortcut, or
   drag modifier creates a second View instance of a Session.
-- Uniqueness is scoped to **Session-targeted** Views by ACode Session identity
-  (environment + Workspace + Agent or Terminal Session). File, Git, Project, and
+- Uniqueness is scoped to **Session-targeted** Views by Awen Session identity
+  (Environment + Thread for Agent Sessions; Environment + Workspace + Terminal
+  Session for Terminal Sessions). File, Git, Project, and
   Workspace Views keep their own per-Tab coexistence rules (ADR-0008 stays in
   force).
 - Two clients connected to one daemon may each display the same Session. That is

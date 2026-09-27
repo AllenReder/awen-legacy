@@ -93,9 +93,9 @@ const makeEntityId = <Brand extends string>(brand: Brand) => {
 
 export const ThreadId = makeEntityId("ThreadId");
 export type ThreadId = typeof ThreadId.Type;
-/** Stable Awen identity for an agent conversation, distinct from its Awen thread. */
-export const AgentSessionId = makeEntityId("AgentSessionId");
-export type AgentSessionId = typeof AgentSessionId.Type;
+/** An Agent Session is its durable Thread. */
+export const AgentSessionId = ThreadId;
+export type AgentSessionId = ThreadId;
 /** Stable Awen identity for a Workspace-owned terminal, distinct from its runtime PTY id. */
 export const TerminalSessionId = makeEntityId("TerminalSessionId");
 export type TerminalSessionId = typeof TerminalSessionId.Type;

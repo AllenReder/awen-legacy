@@ -74,13 +74,6 @@ whole Workbench: opening an already open Session focuses it, and an explicit
 split or drop moves it. Presentation copying is not an ACode operation.
 _Avoid_: Session, Runtime panel, Mirror, 镜像, Duplicate View
 
-**New Agent Session View**:
-A Workbench View for staging the initial turn of an Agent session. Eager Agent
-sessions (ADR-0016) instantiate durable Awen Session identities at creation
-time, so New Agent Session Views automatically upgrade to Agent Session Views
-upon session creation.
-_Avoid_: Draft Session, Provisional Session, Thread
-
 **Workspace View**:
 A View whose target is a Project or Workspace concern rather than a persistent
 Session, such as files, Git state, or plugin-provided workspace content. It
@@ -274,18 +267,15 @@ edge. It acts as an open drop target that appends a new Column at the far right.
 _Avoid_: Blank area, Dead zone, Margin
 
 **Agent session**:
-A Session representing one agent conversation: one provider, one model
-selection, one Workspace, and one transcript. An Agent session is created
-eagerly with durable Awen identity and appears in the Sidebar immediately.
-Its Awen identity is distinct from any provider-native runtime or thread identifier.
+A Session representing one durable conversation, identified by its Thread and
+assigned to one Workspace at a time. It appears in the Sidebar immediately on
+creation and keeps its identity when its Workspace or provider binding changes.
 _Avoid_: Agent, Task, Job, Run
 
 **Zero-turn Agent session**:
 An Agent session whose transcript contains no turns yet. It presents an initial
 composer and model selection without requiring a provider runtime process.
-Closing an untouched zero-turn Agent session, or its last remaining View,
-permanently deletes it instead of archiving it to History. Unsent content makes
-the Session touched and preserves it.
+Closing its View preserves the Session, with or without unsent content.
 _Avoid_: Draft Session, Provisional Session
 
 **Terminal session**:
@@ -392,32 +382,30 @@ _Avoid_: Chat wallpaper, Session background, View background
   main-area content is a View, not a Session.
 - Session identity is independent of its runtime process and provider-native
   session identity.
-- Closing a View, Pane, or Tab does not by itself stop or delete a Session,
-  except that closing the final View of an untouched zero-turn Agent session
-  deletes that empty Session; other Session lifecycle actions are explicit.
+- Closing a View, Pane, or Tab does not by itself stop or delete a Session;
+  Session lifecycle actions are explicit.
 - A Workbench may contain multiple Tabs; each Tab owns its own Panes, and a
   Session View is unique across the whole Workbench rather than per Tab.
 - A Workbench with no opened Session shows a Welcome View rather than an empty
   Pane. An explicit close that removes a Tab's last non-Welcome Pane closes that
   Tab; when it is the Workbench's only Tab, it recovers Welcome in place
   (ADR-0023).
-- An Agent session is created eagerly with durable Awen identity (AgentSessionId and ThreadId) and appears in the Sidebar under its Workspace immediately, even before its first turn is sent.
+- An Agent session is created eagerly with its durable Thread identity and appears in the Sidebar under its Workspace immediately, even before its first turn is sent.
 - A Workspace may contain multiple zero-turn Agent sessions.
-- An untouched zero-turn Agent session (empty transcript and no unsent draft payload) is permanently deleted upon closing rather than archived to History.
 - Dragging a Workspace context menu action onto the Workbench creates that View instance into the targeted Pane (supporting 4-directional edge splits and center replace) or Tab drop zone without requiring prior navigation.
 - A Tab belongs to no Project or Workspace and may display Views from multiple
   Workspaces or Projects.
 - A Pane displays exactly one View instance and is never empty.
 - A Session has at most one Session View in the whole Workbench (ADR-0010),
   whichever Tab it lands in; opening it again focuses that View.
-- Closing one Session View only detaches that View, with the untouched zero-turn
-  exception above; closing a Session removes that View while preserving its History entry.
+- Closing one Session View only detaches that View; closing a Session removes
+  that View while preserving its History entry.
 - Terminal Sessions are presented only by Terminal Session Views; an Agent
   Session View does not own or embed a Terminal Session.
 - A View may present a Session or Workspace without owning its work lifecycle.
 - File, Git, Project, and Workspace Views keep their own per-Tab coexistence
   rules; Workbench uniqueness applies only to Session Views.
-- Opening an unopened Session or draft from the Sidebar opens it as the sole View in a new Tab (or replaces an active Welcome Tab), rather than adding a Pane to the current Tab.
+- Opening an unopened Session from the Sidebar opens it as the sole View in a new Tab (or replaces an active Welcome Tab), rather than adding a Pane to the current Tab.
 - Activating a Session that already has an opened Session View focuses that existing View and activates its Tab.
 - Splitting within an active Tab is explicit through keyboard modifiers or drag-and-drop.
 - The Workbench Viewport never scrolls vertically; vertical scrolling belongs strictly to the Content Layer of individual Panes.

@@ -21,7 +21,6 @@ function agent(): Extract<ViewTarget, { kind: "agentSession" }> {
   return {
     kind: "agentSession",
     environmentId: ENV_A,
-    workspaceId: WS_A,
     agentSessionId: AGENT_A,
   };
 }
@@ -30,7 +29,6 @@ function agentB(): Extract<ViewTarget, { kind: "agentSession" }> {
   return {
     kind: "agentSession",
     environmentId: ENV_A,
-    workspaceId: WS_A,
     agentSessionId: "agent-b" as AgentSessionId,
   };
 }

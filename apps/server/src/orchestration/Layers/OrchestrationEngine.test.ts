@@ -286,7 +286,10 @@ describe("OrchestrationEngine", () => {
     const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "awen-awen-sessions-"));
     const databasePath = NodePath.join(directory, "state.sqlite");
     const first = await createOrchestrationSystem(databasePath);
-    const modelSelection = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" };
+    const modelSelection = {
+      instanceId: ProviderInstanceId.make("awen_no_provider"),
+      model: "awen_no_model",
+    };
 
     try {
       for (const [projectId, workspaceRoot, threadId] of [
@@ -358,8 +361,29 @@ describe("OrchestrationEngine", () => {
         updatedAt: now(),
       });
       expect(sessionA?.id).not.toBe(sessionB?.id);
-      expect(sessionA?.id).not.toContain("session-thread-a");
-      expect(sessionB?.id).not.toContain("session-thread-b");
+      expect(sessionA?.id).toBe("session-thread-a");
+      expect(sessionB?.id).toBe("session-thread-b");
+
+      await first.run(
+        first.engine.dispatch({
+          type: "thread.message.user.append",
+          commandId: CommandId.make("session-thread-a-first-message"),
+          threadId: ThreadId.make("session-thread-a"),
+          message: {
+            messageId: MessageId.make("session-thread-a-message"),
+            text: "Start here",
+            attachments: [],
+          },
+          createdAt: now(),
+        }),
+      );
+      const afterFirstSend = (await first.shell()).awenProjects?.flatMap((project) =>
+        project.workspaces.flatMap((workspace) => agentSessionsIn(workspace)),
+      );
+      expect(afterFirstSend).toHaveLength(2);
+      expect(afterFirstSend?.find((session) => session.threadId === "session-thread-a")?.id).toBe(
+        sessionA?.id,
+      );
 
       await first.run(
         first.engine.dispatch({

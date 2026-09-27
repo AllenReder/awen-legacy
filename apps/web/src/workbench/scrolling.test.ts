@@ -13,7 +13,6 @@ import type { ViewTarget } from "./viewRegistry";
 const agent = (id: string): ViewTarget => ({
   kind: "agentSession",
   environmentId: "env" as EnvironmentId,
-  workspaceId: "ws" as WorkspaceId,
   agentSessionId: id as AgentSessionId,
 });
 const terminal: ViewTarget = {

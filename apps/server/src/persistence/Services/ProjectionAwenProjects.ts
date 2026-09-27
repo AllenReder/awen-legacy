@@ -67,7 +67,6 @@ export interface UpsertProjectionAwenProjectInput {
 }
 
 export interface UpsertProjectionAwenAgentSessionInput {
-  readonly agentSessionId: AgentSessionId;
   readonly projectId: ProjectId;
   readonly threadId: ThreadId;
   readonly title: string;

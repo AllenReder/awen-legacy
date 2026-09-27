@@ -8,15 +8,11 @@ export const SessionKind = Schema.Literals(["agent", "terminal"]);
 export type SessionKind = typeof SessionKind.Type;
 
 /**
- * A durable Awen Agent Session identity scoped to its owning Workspace.
- *
- * This is the product-level identity for an agent conversation. The Awen thread
- * that currently backs the conversation is deliberately absent: it is an
- * adapter binding (see `AwenAgentSessionShell`), not an Awen target.
+ * A durable Agent Session is the Awen Thread. The Workspace describes its
+ * current assignment and may change without changing this identity.
  */
 export const AgentSessionRef = Schema.Struct({
   kind: Schema.Literal("agent"),
-  workspaceId: WorkspaceId,
   agentSessionId: AgentSessionId,
 });
 export type AgentSessionRef = typeof AgentSessionRef.Type;
@@ -30,12 +26,9 @@ export const TerminalSessionRef = Schema.Struct({
 export type TerminalSessionRef = typeof TerminalSessionRef.Type;
 
 /**
- * The shared Session contract. Every Awen Session kind carries exactly one
- * owning Workspace and its own typed identity, so Agent and Terminal Sessions
- * can be opened, focused, closed, and historied through one model.
+ * The shared Session contract addresses each Session by stable identity.
  *
- * The runtime process behind a Session — a Awen thread, a provider runtime, or a
- * PTY — is never part of this reference.
+ * Provider runtime sessions and PTYs are never part of this reference.
  */
 export const SessionRef = Schema.Union([AgentSessionRef, TerminalSessionRef]);
 export type SessionRef = typeof SessionRef.Type;
@@ -94,13 +87,10 @@ export function terminalSessionRefForShell(shell: {
 
 /**
  * Adapter from a durable Agent Session shell to its canonical reference,
- * dropping the Awen thread binding so it cannot leak as a product identity.
+ * omitting its mutable Workspace assignment.
  */
-export function agentSessionRefForShell(shell: {
-  readonly id: AgentSessionId;
-  readonly workspaceId: WorkspaceId;
-}): AgentSessionRef {
-  return { kind: "agent", workspaceId: shell.workspaceId, agentSessionId: shell.id };
+export function agentSessionRefForShell(shell: { readonly id: AgentSessionId }): AgentSessionRef {
+  return { kind: "agent", agentSessionId: shell.id };
 }
 
 /**

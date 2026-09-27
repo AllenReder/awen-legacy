@@ -1,28 +1,21 @@
 import { act } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, expect, it, vi } from "vite-plus/test";
-import {
-  ThreadId,
-  type AgentSessionId,
-  type EnvironmentId,
-  type ProjectId,
-  type WorkspaceId,
-} from "@awen/contracts";
-import { scopeProjectRef } from "@awen/client-runtime/environment";
+import { type AgentSessionId, type EnvironmentId, type WorkspaceId } from "@awen/contracts";
 import { AgentView } from "./AgentView";
-import { NewAgentSessionView } from "./NewAgentSessionView";
 import { TerminalView } from "./TerminalView";
 import { terminalTargetForRuntime } from "./sessionTarget";
 import { resetWorkbenchStore, useWorkbenchStore } from "./workbenchStore";
 import { getActiveTab } from "./workbenchState";
-import { DraftId, useComposerDraftStore } from "../composerDraftStore";
+import { useComposerDraftStore } from "../composerDraftStore";
 
 // The trusted runtime adapters are the agreed integration boundary. Present
 // their inputs as text, without starting a provider, PTY, or GPU in Node.
 vi.mock("../state/entities", () => ({
   useAwenProjects: () => [],
-  useAwenAgentSessionShell: (_environment: unknown, _workspace: unknown, session: string) => ({
+  useAwenAgentSessionShell: (_environment: unknown, session: string) => ({
     threadId: `thread-${session}`,
+    workspaceId: "workspace" as WorkspaceId,
     status: session === "closed-session" ? "closed" : "open",
   }),
   useAwenWorkspace: () => ({ workspaceRoot: "/checkout" }),
@@ -49,40 +42,6 @@ const environmentId = "local" as EnvironmentId;
 const workspaceId = "workspace" as WorkspaceId;
 const availableSize = { width: 640, height: 480 };
 
-it("renders a New Agent Session View from its Workspace draft before Session promotion", async () => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  const draftId = DraftId.make("draft-one");
-  const threadId = ThreadId.make("thread-reserved");
-  useComposerDraftStore
-    .getState()
-    .setWorkspaceDraftThreadId(
-      workspaceId,
-      scopeProjectRef(environmentId, "project" as ProjectId),
-      draftId,
-      { threadId },
-    );
-
-  await act(() => {
-    renderer = create(
-      <NewAgentSessionView
-        target={{ kind: "newAgentSession", environmentId, workspaceId, draftId }}
-        paneId="draft-pane"
-        focused
-        availableSize={availableSize}
-      />,
-    );
-  });
-
-  expect(JSON.parse(renderer!.root.findByType("output").children[0] as string)).toMatchObject({
-    environmentId,
-    threadId,
-    routeKind: "draft",
-    draftId,
-    focused: true,
-    availableSize,
-  });
-});
-
 it("isolates Agent data by Session target and forwards focus and measured size to the existing presentation", async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   await act(() => {
@@ -94,7 +53,6 @@ it("isolates Agent data by Session target and forwards focus and measured size t
             target={{
               kind: "agentSession",
               environmentId,
-              workspaceId,
               agentSessionId: id as AgentSessionId,
             }}
             paneId={id}
@@ -151,7 +109,6 @@ it("renders closed read-only status banner when viewing a closed Agent Session f
         target={{
           kind: "agentSession",
           environmentId,
-          workspaceId,
           agentSessionId: "closed-session" as AgentSessionId,
         }}
         paneId="closed-pane"
@@ -176,13 +133,11 @@ it("detaches only the current View on closeView and closes the emptied Tab on re
   const targetA = {
     kind: "agentSession",
     environmentId,
-    workspaceId,
     agentSessionId: "one" as AgentSessionId,
   } as const;
   const targetB = {
     kind: "agentSession",
     environmentId,
-    workspaceId,
     agentSessionId: "two" as AgentSessionId,
   } as const;
   const terminalTarget = terminalTargetForRuntime({
@@ -238,7 +193,6 @@ it("binds workspace actions (browse files, new terminal) from AgentView to ChatV
   const target = {
     kind: "agentSession" as const,
     environmentId,
-    workspaceId,
     agentSessionId: "one" as AgentSessionId,
   };
   useWorkbenchStore.getState().openTarget(target);

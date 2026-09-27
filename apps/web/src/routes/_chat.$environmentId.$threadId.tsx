@@ -1,7 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 
-// The pathless chat layout resolves this legacy Thread route through the
-// Workbench compatibility adapter and redirects to the canonical Session URL.
+// A durable Thread is the canonical Agent Session identity.
 export const Route = createFileRoute("/_chat/$environmentId/$threadId")({
   component: () => null,
 });

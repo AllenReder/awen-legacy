@@ -85,6 +85,7 @@ import { useEnvironments, usePrimaryEnvironmentId } from "~/state/environments";
 import { useEnvironmentQuery } from "~/state/query";
 import { useLiveRefresh } from "~/hooks/useLiveRefresh";
 import { pullRequestEnvironment } from "~/state/pullRequests";
+import { threadEnvironment } from "~/state/threads";
 import { usePullRequestTurnRefresh, useSharedPullRequestSummary } from "~/state/pullRequests";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { PullRequestStackMenu } from "./PullRequestStackMenu";
@@ -952,6 +953,9 @@ export function PullRequestDetailPanel({
     environmentId: actingEnvironmentId,
     cwd: acting?.workspaceRoot ?? detail?.workspaceRoot ?? null,
   });
+  const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
+    reportFailure: false,
+  });
 
   const finishAction = async (
     action: PullRequestAction,
@@ -1242,16 +1246,24 @@ export function PullRequestDetailPanel({
       });
       return;
     }
-    // The same thread again, now that there is somewhere to point it at. A local checkout has
-    // no worktree of its own, so the thread runs where the repository already is.
-    const pointed = await newThread(projectRef, {
-      branch: prepared.value.branch,
-      worktreePath: prepared.value.worktreePath,
-      envMode: prepared.value.worktreePath === null ? "local" : "worktree",
-    }).then(
-      (session) => session !== null,
-      () => false,
-    );
+    // Prepare and point the Session before the first send, preserving the
+    // Thread and Pane created for this handoff.
+    const updateResult = await updateThreadMetadata({
+      environmentId: projectRef.environmentId,
+      input: {
+        threadId: opened.threadId,
+        branch: prepared.value.branch,
+        worktreePath: prepared.value.worktreePath,
+      },
+    });
+    const pointed = updateResult._tag === "Success";
+    if (pointed) {
+      useComposerDraftStore.getState().setDraftThreadContext(opened.draftId, {
+        branch: prepared.value.branch,
+        worktreePath: prepared.value.worktreePath,
+        envMode: prepared.value.worktreePath === null ? "local" : "worktree",
+      });
+    }
     if (!pointed) {
       setHandoff(null);
       // The checkout is on disk; only the thread failed to move onto it. Writing the task now

@@ -4,7 +4,6 @@ import * as Schema from "effect/Schema";
 import {
   AgentSessionId,
   AwenProjectId,
-  EventId,
   ForwardCompatibleArray,
   IsoDateTime,
   ProjectId,
@@ -155,11 +154,6 @@ export function awenProjectIdForAwenProject(projectId: ProjectId): AwenProjectId
 /** Workspace address derived from the canonical directory record identity. */
 export function workspaceIdForAwenProject(projectId: ProjectId): WorkspaceId {
   return WorkspaceId.make(`workspace:${projectId}`);
-}
-
-/** Stable Awen identity derived from the creation event, not the thread id. */
-export function agentSessionIdForThreadCreatedEvent(eventId: EventId): AgentSessionId {
-  return AgentSessionId.make(`agent-session:${eventId}`);
 }
 
 // --- Workspace management RPC (awenWorkspace.*) ---

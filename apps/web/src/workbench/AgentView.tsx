@@ -1,4 +1,5 @@
 import ChatView from "../components/ChatView";
+import type { AwenAgentSessionShell } from "@awen/contracts";
 import { useAwenAgentSessionShell } from "../state/entities";
 import { useWorkspaceViewActions } from "./useWorkspaceViewActions";
 import type { ViewTarget } from "./viewRegistry";
@@ -16,9 +17,8 @@ interface AgentViewProps {
  *
  * Adapter from the workbench's `View instance` to the existing `<ChatView>`
  * component (which already hosts the Awen timeline, composer, tool activity,
- * approvals and error surface). The View passes the Agent Session's owning
- * Workspace and Session ids explicitly — there is no assumption of a single
- * global selected thread (per the C10 issue body).
+ * approvals and error surface). The View resolves the current Workspace from
+ * the durable Session shell, so its navigation address remains stable.
  *
  * Closing this View (closing the Pane) tears down only ChatView's local
  * subscriptions; the Agent Session's transcript and execution state remain on
@@ -32,24 +32,40 @@ export function AgentView({
   focusRequestId = 0,
   availableSize,
 }: AgentViewProps) {
-  const session = useAwenAgentSessionShell(
-    target.environmentId,
-    target.workspaceId,
-    target.agentSessionId,
-  );
-  const { onBrowseFiles, onReviewChanges, onNewTerminalSession } = useWorkspaceViewActions({
-    environmentId: target.environmentId,
-    workspaceId: target.workspaceId,
-    paneId,
-  });
-
+  const session = useAwenAgentSessionShell(target.environmentId, target.agentSessionId);
   if (session === null) {
     return (
       <div className="flex h-full min-h-0 items-center justify-center p-6 text-sm text-muted-foreground">
-        Agent Session is no longer available.
+        Loading Agent Session…
       </div>
     );
   }
+
+  return (
+    <LoadedAgentView
+      target={target}
+      paneId={paneId}
+      focused={focused}
+      focusRequestId={focusRequestId}
+      availableSize={availableSize}
+      session={session}
+    />
+  );
+}
+
+function LoadedAgentView({
+  target,
+  paneId,
+  focused,
+  focusRequestId = 0,
+  availableSize,
+  session,
+}: AgentViewProps & { readonly session: AwenAgentSessionShell }) {
+  const { onBrowseFiles, onReviewChanges, onNewTerminalSession } = useWorkspaceViewActions({
+    environmentId: target.environmentId,
+    workspaceId: session.workspaceId,
+    paneId,
+  });
 
   return (
     <div className="relative flex h-full min-h-0 flex-col">

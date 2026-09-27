@@ -10,7 +10,6 @@ import {
 } from "@awen/client-runtime/state/threads";
 import type { ScopedProjectRef, ScopedThreadRef, ServerConfig } from "@awen/contracts";
 import {
-  agentSessionsIn,
   type AwenAgentSessionShell,
   type AwenWorkspaceShell,
   type AgentSessionId,
@@ -23,6 +22,7 @@ import { useMemo } from "react";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentProjects, environmentWorkspace } from "./projects";
 import { environmentServerConfigsAtom } from "./server";
+import { findAgentSession } from "./agentSessionLookup";
 import {
   allEnvironmentProjectSnapshotsReadyAtom,
   allEnvironmentShellsBootstrappedAtom,
@@ -208,19 +208,16 @@ export function useAwenWorkspace(
 }
 
 /**
- * Look up an Awen Agent Session shell by (workspaceId, agentSessionId).
- * The workspace shell is the durable authority for the Agent Session's
- * thread id — see D3. Returns null when the workspace or session is unknown
- * or when the id names a Terminal Session.
+ * Look up an Agent Session by its stable Environment and Thread identity.
+ * Its Workspace assignment comes from the current shell.
  */
 export function useAwenAgentSessionShell(
   environmentId: EnvironmentId | null,
-  workspaceId: WorkspaceId | null,
   agentSessionId: AgentSessionId | null,
 ): AwenAgentSessionShell | null {
-  const workspace = useAwenWorkspace(environmentId, workspaceId);
-  if (workspace === null || agentSessionId === null) return null;
-  return agentSessionsIn(workspace).find((session) => session.id === agentSessionId) ?? null;
+  const projects = useAwenProjects();
+  if (environmentId === null || agentSessionId === null) return null;
+  return findAgentSession(projects, environmentId, agentSessionId);
 }
 
 /** Resolves when the project event reaches the live client store. */

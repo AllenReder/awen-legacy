@@ -29,7 +29,6 @@ function agent(): Extract<ViewTarget, { kind: "agentSession" }> {
   return {
     kind: "agentSession",
     environmentId: ENV_A,
-    workspaceId: WS_A,
     agentSessionId: AGENT_A,
   };
 }
@@ -164,30 +163,6 @@ describe("workbench persistence", () => {
       sizes: [0.5, 0.5],
     };
     raw.tabs[0]!.panes.push(["pane-b", { ...firstPane[1], id: "view-b" }]);
-
-    expect(deserializeWorkbenchSnapshot(JSON.stringify(raw))).toBeNull();
-  });
-
-  it("rejects multiple New Agent Session Views for one Workspace", () => {
-    const ids = makeIds();
-    const draft = {
-      kind: "newAgentSession" as const,
-      environmentId: ENV_A,
-      workspaceId: WS_A,
-      draftId: "draft-a" as never,
-    };
-    const raw = JSON.parse(
-      serializeWorkbenchSnapshot(applyOpenTarget(emptyWorkbenchSnapshot(ids), draft, ids)),
-    ) as {
-      activeTabId: string;
-      tabs: Array<Record<string, unknown> & { id: string }>;
-    };
-    const firstTab = raw.tabs[0]!;
-    raw.tabs.push({
-      ...firstTab,
-      id: "tab-b",
-    });
-    raw.activeTabId = firstTab.id;
 
     expect(deserializeWorkbenchSnapshot(JSON.stringify(raw))).toBeNull();
   });

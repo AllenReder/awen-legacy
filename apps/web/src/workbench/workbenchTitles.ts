@@ -4,7 +4,7 @@ import type { ViewTarget } from "./viewRegistry";
 
 type WorkspaceScopedTarget = Extract<
   ViewTarget,
-  { kind: "workspace" | "agentSession" | "newAgentSession" | "workspaceTerminal" }
+  { kind: "workspace" | "agentSession" | "workspaceTerminal" }
 >;
 
 function workspaceFor(
@@ -20,6 +20,15 @@ function locationFor(
 ) {
   for (const project of projects) {
     if (project.environmentId !== target.environmentId) continue;
+    if (target.kind === "agentSession") {
+      const workspace = project.workspaces.find((candidate) =>
+        [...(candidate.sessions ?? []), ...(candidate.historySessions ?? [])].some(
+          (session) => session.kind === "agent" && session.id === target.agentSessionId,
+        ),
+      );
+      if (workspace !== undefined) return { project, workspace };
+      continue;
+    }
     const workspace = project.workspaces.find((candidate) => candidate.id === target.workspaceId);
     if (workspace !== undefined) return { project, workspace };
   }
@@ -72,8 +81,6 @@ export function fallbackTargetTitle(target: ViewTarget): string {
       return "Workspace";
     case "agentSession":
       return "Agent";
-    case "newAgentSession":
-      return "New Agent Session";
     case "workspaceTerminal":
       return "Terminal";
   }
@@ -104,8 +111,6 @@ export function resolveTargetTitle(
       if (target.definitionId === "fileView") return `${workspace.title}: Files`;
       if (target.definitionId === "gitView") return `${workspace.title}: Changes`;
       return workspace.title;
-    case "newAgentSession":
-      return "New Agent Session";
     case "agentSession":
       return (
         [...(workspace.sessions ?? []), ...(workspace.historySessions ?? [])].find(

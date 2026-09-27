@@ -20,7 +20,7 @@ import type { AwenAgentSessionShell } from "./workspace.ts";
 
 const WS_A = WorkspaceId.make("workspace:project-a");
 const WS_B = WorkspaceId.make("workspace:project-b");
-const AGENT = AgentSessionId.make("agent-session:event-1");
+const AGENT = AgentSessionId.make("thread-1");
 const THREAD = ThreadId.make("thread-1");
 
 function decodeSync<S extends Schema.Top>(schema: S, input: unknown): Schema.Schema.Type<S> {
@@ -111,19 +111,18 @@ describe("Terminal Session references", () => {
 });
 
 describe("Agent Session references", () => {
-  it("binds the Awen Agent Session to its Workspace without exposing the Awen thread", () => {
+  it("addresses the durable Agent Session without a mutable Workspace", () => {
     const ref = agentSessionRefForShell(agentShell());
 
     expect(ref).toEqual({
       kind: "agent",
-      workspaceId: WS_A,
       agentSessionId: AGENT,
     });
   });
 
-  it("keeps the same Awen identity when only the Thread binding differs", () => {
+  it("keeps the same identity when the Workspace assignment changes", () => {
     const before = agentSessionRefForShell(agentShell());
-    const rebound = agentSessionRefForShell(agentShell({ threadId: ThreadId.make("thread-2") }));
+    const rebound = agentSessionRefForShell(agentShell({ workspaceId: WS_B }));
 
     expect(rebound).toEqual(before);
   });
@@ -133,7 +132,6 @@ describe("SessionRef", () => {
   it("decodes both Session kinds under one shared contract", () => {
     const agent = decodeSync(SessionRef, {
       kind: "agent",
-      workspaceId: WS_A,
       agentSessionId: AGENT,
     });
     const terminal = decodeSync(SessionRef, {
@@ -144,7 +142,8 @@ describe("SessionRef", () => {
 
     expect(agent.kind).toBe("agent");
     expect(terminal.kind).toBe("terminal");
-    expect(agent.workspaceId).toBe(WS_A);
+    expect(agent).not.toHaveProperty("workspaceId");
+    if (terminal.kind !== "terminal") throw new Error("Expected Terminal Session");
     expect(terminal.workspaceId).toBe(WS_A);
   });
 
@@ -157,8 +156,8 @@ describe("SessionRef", () => {
     ).toBe(false);
   });
 
-  it("requires an owning Workspace on every Session reference", () => {
-    expect(decodes(SessionRef, { kind: "agent", agentSessionId: AGENT })).toBe(false);
+  it("requires an owning Workspace only for Terminal Session references", () => {
+    expect(decodes(SessionRef, { kind: "agent", agentSessionId: AGENT })).toBe(true);
     expect(
       decodes(SessionRef, { kind: "terminal", terminalSessionId: "terminal-session:x:term-1" }),
     ).toBe(false);

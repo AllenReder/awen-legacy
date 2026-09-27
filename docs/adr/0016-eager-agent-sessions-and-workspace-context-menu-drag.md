@@ -1,6 +1,6 @@
 # Eager agent sessions and workspace context menu drag-to-create
 
-**Status: accepted (supersedes ADR-0004)**
+**Status: accepted for drag behavior; Agent identity and close policy superseded by ADR-0026 (supersedes ADR-0004)**
 
 Awen allows dragging creation actions directly from the Sidebar workspace context menu into the Workbench (active tab pane splits, center replace, or new tabs). In addition, Agent sessions are created eagerly with durable Awen identities (`AgentSessionId` and `ThreadId`) appearing in the Sidebar immediately at t=0, superseding the single client-local draft model of ADR-0004. Untouched zero-turn Agent sessions are permanently deleted upon closure instead of archived to History.
 

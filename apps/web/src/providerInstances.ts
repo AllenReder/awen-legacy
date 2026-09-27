@@ -33,13 +33,13 @@ import {
 export { normalizeProviderAccentColor, shouldShowInstanceBadge };
 
 /**
- * Local-only placeholder used while a draft has no provider it can safely
- * target. It must never be persisted or dispatched; the composer disables
- * send until a live provider replaces it.
+ * Persistable placeholder for a Session created before a provider is chosen.
+ * The composer disables send until a live provider replaces it. The model
+ * slug must remain non-empty so thread.create passes wire validation.
  */
 export const NO_PROVIDER_MODEL_SELECTION: ModelSelection = {
   instanceId: ProviderInstanceId.make("awen_no_provider"),
-  model: "",
+  model: "awen_no_model",
 };
 
 /**

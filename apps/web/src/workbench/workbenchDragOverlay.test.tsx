@@ -394,7 +394,6 @@ describe("WorkbenchDrag lifecycle and overlay animations", () => {
       target: {
         kind: "agentSession",
         environmentId: "local" as EnvironmentId,
-        workspaceId: "w1" as WorkspaceId,
         agentSessionId: "s1" as AgentSessionId,
       },
     };
@@ -641,7 +640,6 @@ describe("WorkbenchDrag lifecycle and overlay animations", () => {
     const agentTarget = {
       kind: "agentSession" as const,
       environmentId: "env-1" as EnvironmentId,
-      workspaceId: "ws-1" as WorkspaceId,
       agentSessionId: "agent-1" as AgentSessionId,
     };
 
