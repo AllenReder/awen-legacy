@@ -1,6 +1,6 @@
 import {
   CommandId,
-  type CheckpointRef,
+  CheckpointRef,
   EventId,
   MessageId,
   type ProjectId,
@@ -16,17 +16,18 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import type * as PlatformError from "effect/PlatformError";
 import * as Stream from "effect/Stream";
 import { makeDrainableWorker } from "@awen/shared/DrainableWorker";
 import { isTemporaryWorktreeBranch } from "@awen/shared/git";
 
 import { parseTurnDiffFilesFromNumstat } from "../../checkpointing/Diffs.ts";
 import {
+  checkpointBaselineRefForTurn,
   checkpointRefForThreadTurn,
   resolveThreadWorkspaceCwd,
 } from "../../checkpointing/Utils.ts";
 import * as CheckpointStore from "../../checkpointing/CheckpointStore.ts";
+import * as ExecutionContext from "../../checkpointing/ExecutionContext.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { CheckpointReactor, type CheckpointReactorShape } from "../Services/CheckpointReactor.ts";
 import { forkParked } from "../../serverActivation.ts";
@@ -34,12 +35,15 @@ import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import { RuntimeReceiptBus } from "../Services/RuntimeReceiptBus.ts";
 import type { CheckpointStoreError } from "../../checkpointing/Errors.ts";
-import type { OrchestrationDispatchError } from "../Errors.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import * as WorkspaceEntries from "../../workspace/WorkspaceEntries.ts";
 import * as PullRequestService from "../../pullRequest/PullRequestService.ts";
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
+
+class CheckpointOwnershipConflict extends Error {
+  readonly _tag = "CheckpointOwnershipConflict";
+}
 
 type ReactorInput =
   | {
@@ -85,6 +89,7 @@ const make = Effect.gen(function* () {
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
   const providerService = yield* ProviderService;
   const checkpointStore = yield* CheckpointStore.CheckpointStore;
+  const executionContexts = yield* ExecutionContext.ExecutionContextStore;
   const receiptBus = yield* RuntimeReceiptBus;
   const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
@@ -216,6 +221,29 @@ const make = Effect.gen(function* () {
     return cwd;
   });
 
+  const inspectExecutionContext = Effect.fn("inspectExecutionContext")(function* (cwd: string) {
+    const shell = yield* projectionSnapshotQuery.getShellSnapshot();
+    const workspaces = (shell.awenProjects ?? [])
+      .flatMap((project) => project.workspaces)
+      .filter((entry) => entry.workspaceRoot === cwd);
+    if (workspaces.length !== 1) return undefined;
+    return yield* executionContexts
+      .inspect(cwd, workspaces[0]!.id)
+      .pipe(Effect.catch(() => Effect.succeed(undefined)));
+  });
+
+  const rememberCheckpointContext = Effect.fn("rememberCheckpointContext")(function* (
+    threadId: ThreadId,
+    checkpointRef: CheckpointRef,
+    cwd: string,
+    context: ExecutionContext.ExecutionContext,
+  ) {
+    const oid = yield* executionContexts.oidForRef(cwd, checkpointRef);
+    if (oid) {
+      yield* executionContexts.remember(threadId, `checkpoint:${checkpointRef}`, context, oid);
+    }
+  });
+
   // Capture the completed turn's files, then publish its summary and receipts.
   const captureAndDispatchCheckpoint = Effect.fn("captureAndDispatchCheckpoint")(function* (input: {
     readonly threadId: ThreadId;
@@ -232,15 +260,28 @@ const make = Effect.gen(function* () {
     readonly status: "ready" | "missing" | "error";
     readonly assistantMessageId: MessageId | undefined;
     readonly createdAt: string;
+    readonly provenanceVerified: boolean;
   }) {
     const fromTurnCount = Math.max(0, input.turnCount - 1);
-    const fromCheckpointRef = checkpointRefForThreadTurn(input.threadId, fromTurnCount);
+    const numberedBaselineRef = checkpointRefForThreadTurn(input.threadId, fromTurnCount);
+    const turnBaselineRef = checkpointBaselineRefForTurn(input.threadId, input.turnId);
     const targetCheckpointRef = checkpointRefForThreadTurn(input.threadId, input.turnCount);
-
-    const fromCheckpointExists = yield* checkpointStore.hasCheckpointRef({
-      cwd: input.cwd,
-      checkpointRef: fromCheckpointRef,
+    const beforeCapture = yield* inspectExecutionContext(input.cwd);
+    const usableBaseline = Effect.fn("usableCheckpointBaseline")(function* (ref: CheckpointRef) {
+      if (!(yield* checkpointStore.hasCheckpointRef({ cwd: input.cwd, checkpointRef: ref }))) {
+        return false;
+      }
+      const context = yield* executionContexts.find(input.threadId, `checkpoint:${ref}`);
+      return (
+        !beforeCapture || !context || (yield* executionContexts.compatible(context, beforeCapture))
+      );
     });
+    const numberedBaselineUsable = yield* usableBaseline(numberedBaselineRef);
+    const turnBaselineUsable = numberedBaselineUsable
+      ? false
+      : yield* usableBaseline(turnBaselineRef);
+    const fromCheckpointRef = numberedBaselineUsable ? numberedBaselineRef : turnBaselineRef;
+    const fromCheckpointExists = numberedBaselineUsable || turnBaselineUsable;
     if (!fromCheckpointExists) {
       yield* Effect.logWarning("checkpoint capture missing pre-turn baseline", {
         threadId: input.threadId,
@@ -249,10 +290,48 @@ const make = Effect.gen(function* () {
       });
     }
 
+    const existingTargetOid = yield* executionContexts.oidForRef(input.cwd, targetCheckpointRef);
+    if (existingTargetOid) {
+      const savedTarget = yield* executionContexts.find(
+        input.threadId,
+        `checkpoint:${targetCheckpointRef}`,
+      );
+      if (
+        !beforeCapture ||
+        !savedTarget ||
+        savedTarget.checkpointOid !== existingTargetOid ||
+        !(yield* executionContexts.compatible(savedTarget, beforeCapture))
+      ) {
+        return yield* Effect.fail(
+          new CheckpointOwnershipConflict(
+            "An existing checkpoint belongs to another or unverifiable checkout.",
+          ),
+        );
+      }
+    }
+
     yield* checkpointStore.captureCheckpoint({
       cwd: input.cwd,
       checkpointRef: targetCheckpointRef,
     });
+    const afterCapture = yield* inspectExecutionContext(input.cwd);
+    if (
+      input.provenanceVerified &&
+      beforeCapture &&
+      afterCapture &&
+      beforeCapture.workspaceId === afterCapture.workspaceId &&
+      beforeCapture.rootPath === afterCapture.rootPath &&
+      beforeCapture.gitCommonDir === afterCapture.gitCommonDir &&
+      beforeCapture.headRef === afterCapture.headRef &&
+      beforeCapture.headCommit === afterCapture.headCommit
+    ) {
+      yield* rememberCheckpointContext(
+        input.threadId,
+        targetCheckpointRef,
+        input.cwd,
+        beforeCapture,
+      );
+    }
 
     // Refresh the workspace entry index so the @-mention file picker
     // reflects files created or deleted during this turn.
@@ -395,6 +474,7 @@ const make = Effect.gen(function* () {
       if (!checkpointCwd) {
         return;
       }
+      const sessionRuntime = yield* resolveSessionRuntimeForThread(thread.id);
 
       // If a placeholder checkpoint exists for this turn, reuse its turn count
       // instead of incrementing past it.
@@ -421,6 +501,8 @@ const make = Effect.gen(function* () {
             : checkpointStatusFromRuntime(event.payload.state),
         assistantMessageId: existingPlaceholder?.assistantMessageId ?? undefined,
         createdAt: event.createdAt,
+        provenanceVerified:
+          Option.isSome(sessionRuntime) && sessionRuntime.value.cwd === checkpointCwd,
       });
     },
   );
@@ -437,16 +519,15 @@ const make = Effect.gen(function* () {
         return;
       }
 
+      const runtime = yield* resolveSessionRuntimeForThread(thread.id);
       const projects = yield* resolveThreadProjects(thread.projectId);
-      const checkpointCwd = yield* resolveCheckpointCwd({
-        threadId: thread.id,
-        thread,
-        projects,
-        preferSessionRuntime: false,
-      });
-      if (!checkpointCwd) {
-        return;
-      }
+      const assignedCwd = resolveThreadWorkspaceCwd({ thread, projects });
+      const checkpointCwd =
+        Option.isSome(runtime) && (yield* checkpointStore.isGitRepository(runtime.value.cwd))
+          ? runtime.value.cwd
+          : assignedCwd;
+      if (!checkpointCwd) return;
+      if (!(yield* checkpointStore.isGitRepository(checkpointCwd))) return;
 
       const currentTurnCount = thread.checkpoints.reduce(
         (maxTurnCount, checkpoint) => Math.max(maxTurnCount, checkpoint.checkpointTurnCount),
@@ -457,21 +538,41 @@ const make = Effect.gen(function* () {
         cwd: checkpointCwd,
         checkpointRef: baselineCheckpointRef,
       });
-      if (baselineExists) {
-        return;
+      const context = yield* inspectExecutionContext(checkpointCwd);
+      if (context && Option.isSome(runtime) && runtime.value.cwd === checkpointCwd) {
+        yield* executionContexts.remember(thread.id, `turn:${turnId}`, context);
       }
-
+      if (!baselineExists) {
+        yield* checkpointStore.captureCheckpoint({
+          cwd: checkpointCwd,
+          checkpointRef: baselineCheckpointRef,
+        });
+        if (context) {
+          yield* rememberCheckpointContext(
+            thread.id,
+            baselineCheckpointRef,
+            checkpointCwd,
+            context,
+          );
+        }
+      }
+      const turnBaselineRef = checkpointBaselineRefForTurn(thread.id, turnId);
       yield* checkpointStore.captureCheckpoint({
         cwd: checkpointCwd,
-        checkpointRef: baselineCheckpointRef,
+        checkpointRef: turnBaselineRef,
       });
-      yield* receiptBus.publish({
-        type: "checkpoint.baseline.captured",
-        threadId: thread.id,
-        checkpointTurnCount: currentTurnCount,
-        checkpointRef: baselineCheckpointRef,
-        createdAt: event.createdAt,
-      });
+      if (context) {
+        yield* rememberCheckpointContext(thread.id, turnBaselineRef, checkpointCwd, context);
+      }
+      if (!baselineExists) {
+        yield* receiptBus.publish({
+          type: "checkpoint.baseline.captured",
+          threadId: thread.id,
+          checkpointTurnCount: currentTurnCount,
+          checkpointRef: baselineCheckpointRef,
+          createdAt: event.createdAt,
+        });
+      }
     },
   );
 
@@ -678,6 +779,10 @@ const make = Effect.gen(function* () {
       cwd: checkpointCwd,
       checkpointRef: baselineCheckpointRef,
     });
+    const context = yield* inspectExecutionContext(checkpointCwd);
+    if (context) {
+      yield* rememberCheckpointContext(threadId, baselineCheckpointRef, checkpointCwd, context);
+    }
     yield* receiptBus.publish({
       type: "checkpoint.baseline.captured",
       threadId,
@@ -742,6 +847,21 @@ const make = Effect.gen(function* () {
         return;
       }
 
+      const assignedCwd = resolveThreadWorkspaceCwd({
+        thread,
+        projects: yield* resolveThreadProjects(thread.projectId),
+      });
+      if (assignedCwd !== checkpointCwd) {
+        yield* appendRevertFailureActivity({
+          threadId: event.payload.threadId,
+          turnCount: event.payload.turnCount,
+          detail:
+            "The provider directory does not match the Session's assigned Workspace. Files and conversation were not changed.",
+          createdAt: now,
+        }).pipe(Effect.catch(() => Effect.void));
+        return;
+      }
+
       const targetCheckpointRef =
         event.payload.turnCount === 0
           ? checkpointRefForThreadTurn(event.payload.threadId, 0)
@@ -759,10 +879,59 @@ const make = Effect.gen(function* () {
         return;
       }
 
+      const savedContext = yield* executionContexts.find(
+        event.payload.threadId,
+        `checkpoint:${targetCheckpointRef}`,
+      );
+      const currentContext = yield* inspectExecutionContext(checkpointCwd).pipe(
+        Effect.catch(() => Effect.succeed(undefined)),
+      );
+      const executionCheckpoint =
+        event.payload.turnCount === 0
+          ? thread.checkpoints.find((checkpoint) => checkpoint.checkpointTurnCount === 1)
+          : thread.checkpoints.find(
+              (checkpoint) => checkpoint.checkpointTurnCount === event.payload.turnCount,
+            );
+      const executionContext = executionCheckpoint
+        ? yield* executionContexts.find(
+            event.payload.threadId,
+            `turn:${executionCheckpoint.turnId}`,
+          )
+        : undefined;
+      const verifiedCheckpointOid = savedContext?.checkpointOid;
+      const compatible =
+        savedContext &&
+        verifiedCheckpointOid &&
+        currentContext &&
+        verifiedCheckpointOid ===
+          (yield* executionContexts.oidForRef(checkpointCwd, targetCheckpointRef))
+          ? yield* executionContexts
+              .compatible(savedContext, currentContext)
+              .pipe(Effect.catch(() => Effect.succeed(false)))
+          : false;
+      const executionCompatible =
+        executionContext && currentContext
+          ? yield* executionContexts
+              .compatible(executionContext, currentContext)
+              .pipe(Effect.catch(() => Effect.succeed(false)))
+          : currentTurnCount === 0;
+      if (!compatible || !verifiedCheckpointOid || !executionCompatible) {
+        yield* appendRevertFailureActivity({
+          threadId: event.payload.threadId,
+          turnCount: event.payload.turnCount,
+          detail:
+            "The checkpoint's original Workspace or checkout cannot be verified against the current checkout. Files and conversation were not changed.",
+          createdAt: now,
+        }).pipe(Effect.catch(() => Effect.void));
+        return;
+      }
+
       const restored = yield* checkpointStore.restoreCheckpoint({
         cwd: checkpointCwd,
-        checkpointRef: targetCheckpointRef,
-        fallbackToHead: event.payload.turnCount === 0,
+        // Restore the verified immutable object; the named Git ref can move
+        // after validation in another process or worktree.
+        checkpointRef: CheckpointRef.make(verifiedCheckpointOid),
+        fallbackToHead: false,
       });
       if (!restored) {
         yield* appendRevertFailureActivity({
@@ -791,6 +960,9 @@ const make = Effect.gen(function* () {
     for (const checkpoint of thread.checkpoints) {
       if (checkpoint.checkpointTurnCount > event.payload.turnCount) {
         staleCheckpointRefs.push(checkpoint.checkpointRef);
+        staleCheckpointRefs.push(
+          checkpointBaselineRefForTurn(event.payload.threadId, checkpoint.turnId),
+        );
       }
     }
 
@@ -799,6 +971,14 @@ const make = Effect.gen(function* () {
         cwd: checkpointCwd,
         checkpointRefs: staleCheckpointRefs,
       });
+    }
+    if (staleCheckpointRefs.length > 0) {
+      yield* executionContexts.forget(event.payload.threadId, [
+        ...staleCheckpointRefs.map((ref) => `checkpoint:${ref}`),
+        ...thread.checkpoints
+          .filter((checkpoint) => checkpoint.checkpointTurnCount > event.payload.turnCount)
+          .map((checkpoint) => `turn:${checkpoint.turnId}`),
+      ]);
     }
 
     yield* orchestrationEngine
@@ -911,13 +1091,7 @@ const make = Effect.gen(function* () {
     }
   });
 
-  const processInput = (
-    input: ReactorInput,
-  ): Effect.Effect<
-    void,
-    CheckpointStoreError | OrchestrationDispatchError | PlatformError.PlatformError,
-    never
-  > =>
+  const processInput = (input: ReactorInput) =>
     input.source === "domain" ? processDomainEvent(input.event) : processRuntimeEvent(input.event);
 
   const processInputSafely = (input: ReactorInput) =>
@@ -971,4 +1145,6 @@ const make = Effect.gen(function* () {
   } satisfies CheckpointReactorShape;
 });
 
-export const CheckpointReactorLive = Layer.effect(CheckpointReactor, make);
+export const CheckpointReactorLive = Layer.effect(CheckpointReactor, make).pipe(
+  Layer.provide(ExecutionContext.layer),
+);
