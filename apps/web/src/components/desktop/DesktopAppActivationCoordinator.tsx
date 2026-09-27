@@ -5,17 +5,16 @@ import { useEffect, useEffectEvent, useRef } from "react";
 import { handleDesktopAppActivationRequest } from "../../desktopAppActivation";
 import { useNewThreadHandler } from "../../hooks/useHandleNewThread";
 import { findProjectByPath, inferProjectTitleFromPath } from "../../lib/projectPaths";
-import { newProjectId } from "../../lib/utils";
 import { readProjects, waitForProject } from "../../state/entities";
 import { usePrimaryEnvironment } from "../../state/environments";
-import { projectEnvironment } from "../../state/projects";
+import { workspaceEnvironment } from "../../state/projects";
 import { useEnvironmentQuery } from "../../state/query";
 import { environmentShell } from "../../state/shell";
 import { useAtomCommand } from "../../state/use-atom-command";
 
 export function DesktopAppActivationCoordinator() {
   const primaryEnvironment = usePrimaryEnvironment();
-  const createProject = useAtomCommand(projectEnvironment.create, { reportFailure: false });
+  const registerWorkspace = useAtomCommand(workspaceEnvironment.register, { reportFailure: false });
   const openThread = useNewThreadHandler();
   const queueRef = useRef(Promise.resolve());
   const activation = window.desktopBridge?.appActivation;
@@ -50,22 +49,18 @@ export function DesktopAppActivationCoordinator() {
           workspaceRoot,
         ) ?? null,
       createProject: async (environmentId, workspaceRoot) => {
-        const projectId = newProjectId();
-        const result = await createProject({
+        const result = await registerWorkspace({
           environmentId,
           input: {
-            projectId,
             title: inferProjectTitleFromPath(workspaceRoot),
-            workspaceRoot,
-            createWorkspaceRootIfMissing: false,
-            defaultModelSelection: null,
+            path: workspaceRoot,
           },
         });
         if (result._tag === "Failure") {
           const error = squashAtomCommandFailure(result);
           throw error instanceof Error ? error : new Error("Awen could not add the project.");
         }
-        return projectId;
+        return result.value.workspace.awenProjectId;
       },
       waitForProject: async (projectRef) => {
         await waitForProject(projectRef);

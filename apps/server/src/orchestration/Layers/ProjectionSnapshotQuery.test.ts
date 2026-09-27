@@ -3541,12 +3541,9 @@ projectionSnapshotLayer("ProjectionSnapshotQuery Awen workspace tree", (it) => {
       `;
       yield* sql`
         INSERT INTO projection_awen_workspaces (
-          workspace_id, awen_project_id, project_id, title, workspace_root,
-          role, created_at, updated_at
+          awen_project_id, project_id, role
         ) VALUES (
-          'workspace:project-register', 'awen-project:project-register',
-          'project-register', 'Registered repo', '/tmp/awen-register', 'main',
-          '2026-09-18T00:00:00Z', '2026-09-18T00:00:00Z'
+          'awen-project:project-register', 'project-register', 'main'
         )
       `;
 
@@ -3590,14 +3587,20 @@ projectionSnapshotLayer("ProjectionSnapshotQuery Awen workspace tree", (it) => {
         )
       `;
       yield* sql`
-        INSERT INTO projection_awen_workspaces (
-          workspace_id, awen_project_id, project_id, title, workspace_root,
-          role, created_at, updated_at
+        INSERT INTO projection_projects (
+          project_id, title, workspace_root, scripts_json, created_at, updated_at
         ) VALUES
-          ('workspace:siblings-main', 'awen-project:siblings', 'siblings-main',
-            'Main', '/tmp/siblings-main', 'main', '2026-09-18T00:00:00Z', '2026-09-18T00:00:00Z'),
-          ('workspace:siblings-feature', 'awen-project:siblings', 'siblings-feature',
-            'Feature', '/tmp/siblings-feature', 'worktree', '2026-09-18T00:00:01Z', '2026-09-18T00:00:01Z')
+          ('siblings-main', 'Main', '/tmp/siblings-main', '[]',
+            '2026-09-18T00:00:00Z', '2026-09-18T00:00:00Z'),
+          ('siblings-feature', 'Feature', '/tmp/siblings-feature', '[]',
+            '2026-09-18T00:00:01Z', '2026-09-18T00:00:01Z')
+      `;
+      yield* sql`
+        INSERT INTO projection_awen_workspaces (
+          awen_project_id, project_id, role
+        ) VALUES
+          ('awen-project:siblings', 'siblings-main', 'main'),
+          ('awen-project:siblings', 'siblings-feature', 'worktree')
       `;
 
       // The method is optional for compatibility with older query layers, so

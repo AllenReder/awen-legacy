@@ -212,11 +212,6 @@ export interface ProjectionSnapshotQueryShape {
     Option.Option<import("@awen/contracts").AwenWorkspaceShell>,
     ProjectionRepositoryError
   >;
-  readonly updateAwenWorkspaceTitle?: (input: {
-    readonly workspaceId: WorkspaceId;
-    readonly title: string;
-    readonly updatedAt: string;
-  }) => Effect.Effect<void, ProjectionRepositoryError>;
   readonly updateAwenProjectTitle?: (input: {
     readonly awenProjectId: AwenProjectId;
     readonly title: string;

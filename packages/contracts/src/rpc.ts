@@ -55,6 +55,8 @@ import {
 import {
   AwenWorkspaceAssociateInput,
   AwenWorkspaceAssociateResult,
+  AwenWorkspaceRegisterInput,
+  AwenWorkspaceRegisterResult,
   AwenWorkspaceCreateWorktreeInput,
   AwenWorkspaceCreateWorktreeResult,
   AwenWorkspaceError,
@@ -317,6 +319,7 @@ export const WS_METHODS = {
 
   // Awen Workspace methods
   awenWorkspaceAssociate: "awenWorkspace.associate",
+  awenWorkspaceRegister: "awenWorkspace.register",
   awenWorkspaceCreateWorktree: "awenWorkspace.createWorktree",
   awenWorkspaceRemove: "awenWorkspace.remove",
   awenWorkspaceRename: "awenWorkspace.rename",
@@ -1039,6 +1042,12 @@ const WsAwenWorkspaceAssociateRpc = Rpc.make(WS_METHODS.awenWorkspaceAssociate, 
   error: Schema.Union([AwenWorkspaceError, EnvironmentAuthorizationError]),
 });
 
+const WsAwenWorkspaceRegisterRpc = Rpc.make(WS_METHODS.awenWorkspaceRegister, {
+  payload: AwenWorkspaceRegisterInput,
+  success: AwenWorkspaceRegisterResult,
+  error: Schema.Union([AwenWorkspaceError, EnvironmentAuthorizationError]),
+});
+
 const WsAwenWorkspaceCreateWorktreeRpc = Rpc.make(WS_METHODS.awenWorkspaceCreateWorktree, {
   payload: AwenWorkspaceCreateWorktreeInput,
   success: AwenWorkspaceCreateWorktreeResult,
@@ -1463,6 +1472,7 @@ export const WsRpcGroup = RpcGroup.make(
  * group stays put and this group gets its own handler layer.
  */
 export const WsAwenWorkspaceRpcGroup = RpcGroup.make(
+  WsAwenWorkspaceRegisterRpc,
   WsAwenWorkspaceAssociateRpc,
   WsAwenWorkspaceCreateWorktreeRpc,
   WsAwenWorkspaceRemoveRpc,

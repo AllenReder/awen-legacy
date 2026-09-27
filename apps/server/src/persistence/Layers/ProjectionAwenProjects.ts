@@ -3,7 +3,6 @@ import {
   awenProjectIdForAwenProject,
   ProjectId,
   ThreadId,
-  workspaceIdForAwenProject,
   WorkspaceId,
 } from "@awen/contracts";
 import * as Effect from "effect/Effect";
@@ -33,7 +32,7 @@ const makeRepository = Effect.gen(function* () {
     Request: ProjectIdInput,
     Result: Schema.Struct({ workspaceId: WorkspaceId, awenProjectId: AwenProjectId }),
     execute: ({ projectId }) => sql`
-      SELECT workspace_id AS "workspaceId", awen_project_id AS "awenProjectId"
+      SELECT 'workspace:' || project_id AS "workspaceId", awen_project_id AS "awenProjectId"
       FROM projection_awen_workspaces
       WHERE project_id = ${projectId}
       LIMIT 1
@@ -44,7 +43,6 @@ const makeRepository = Effect.gen(function* () {
     Effect.gen(function* () {
       const attached = input.awenProjectId !== undefined;
       const awenProjectId = input.awenProjectId ?? awenProjectIdForAwenProject(input.projectId);
-      const workspaceId = workspaceIdForAwenProject(input.projectId);
       const role = input.role ?? "main";
       const origin = input.origin ?? null;
       yield* sql.withTransaction(
@@ -63,9 +61,7 @@ const makeRepository = Effect.gen(function* () {
               });
             }
           } else {
-            // A meta update on a main checkout still renames its derived
-            // Project. The same event on a Workspace attached elsewhere must
-            // not materialize a shadow Project for its Awen project id.
+            // Product Project titles are independent of directory titles.
             yield* sql`
             INSERT INTO projection_awen_projects (
               awen_project_id, title, created_at, updated_at
@@ -76,35 +72,21 @@ const makeRepository = Effect.gen(function* () {
               WHERE project_id = ${input.projectId}
                 AND awen_project_id <> ${awenProjectId}
             )
-            ON CONFLICT (awen_project_id)
-            DO UPDATE SET
-              title = excluded.title,
-              updated_at = excluded.updated_at
+            ON CONFLICT (awen_project_id) DO NOTHING
           `;
           }
-          // Ownership, role, and origin are creation facts: a later event for
-          // the same Awen project (meta update, replayed creation) refreshes the
-          // display fields but must never re-parent or re-role the Workspace.
+          // Ownership, role, and origin are creation facts. Directory metadata
+          // is read from projection_projects and never duplicated here.
           yield* sql`
           INSERT INTO projection_awen_workspaces (
-            workspace_id,
             awen_project_id,
             project_id,
-            title,
-            workspace_root,
             role,
-            origin,
-            created_at,
-            updated_at
+            origin
           ) VALUES (
-            ${workspaceId}, ${awenProjectId}, ${input.projectId}, ${input.title},
-            ${input.workspaceRoot}, ${role}, ${origin}, ${input.createdAt}, ${input.updatedAt}
+            ${awenProjectId}, ${input.projectId}, ${role}, ${origin}
           )
-          ON CONFLICT (project_id)
-          DO UPDATE SET
-            title = excluded.title,
-            workspace_root = excluded.workspace_root,
-            updated_at = excluded.updated_at
+          ON CONFLICT (project_id) DO NOTHING
         `;
         }),
       );
@@ -220,19 +202,21 @@ const makeRepository = Effect.gen(function* () {
         projects.title AS "projectTitle",
         projects.created_at AS "projectCreatedAt",
         projects.updated_at AS "projectUpdatedAt",
-        workspaces.workspace_id AS "workspaceId",
+        'workspace:' || workspaces.project_id AS "workspaceId",
         workspaces.project_id AS "projectId",
-        workspaces.title AS "workspaceTitle",
-        workspaces.workspace_root AS "workspaceRoot",
+        directories.title AS "workspaceTitle",
+        directories.workspace_root AS "workspaceRoot",
         workspaces.role AS "workspaceRole",
         workspaces.origin AS "workspaceOrigin",
-        workspaces.created_at AS "workspaceCreatedAt",
-        workspaces.updated_at AS "workspaceUpdatedAt"
+        directories.created_at AS "workspaceCreatedAt",
+        directories.updated_at AS "workspaceUpdatedAt"
       FROM projection_awen_projects AS projects
       INNER JOIN projection_awen_workspaces AS workspaces
         ON workspaces.awen_project_id = projects.awen_project_id
+      INNER JOIN projection_projects AS directories
+        ON directories.project_id = workspaces.project_id AND directories.deleted_at IS NULL
       ORDER BY projects.created_at ASC, projects.awen_project_id ASC,
-        workspaces.created_at ASC, workspaces.workspace_id ASC
+        directories.created_at ASC, workspaces.project_id ASC
     `,
   });
 
@@ -245,19 +229,21 @@ const makeRepository = Effect.gen(function* () {
         projects.title AS "projectTitle",
         projects.created_at AS "projectCreatedAt",
         projects.updated_at AS "projectUpdatedAt",
-        workspaces.workspace_id AS "workspaceId",
+        'workspace:' || workspaces.project_id AS "workspaceId",
         workspaces.project_id AS "projectId",
-        workspaces.title AS "workspaceTitle",
-        workspaces.workspace_root AS "workspaceRoot",
+        directories.title AS "workspaceTitle",
+        directories.workspace_root AS "workspaceRoot",
         workspaces.role AS "workspaceRole",
         workspaces.origin AS "workspaceOrigin",
-        workspaces.created_at AS "workspaceCreatedAt",
-        workspaces.updated_at AS "workspaceUpdatedAt"
+        directories.created_at AS "workspaceCreatedAt",
+        directories.updated_at AS "workspaceUpdatedAt"
       FROM projection_awen_projects AS projects
       INNER JOIN projection_awen_workspaces AS workspaces
         ON workspaces.awen_project_id = projects.awen_project_id
+      INNER JOIN projection_projects AS directories
+        ON directories.project_id = workspaces.project_id AND directories.deleted_at IS NULL
       WHERE projects.awen_project_id = ${awenProjectId}
-      ORDER BY workspaces.created_at ASC, workspaces.workspace_id ASC
+      ORDER BY directories.created_at ASC, workspaces.project_id ASC
     `,
   });
 
@@ -270,17 +256,19 @@ const makeRepository = Effect.gen(function* () {
         projects.title AS "projectTitle",
         projects.created_at AS "projectCreatedAt",
         projects.updated_at AS "projectUpdatedAt",
-        workspaces.workspace_id AS "workspaceId",
+        'workspace:' || workspaces.project_id AS "workspaceId",
         workspaces.project_id AS "projectId",
-        workspaces.title AS "workspaceTitle",
-        workspaces.workspace_root AS "workspaceRoot",
+        directories.title AS "workspaceTitle",
+        directories.workspace_root AS "workspaceRoot",
         workspaces.role AS "workspaceRole",
         workspaces.origin AS "workspaceOrigin",
-        workspaces.created_at AS "workspaceCreatedAt",
-        workspaces.updated_at AS "workspaceUpdatedAt"
+        directories.created_at AS "workspaceCreatedAt",
+        directories.updated_at AS "workspaceUpdatedAt"
       FROM projection_awen_projects AS projects
       INNER JOIN projection_awen_workspaces AS workspaces
         ON workspaces.awen_project_id = projects.awen_project_id
+      INNER JOIN projection_projects AS directories
+        ON directories.project_id = workspaces.project_id AND directories.deleted_at IS NULL
       WHERE workspaces.project_id = ${projectId}
       LIMIT 1
     `,
@@ -316,19 +304,21 @@ const makeRepository = Effect.gen(function* () {
         projects.title AS "projectTitle",
         projects.created_at AS "projectCreatedAt",
         projects.updated_at AS "projectUpdatedAt",
-        workspaces.workspace_id AS "workspaceId",
+        'workspace:' || workspaces.project_id AS "workspaceId",
         workspaces.project_id AS "projectId",
-        workspaces.title AS "workspaceTitle",
-        workspaces.workspace_root AS "workspaceRoot",
+        directories.title AS "workspaceTitle",
+        directories.workspace_root AS "workspaceRoot",
         workspaces.role AS "workspaceRole",
         workspaces.origin AS "workspaceOrigin",
-        workspaces.created_at AS "workspaceCreatedAt",
-        workspaces.updated_at AS "workspaceUpdatedAt"
+        directories.created_at AS "workspaceCreatedAt",
+        directories.updated_at AS "workspaceUpdatedAt"
       FROM projection_awen_agent_sessions AS sessions
       INNER JOIN projection_awen_workspaces AS workspaces
-        ON workspaces.workspace_id = sessions.workspace_id
+        ON workspaces.project_id = sessions.project_id
       INNER JOIN projection_awen_projects AS projects
         ON projects.awen_project_id = workspaces.awen_project_id
+      INNER JOIN projection_projects AS directories
+        ON directories.project_id = workspaces.project_id AND directories.deleted_at IS NULL
       WHERE sessions.thread_id = ${threadId}
       LIMIT 1
     `,
@@ -385,19 +375,6 @@ const makeRepository = Effect.gen(function* () {
       );
     }).pipe(Effect.mapError(toPersistenceSqlError("ProjectionAwenProjectRepository.remove")));
 
-  const updateWorkspaceTitle: ProjectionAwenProjectRepositoryShape["updateWorkspaceTitle"] = (
-    input,
-  ) =>
-    sql`
-      UPDATE projection_awen_workspaces
-      SET title = ${input.title}, updated_at = ${input.updatedAt}
-      WHERE workspace_id = ${input.workspaceId}
-    `.pipe(
-      Effect.mapError(
-        toPersistenceSqlError("ProjectionAwenProjectRepository.updateWorkspaceTitle"),
-      ),
-    );
-
   const updateProjectTitle: ProjectionAwenProjectRepositoryShape["updateProjectTitle"] = (input) =>
     sql`
       UPDATE projection_awen_projects
@@ -415,7 +392,6 @@ const makeRepository = Effect.gen(function* () {
     unarchiveAgentSession,
     deleteAgentSession,
     removeForProject: remove,
-    updateWorkspaceTitle,
     updateProjectTitle,
     listTree: () =>
       Effect.all([getRows(undefined), getActiveSessionRows({})]).pipe(

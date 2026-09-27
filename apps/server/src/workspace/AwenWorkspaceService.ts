@@ -3,6 +3,8 @@ import {
   AwenWorkspaceError,
   type AwenWorkspaceAssociateInput,
   type AwenWorkspaceAssociateResult,
+  type AwenWorkspaceRegisterInput,
+  type AwenWorkspaceRegisterResult,
   type AwenWorkspaceCreateWorktreeInput,
   type AwenWorkspaceCreateWorktreeResult,
   type AwenWorkspaceRemoveInput,
@@ -49,6 +51,9 @@ import * as TerminalManager from "../terminal/Manager.ts";
 export class AwenWorkspaceService extends Context.Service<
   AwenWorkspaceService,
   {
+    readonly register: (
+      input: AwenWorkspaceRegisterInput,
+    ) => Effect.Effect<AwenWorkspaceRegisterResult, AwenWorkspaceError>;
     readonly associate: (
       input: AwenWorkspaceAssociateInput,
     ) => Effect.Effect<AwenWorkspaceAssociateResult, AwenWorkspaceError>;
@@ -183,8 +188,8 @@ export const make = Effect.gen(function* () {
   const realPathOrResolved = (value: string) =>
     fileSystem.realPath(value).pipe(Effect.orElseSucceed(() => pathService.resolve(value)));
 
-  const normalizeExistingDirectory = (value: string) =>
-    workspacePaths.normalizeWorkspaceRoot(value).pipe(
+  const normalizeExistingDirectory = (value: string, createIfMissing = false) =>
+    workspacePaths.normalizeWorkspaceRoot(value, { createIfMissing }).pipe(
       Effect.mapError((cause) => workspaceError("path-not-found", cause.message, value, cause)),
       Effect.flatMap((resolved) =>
         realPathOrResolved(resolved).pipe(
@@ -237,6 +242,24 @@ export const make = Effect.gen(function* () {
               pathForError,
               cause,
             ),
+          ),
+        );
+      }),
+    );
+
+  const detectRepository = (cwd: string) =>
+    vcsRegistry.detect({ cwd }).pipe(
+      Effect.mapError((cause) =>
+        workspaceError("git-failed", `Could not inspect repository at '${cwd}'.`, cwd, cause),
+      ),
+      Effect.flatMap((handle) => {
+        if (handle === null || handle.kind !== "git") {
+          return Effect.succeed(Option.none<Repository>());
+        }
+        return resolveRepository(cwd).pipe(
+          Effect.map(Option.some),
+          Effect.mapError((cause) =>
+            workspaceError("git-failed", `Could not inspect repository at '${cwd}'.`, cwd, cause),
           ),
         );
       }),
@@ -347,6 +370,70 @@ export const make = Effect.gen(function* () {
       }),
     );
 
+  const register: AwenWorkspaceService["Service"]["register"] = Effect.fn(
+    "AwenWorkspaceService.register",
+  )(function* (input) {
+    const directory = yield* normalizeExistingDirectory(input.path, input.createIfMissing);
+    const repository = yield* detectRepository(directory);
+    const root = Option.isSome(repository) ? repository.value.rootPath : directory;
+    const projects = yield* readAllProjects();
+    const existing = registeredWorkspaceAt(projects, root);
+    if (existing !== undefined) return { workspace: existing, reused: true };
+
+    if (Option.isSome(repository)) {
+      for (const project of projects) {
+        const main =
+          project.workspaces.find((workspace) => workspace.role === "main") ??
+          project.workspaces[0];
+        if (main === undefined) continue;
+        const mainRepository = yield* detectRepository(main.workspaceRoot);
+        if (
+          Option.isSome(mainRepository) &&
+          mainRepository.value.commonDir === repository.value.commonDir
+        ) {
+          return yield* associate({ projectId: project.id, path: root, title: input.title });
+        }
+      }
+    }
+    yield* rejectNestedWorkspace(projects, root);
+    const uuid = yield* crypto.randomUUIDv4.pipe(
+      Effect.mapError((cause) =>
+        workspaceError(
+          "registration-failed",
+          "Could not prepare Workspace registration.",
+          root,
+          cause,
+        ),
+      ),
+    );
+    const projectId = ProjectId.make(`awen-workspace:${uuid}`);
+    const title = input.title?.trim() || pathService.basename(root) || "workspace";
+    const createdAt = DateTime.formatIso(yield* DateTime.now);
+    const registration = yield* orchestrationEngine
+      .dispatch({
+        type: "project.create",
+        commandId: CommandId.make(`awen-workspace:register:${uuid}`),
+        projectId,
+        title,
+        workspaceRoot: root,
+        createWorkspaceRootIfMissing: false,
+        createdAt,
+      })
+      .pipe(Effect.result);
+    const registered = registeredWorkspaceAt(yield* readAllProjects(), root);
+    if (registered === undefined) {
+      return yield* workspaceError(
+        "registration-failed",
+        Result.isFailure(registration)
+          ? `Could not register '${root}': ${String(registration.failure)}`
+          : `Workspace '${root}' was not visible after registration.`,
+        root,
+        Result.isFailure(registration) ? registration.failure : undefined,
+      );
+    }
+    return { workspace: registered, reused: Result.isFailure(registration) };
+  });
+
   const associate: AwenWorkspaceService["Service"]["associate"] = Effect.fn(
     "AwenWorkspaceService.associate",
   )(function* (input) {
@@ -375,7 +462,7 @@ export const make = Effect.gen(function* () {
     yield* rejectNestedWorkspace(projects, checkoutRoot);
 
     const title = input.title?.trim() || pathService.basename(checkoutRoot) || "workspace";
-    const awenProjectId = yield* dispatchCreate({
+    yield* dispatchCreate({
       project,
       workspaceRoot: checkoutRoot,
       title,
@@ -393,9 +480,6 @@ export const make = Effect.gen(function* () {
       ),
     );
     const workspace = yield* registeredWorkspaceFor(input.projectId, checkoutRoot);
-    // Keep the generated Awen identity observable in the projection even though
-    // the returned Workspace identity is the public value callers need.
-    void awenProjectId;
     return { workspace, reused: false };
   });
 
@@ -770,29 +854,33 @@ export const make = Effect.gen(function* () {
           `Workspace '${input.workspaceId}' was not found.`,
         );
       }
-      const updateTitle = projectionQuery.updateAwenWorkspaceTitle;
-      if (updateTitle === undefined) {
-        return yield* workspaceError(
-          "registration-failed",
-          "Workspace rename is unavailable on this server.",
-          workspaceOption.value.workspaceRoot,
-        );
-      }
-      const updatedAt = DateTime.formatIso(yield* DateTime.now);
-      yield* updateTitle({
-        workspaceId: input.workspaceId,
-        title: input.title,
-        updatedAt,
-      }).pipe(
+      const uuid = yield* crypto.randomUUIDv4.pipe(
         Effect.mapError((cause) =>
           workspaceError(
             "registration-failed",
-            `Could not rename Workspace '${input.workspaceId}'.`,
-            workspaceOption.value.workspaceRoot,
+            "Could not prepare Workspace rename.",
+            undefined,
             cause,
           ),
         ),
       );
+      yield* orchestrationEngine
+        .dispatch({
+          type: "project.meta.update",
+          commandId: CommandId.make(`awen-workspace:rename:${uuid}`),
+          projectId: workspaceOption.value.awenProjectId,
+          title: input.title,
+        })
+        .pipe(
+          Effect.mapError((cause) =>
+            workspaceError(
+              "registration-failed",
+              `Could not rename Workspace '${input.workspaceId}'.`,
+              workspaceOption.value.workspaceRoot,
+              cause,
+            ),
+          ),
+        );
       const updated = yield* readWorkspace(input.workspaceId).pipe(
         Effect.mapError((cause) =>
           workspaceError(
@@ -841,6 +929,7 @@ export const make = Effect.gen(function* () {
     });
 
   return AwenWorkspaceService.of({
+    register,
     associate,
     createWorktree,
     remove,

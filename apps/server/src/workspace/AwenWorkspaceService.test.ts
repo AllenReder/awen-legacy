@@ -9,6 +9,7 @@ import {
   type TerminalSummary,
   ThreadId,
   WorkspaceId,
+  VcsRepositoryDetectionError,
   workspaceIdForAwenProject,
 } from "@awen/contracts";
 import * as Effect from "effect/Effect";
@@ -92,6 +93,8 @@ const makeLayer = (input: {
   readonly commonDir: string;
   readonly targetCommonDir?: string;
   readonly dirty?: boolean;
+  readonly nonGit?: boolean;
+  readonly detectFailure?: boolean;
   readonly onCreate?: (
     input: Parameters<GitWorkflowService.GitWorkflowService["Service"]["createWorktree"]>[0],
   ) => void;
@@ -100,10 +103,6 @@ const makeLayer = (input: {
   ) => void;
   readonly readProject: () => AwenProjectShell;
   readonly readWorkspace: () => Option.Option<AwenWorkspaceShell>;
-  readonly onRename?: (input: {
-    readonly workspaceId: WorkspaceId;
-    readonly title: string;
-  }) => void;
   readonly onRenameProject?: (input: {
     readonly awenProjectId: AwenProjectId;
     readonly title: string;
@@ -116,8 +115,6 @@ const makeLayer = (input: {
   const projectionLayer = Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
     getAwenProjectById: () => Effect.succeed(Option.some(input.readProject())),
     getAwenWorkspaceById: () => Effect.succeed(input.readWorkspace()),
-    updateAwenWorkspaceTitle: ({ workspaceId, title }) =>
-      Effect.sync(() => input.onRename?.({ workspaceId, title })),
     updateAwenProjectTitle: ({ awenProjectId, title }) =>
       Effect.sync(() => input.onRenameProject?.({ awenProjectId, title })),
     getShellSnapshot: () =>
@@ -130,13 +127,36 @@ const makeLayer = (input: {
       }),
   });
   const registryLayer = Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({
+    detect: (request) =>
+      input.detectFailure
+        ? Effect.fail(
+            new VcsRepositoryDetectionError({
+              operation: "detectRepository",
+              cwd: request.cwd,
+              detail: "Git inspection timed out",
+            }),
+          )
+        : input.nonGit
+          ? Effect.succeed(null)
+          : Effect.succeed(
+              makeRepositoryHandle(
+                request.cwd === input.root ? input.root : input.sibling,
+                request.cwd === input.root
+                  ? input.commonDir
+                  : (input.targetCommonDir ?? input.commonDir),
+              ),
+            ),
     resolve: (request) =>
-      Effect.succeed(
-        makeRepositoryHandle(
-          request.cwd === input.root ? input.root : input.sibling,
-          request.cwd === input.root ? input.commonDir : (input.targetCommonDir ?? input.commonDir),
-        ),
-      ),
+      input.nonGit
+        ? Effect.die(new Error("No Git repository"))
+        : Effect.succeed(
+            makeRepositoryHandle(
+              request.cwd === input.root ? input.root : input.sibling,
+              request.cwd === input.root
+                ? input.commonDir
+                : (input.targetCommonDir ?? input.commonDir),
+            ),
+          ),
   });
   const gitLayer = Layer.mock(GitVcsDriver.GitVcsDriver)({
     resolveCommit: () => Effect.succeed({ commitSha: "0123456789abcdef0123456789abcdef01234567" }),
@@ -198,6 +218,188 @@ const makeLayer = (input: {
 };
 
 describe("AwenWorkspaceService", () => {
+  it.effect("registers an ordinary directory once and returns its identity on retry", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const parent = yield* fileSystem.makeTempDirectoryScoped({ prefix: "awen-register-" });
+        const root = path.join(parent, "directory");
+        yield* fileSystem.makeDirectory(root);
+        let project = makeProject(path.join(parent, "unrelated"));
+        let creates = 0;
+        const result = yield* Effect.gen(function* () {
+          const service = yield* AwenWorkspaceService.AwenWorkspaceService;
+          const first = yield* service.register({ path: root, title: "My directory" });
+          const second = yield* service.register({ path: root, title: "Ignored retry title" });
+          return { first, second };
+        }).pipe(
+          Effect.provide(
+            makeLayer({
+              root,
+              sibling: root,
+              commonDir: path.join(parent, ".git"),
+              nonGit: true,
+              onDispatch: (command) => {
+                if (command.type !== "project.create") return;
+                creates += 1;
+                project = {
+                  id: AwenProjectId.make(`awen-project:${command.projectId}`),
+                  title: command.title,
+                  workspaces: [
+                    {
+                      id: workspaceIdForAwenProject(command.projectId),
+                      projectId: AwenProjectId.make(`awen-project:${command.projectId}`),
+                      awenProjectId: command.projectId,
+                      title: command.title,
+                      workspaceRoot: command.workspaceRoot,
+                      role: "main",
+                      sessions: [],
+                      createdAt: command.createdAt,
+                      updatedAt: command.createdAt,
+                    },
+                  ],
+                  createdAt: command.createdAt,
+                  updatedAt: command.createdAt,
+                };
+              },
+              readProject: () => project,
+              readWorkspace: () => Option.none(),
+            }),
+          ),
+        );
+        assert.equal(creates, 1);
+        assert.equal(result.first.reused, false);
+        assert.equal(result.second.reused, true);
+        assert.equal(result.second.workspace.id, result.first.workspace.id);
+        assert.equal(result.second.workspace.title, "My directory");
+        assert.equal(result.second.workspace.workspaceRoot, root);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("rejects a missing directory without registering a Workspace", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const parent = yield* fileSystem.makeTempDirectoryScoped({ prefix: "awen-missing-" });
+        const missing = path.join(parent, "missing");
+        let dispatched = false;
+        const error = yield* Effect.gen(function* () {
+          const service = yield* AwenWorkspaceService.AwenWorkspaceService;
+          return yield* service.register({ path: missing }).pipe(Effect.flip);
+        }).pipe(
+          Effect.provide(
+            makeLayer({
+              root: missing,
+              sibling: missing,
+              commonDir: path.join(parent, ".git"),
+              nonGit: true,
+              onDispatch: () => {
+                dispatched = true;
+              },
+              readProject: () => makeProject(path.join(parent, "unrelated")),
+              readWorkspace: () => Option.none(),
+            }),
+          ),
+        );
+        assert.equal(error.reason, "path-not-found");
+        assert.equal(dispatched, false);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("does not register a separate Project when Git inspection fails", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const parent = yield* fileSystem.makeTempDirectoryScoped({ prefix: "awen-git-error-" });
+        const root = path.join(parent, "checkout");
+        yield* fileSystem.makeDirectory(root);
+        let dispatched = false;
+        const error = yield* Effect.gen(function* () {
+          const service = yield* AwenWorkspaceService.AwenWorkspaceService;
+          return yield* service.register({ path: root }).pipe(Effect.flip);
+        }).pipe(
+          Effect.provide(
+            makeLayer({
+              root,
+              sibling: root,
+              commonDir: path.join(parent, ".git"),
+              detectFailure: true,
+              onDispatch: () => {
+                dispatched = true;
+              },
+              readProject: () => makeProject(path.join(parent, "unrelated")),
+              readWorkspace: () => Option.none(),
+            }),
+          ),
+        );
+        assert.equal(error.reason, "git-failed");
+        assert.equal(dispatched, false);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("registers an existing worktree under its repository Project", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const parent = yield* fileSystem.makeTempDirectoryScoped({ prefix: "awen-register-git-" });
+        const root = path.join(parent, "main");
+        const sibling = path.join(parent, "feature");
+        yield* fileSystem.makeDirectory(root);
+        yield* fileSystem.makeDirectory(sibling);
+        let project = makeProject(root);
+        const { first, second } = yield* Effect.gen(function* () {
+          const service = yield* AwenWorkspaceService.AwenWorkspaceService;
+          const first = yield* service.register({ path: sibling });
+          const second = yield* service.register({ path: sibling });
+          return { first, second };
+        }).pipe(
+          Effect.provide(
+            makeLayer({
+              root,
+              sibling,
+              commonDir: path.join(parent, ".git"),
+              onDispatch: (command) => {
+                if (command.type !== "project.create") return;
+                project = {
+                  ...project,
+                  workspaces: [
+                    ...project.workspaces,
+                    {
+                      id: workspaceIdForAwenProject(command.projectId),
+                      projectId: project.id,
+                      awenProjectId: command.projectId,
+                      title: command.title,
+                      workspaceRoot: command.workspaceRoot,
+                      role: "worktree",
+                      origin: "associated",
+                      sessions: [],
+                      createdAt: command.createdAt,
+                      updatedAt: command.createdAt,
+                    },
+                  ],
+                };
+              },
+              readProject: () => project,
+              readWorkspace: () => Option.none(),
+            }),
+          ),
+        );
+        assert.equal(first.reused, false);
+        assert.equal(first.workspace.projectId, project.id);
+        assert.equal(first.workspace.role, "worktree");
+        assert.equal(second.reused, true);
+        assert.equal(second.workspace.id, first.workspace.id);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("associates a sibling worktree and records its origin", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -514,16 +716,14 @@ describe("AwenWorkspaceService", () => {
           root: "/tmp/main",
           sibling: "/tmp/sibling",
           commonDir: "/tmp/main/.git",
-          onDispatch: () => undefined,
+          onDispatch: (command) => {
+            if (command.type === "project.meta.update" && command.title !== undefined) {
+              workspace = { ...workspace, title: command.title };
+              project = { ...project, workspaces: [workspace] };
+            }
+          },
           readProject: () => project,
           readWorkspace: () => Option.some(workspace),
-          onRename: ({ title }) => {
-            workspace = { ...workspace, title };
-            project = {
-              ...project,
-              workspaces: [workspace],
-            };
-          },
         }),
       ),
     );
