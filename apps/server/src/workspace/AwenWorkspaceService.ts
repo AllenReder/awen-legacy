@@ -910,6 +910,17 @@ export const make = Effect.gen(function* () {
           "Project rename is unavailable on this server.",
         );
       }
+      const workspace = yield* mainWorkspaceFor(project);
+      const uuid = yield* crypto.randomUUIDv4.pipe(
+        Effect.mapError((cause) =>
+          workspaceError(
+            "registration-failed",
+            "Could not prepare Project rename.",
+            undefined,
+            cause,
+          ),
+        ),
+      );
       const updatedAt = DateTime.formatIso(yield* DateTime.now);
       yield* updateTitle({
         awenProjectId: input.projectId,
@@ -927,33 +938,35 @@ export const make = Effect.gen(function* () {
       );
       // The title is stored on the product Project. Emit an inherited project
       // event so connected Sidebars refetch that Project after this write.
-      const workspace = yield* mainWorkspaceFor(project);
-      const uuid = yield* crypto.randomUUIDv4.pipe(
-        Effect.mapError((cause) =>
-          workspaceError(
-            "registration-failed",
-            "Could not prepare Project rename.",
-            undefined,
-            cause,
-          ),
-        ),
-      );
-      yield* orchestrationEngine
+      const publishResult = yield* orchestrationEngine
         .dispatch({
           type: "project.meta.update",
           commandId: CommandId.make(`awen-project:rename:${uuid}`),
           projectId: workspace.awenProjectId,
         })
-        .pipe(
+        .pipe(Effect.result);
+      if (Result.isFailure(publishResult)) {
+        yield* updateTitle({
+          awenProjectId: input.projectId,
+          title: project.title,
+          updatedAt: project.updatedAt,
+        }).pipe(
           Effect.mapError((cause) =>
             workspaceError(
               "registration-failed",
-              `Could not publish Project rename '${input.projectId}'.`,
+              `Could not restore Project title after rename publication failed '${input.projectId}'.`,
               undefined,
               cause,
             ),
           ),
         );
+        return yield* workspaceError(
+          "registration-failed",
+          `Could not publish Project rename '${input.projectId}'.`,
+          undefined,
+          publishResult.failure,
+        );
+      }
       return { project: yield* readAwenProject(input.projectId) };
     });
 

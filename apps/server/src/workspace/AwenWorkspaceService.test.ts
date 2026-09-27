@@ -24,6 +24,7 @@ import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as OrchestrationEngine from "../orchestration/Services/OrchestrationEngine.ts";
+import { OrchestrationCommandInvariantError } from "../orchestration/Errors.ts";
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
 import * as AwenWorkspaceService from "./AwenWorkspaceService.ts";
@@ -101,6 +102,7 @@ const makeLayer = (input: {
   readonly onDispatch: (
     command: Parameters<OrchestrationEngine.OrchestrationEngineService["Service"]["dispatch"]>[0],
   ) => void;
+  readonly failProjectRenameDispatch?: boolean;
   readonly readProject: () => AwenProjectShell;
   readonly readWorkspace: () => Option.Option<AwenWorkspaceShell>;
   readonly onRenameProject?: (input: {
@@ -185,10 +187,19 @@ const makeLayer = (input: {
   });
   const orchestrationLayer = Layer.mock(OrchestrationEngine.OrchestrationEngineService)({
     dispatch: (command, _options) =>
-      Effect.sync(() => {
-        input.onDispatch(command);
-        return { sequence: 1 };
-      }),
+      input.failProjectRenameDispatch &&
+      command.type === "project.meta.update" &&
+      command.title === undefined
+        ? Effect.fail(
+            new OrchestrationCommandInvariantError({
+              commandType: command.type,
+              detail: "simulated publish failure",
+            }),
+          )
+        : Effect.sync(() => {
+            input.onDispatch(command);
+            return { sequence: 1 };
+          }),
   });
   const terminalManagerLayer = Layer.mock(TerminalManager.TerminalManager)({
     getMetadata: () => Effect.succeed(input.terminals ?? []),
@@ -743,6 +754,33 @@ describe("AwenWorkspaceService", () => {
           root: "/tmp/main",
           sibling: "/tmp/sibling",
           commonDir: "/tmp/main/.git",
+          onDispatch: () => undefined,
+          readProject: () => project,
+          readWorkspace: () => Option.some(mainWorkspace("/tmp/main")),
+          onRenameProject: ({ title }) => {
+            project = { ...project, title };
+          },
+        }),
+      ),
+    );
+  });
+
+  it.effect("restores the Project title when the rename update cannot be published", () => {
+    let project = makeProject("/tmp/main");
+    return Effect.gen(function* () {
+      const service = yield* AwenWorkspaceService.AwenWorkspaceService;
+      const error = yield* service
+        .renameProject({ projectId: project.id, title: "Renamed" })
+        .pipe(Effect.flip);
+      assert.equal(error.reason, "registration-failed");
+      assert.equal(project.title, "Repository");
+    }).pipe(
+      Effect.provide(
+        makeLayer({
+          root: "/tmp/main",
+          sibling: "/tmp/sibling",
+          commonDir: "/tmp/main/.git",
+          failProjectRenameDispatch: true,
           onDispatch: () => undefined,
           readProject: () => project,
           readWorkspace: () => Option.some(mainWorkspace("/tmp/main")),

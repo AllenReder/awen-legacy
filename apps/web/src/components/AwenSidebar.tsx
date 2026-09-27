@@ -65,6 +65,7 @@ import { nextWorkspaceTerminalId } from "./Sidebar.logic";
 import { requestDestructiveConfirmation } from "../lib/destructiveConfirmation";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { SidebarContent, SidebarGroup } from "./ui/sidebar";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { sessionRouteForTarget } from "../workbench/deepLinks";
 import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
 import { runtimeTerminalIdForTarget, terminalTargetForRuntime } from "../workbench/sessionTarget";
@@ -130,18 +131,27 @@ function SidebarHoverName({
     );
   }
   return (
-    <span className={`relative min-w-0 ${className}`}>
-      <span className="block truncate transition-[opacity,filter] duration-200 ease-in-out group-hover/rename:opacity-0 group-hover/rename:blur-[3px] group-focus-visible/rename:opacity-0 group-focus-visible/rename:blur-[3px] motion-reduce:transition-none">
-        {displayName}
-      </span>
-      <span
-        data-testid={actualTestId}
-        aria-hidden="true"
-        className="pointer-events-none absolute inset-0 block truncate opacity-0 blur-[3px] transition-[opacity,filter] duration-200 ease-in-out group-hover/rename:opacity-100 group-hover/rename:blur-[0px] group-focus-visible/rename:opacity-100 group-focus-visible/rename:blur-[0px] motion-reduce:transition-none"
-      >
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span className={`relative min-w-0 ${className}`}>
+            <span className="block truncate transition-[opacity,filter] duration-200 ease-in-out group-hover/rename:opacity-0 group-hover/rename:blur-[3px] group-focus-visible/rename:opacity-0 group-focus-visible/rename:blur-[3px] motion-reduce:transition-none">
+              {displayName}
+            </span>
+            <span
+              data-testid={actualTestId}
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-0 block truncate opacity-0 blur-[3px] transition-[opacity,filter] duration-200 ease-in-out group-hover/rename:opacity-100 group-hover/rename:blur-[0px] group-focus-visible/rename:opacity-100 group-focus-visible/rename:blur-[0px] motion-reduce:transition-none"
+            >
+              {actualName}
+            </span>
+          </span>
+        }
+      />
+      <TooltipPopup side="right" className="max-w-72 break-all whitespace-normal">
         {actualName}
-      </span>
-    </span>
+      </TooltipPopup>
+    </Tooltip>
   );
 }
 
