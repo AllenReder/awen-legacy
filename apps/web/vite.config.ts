@@ -12,6 +12,7 @@ import pkg from "./package.json" with { type: "json" };
 import { DEV_PROXIED_PATH_PREFIXES } from "@awen/shared/devProxy";
 
 import { loadRepoEnv } from "../../scripts/lib/public-config";
+import { resolveSourcemapMode } from "../../scripts/lib/sourcemap-mode";
 import { thirdPartyLicensesPlugin } from "../../scripts/lib/third-party-licenses";
 import { tailwindPlugins } from "./vite/tailwind";
 
@@ -46,7 +47,7 @@ const configuredHostedAppUrl = (() => {
   }
   return undefined;
 })();
-const sourcemapEnv = process.env.AWEN_WEB_SOURCEMAP?.trim().toLowerCase();
+const sourcemapMode = resolveSourcemapMode(process.env.AWEN_WEB_SOURCEMAP);
 
 // Vite 8.1's experimental bundled dev mode: serves rolldown-bundled chunks in
 // dev for much faster startup/reload on large module graphs, with HMR served
@@ -56,12 +57,7 @@ const sourcemapEnv = process.env.AWEN_WEB_SOURCEMAP?.trim().toLowerCase();
 const bundledDevEnv = process.env.AWEN_BUNDLED_DEV?.trim().toLowerCase();
 const bundledDev = bundledDevEnv === "1" || bundledDevEnv === "true";
 
-const buildSourcemap: boolean | "hidden" =
-  sourcemapEnv === "0" || sourcemapEnv === "false"
-    ? false
-    : sourcemapEnv === "hidden"
-      ? "hidden"
-      : true;
+// AWEN_WEB_SOURCEMAP decides both maps; see scripts/lib/sourcemap-mode.ts.
 
 const unitTestProject = {
   extends: true,
@@ -251,13 +247,13 @@ export default defineConfig(() => {
     // @tailwindcss/vite only emits a CSS sourcemap when devSourcemap is on; without it
     // rolldown flags the transform as SOURCEMAP_BROKEN on every sourcemapped build.
     css: {
-      devSourcemap: buildSourcemap !== false,
+      devSourcemap: sourcemapMode.cssDev,
     },
     build: {
       outDir: "dist",
       emptyOutDir: true,
       manifest: true,
-      sourcemap: buildSourcemap,
+      sourcemap: sourcemapMode.build,
     },
     test: {
       projects: [defineProject(unitTestProject)],
