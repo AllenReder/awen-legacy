@@ -1,4 +1,13 @@
-import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@awen/contracts";
+import {
+  ClientOrchestrationCommand,
+  CommandId,
+  ProjectId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  ThreadId,
+  type ServerProvider,
+} from "@awen/contracts";
+import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 import {
   applyProviderInstanceSettings,
@@ -10,7 +19,25 @@ import {
   resolveDefaultProviderModelSelection,
   resolveSelectableProviderInstance,
   resolveProviderDriverKindForInstanceSelection,
+  NO_PROVIDER_MODEL_SELECTION,
 } from "./providerInstances";
+
+it("encodes creation of an empty Agent Session before a provider is selected", () => {
+  const result = Schema.encodeExit(ClientOrchestrationCommand)({
+    type: "thread.create",
+    commandId: CommandId.make("create-empty-session"),
+    threadId: ThreadId.make("empty-session"),
+    projectId: ProjectId.make("project"),
+    title: "New Agent Session",
+    modelSelection: NO_PROVIDER_MODEL_SELECTION,
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    branch: null,
+    worktreePath: null,
+    createdAt: "2026-09-27T00:00:00.000Z",
+  });
+  expect(result._tag).toBe("Success");
+});
 
 function provider(input: {
   provider: ProviderDriverKind;

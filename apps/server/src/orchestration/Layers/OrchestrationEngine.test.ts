@@ -286,7 +286,10 @@ describe("OrchestrationEngine", () => {
     const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "awen-awen-sessions-"));
     const databasePath = NodePath.join(directory, "state.sqlite");
     const first = await createOrchestrationSystem(databasePath);
-    const modelSelection = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" };
+    const modelSelection = {
+      instanceId: ProviderInstanceId.make("awen_no_provider"),
+      model: "awen_no_model",
+    };
 
     try {
       for (const [projectId, workspaceRoot, threadId] of [
