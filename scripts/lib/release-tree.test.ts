@@ -143,6 +143,79 @@ describe("pruneReleaseTree", () => {
       );
     });
   });
+
+  it("drops another platform's native package and keeps the target's", () => {
+    withTree(
+      [
+        "node_modules/@ff-labs/fff-node/dist/src/index.js",
+        "node_modules/@ff-labs/fff-bin-darwin-arm64/libfff_c.dylib",
+        "node_modules/@ff-labs/fff-bin-darwin-x64/libfff_c.dylib",
+        "node_modules/@ff-labs/fff-bin-linux-x64-gnu/libfff_c.so",
+        "node_modules/effect/dist/index.js",
+      ],
+      (root) => {
+        pruneReleaseTree(root, DARWIN_ARM64);
+
+        expect(
+          NodeFS.existsSync(NodePath.join(root, "node_modules/@ff-labs/fff-bin-darwin-arm64")),
+        ).toBe(true);
+        expect(
+          NodeFS.existsSync(NodePath.join(root, "node_modules/@ff-labs/fff-bin-darwin-x64")),
+        ).toBe(false);
+        expect(
+          NodeFS.existsSync(NodePath.join(root, "node_modules/@ff-labs/fff-bin-linux-x64-gnu")),
+        ).toBe(false);
+        expect(NodeFS.existsSync(NodePath.join(root, "node_modules/@ff-labs/fff-node"))).toBe(true);
+        expect(NodeFS.existsSync(NodePath.join(root, "node_modules/effect"))).toBe(true);
+      },
+    );
+  });
+
+  it("keeps every libc build of the target platform for a Linux host", () => {
+    withTree(
+      [
+        "node_modules/@ff-labs/fff-bin-linux-x64-gnu/libfff_c.so",
+        "node_modules/@ff-labs/fff-bin-linux-x64-musl/libfff_c.so",
+        "node_modules/@ff-labs/fff-bin-darwin-arm64/libfff_c.dylib",
+      ],
+      (root) => {
+        pruneReleaseTree(root, LINUX_X64);
+
+        expect(
+          NodeFS.existsSync(NodePath.join(root, "node_modules/@ff-labs/fff-bin-linux-x64-gnu")),
+        ).toBe(true);
+        expect(
+          NodeFS.existsSync(NodePath.join(root, "node_modules/@ff-labs/fff-bin-linux-x64-musl")),
+        ).toBe(true);
+        expect(
+          NodeFS.existsSync(NodePath.join(root, "node_modules/@ff-labs/fff-bin-darwin-arm64")),
+        ).toBe(false);
+      },
+    );
+  });
+
+  it("drops an isolated-store entry for another platform and the link that points at it", () => {
+    const root = makeTree([
+      "node_modules/.pnpm/@ff-labs+fff-bin-linux-x64-gnu@0.9.4/node_modules/@ff-labs/fff-bin-linux-x64-gnu/libfff_c.so",
+      "node_modules/@ff-labs/fff-node/dist/src/index.js",
+    ]);
+    try {
+      const linkPath = NodePath.join(root, "node_modules/@ff-labs/fff-bin-linux-x64-gnu");
+      const linkTarget = NodePath.join(
+        root,
+        "node_modules/.pnpm/@ff-labs+fff-bin-linux-x64-gnu@0.9.4/node_modules/@ff-labs/fff-bin-linux-x64-gnu",
+      );
+      NodeFS.symlinkSync(linkTarget, linkPath, "dir");
+
+      pruneReleaseTree(root, DARWIN_ARM64);
+
+      expect(NodeFS.existsSync(linkPath)).toBe(false);
+      expect(NodeFS.existsSync(linkTarget)).toBe(false);
+      expect(NodeFS.existsSync(NodePath.join(root, "node_modules/@ff-labs/fff-node"))).toBe(true);
+    } finally {
+      NodeFS.rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("assertReleaseTreePruned", () => {
@@ -171,6 +244,12 @@ describe("assertReleaseTreePruned", () => {
   it("names a platform directory outside the enumerated platforms", () => {
     withTree(["node_modules/pty/prebuilds/aix-ppc64/pty.node"], (root) => {
       expect(() => assertReleaseTreePruned(root, LINUX_X64)).toThrow(/aix-ppc64/u);
+    });
+  });
+
+  it("names a native package that belongs to another platform", () => {
+    withTree(["node_modules/@ff-labs/fff-bin-darwin-arm64/libfff_c.dylib"], (root) => {
+      expect(() => assertReleaseTreePruned(root, LINUX_X64)).toThrow(/fff-bin-darwin-arm64/u);
     });
   });
 });

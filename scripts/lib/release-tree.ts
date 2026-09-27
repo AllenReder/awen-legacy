@@ -5,12 +5,18 @@ import * as NodePath from "node:path";
 /**
  * Release trees carry only what the packaged daemon runs.
  *
- * Two kinds of entry never earn their place in an installer: source maps and
- * debug symbols (`*.map`, `*.pdb`), which serve a developer reading a stack
- * trace, and prebuilt native binaries for a platform the artifact is not for.
- * `node-pty` alone ships ~58 MB of win32 binaries and ~53 MB of `.pdb` symbols
- * inside the Linux x64 daemon package, and the server bundle's own source maps
- * embed the full TypeScript text of every module.
+ * Three kinds of entry never earn their place in an installer:
+ *
+ * - source maps and debug symbols (`*.map`, `*.pdb`), which serve a developer
+ *   reading a stack trace;
+ * - prebuilt native binaries for a platform the artifact is not for, such as
+ *   `node-pty`'s `prebuilds/win32-x64`;
+ * - packages that ship one platform's native library under a platform-suffixed
+ *   name, such as `@ff-labs/fff-bin-linux-x64-gnu` or `@swc/core-darwin-arm64`.
+ *
+ * Together they were 36.5 MB of source maps, 52.8 MB of Windows `.pdb` symbols,
+ * 58.2 MB of win32 prebuilds, and ~25 MB of foreign native packages inside the
+ * shipped macOS app.
  */
 const PRUNED_FILE_SUFFIXES = [".map", ".pdb"] as const;
 
@@ -23,7 +29,7 @@ const PRUNED_FILE_SUFFIXES = [".map", ".pdb"] as const;
  */
 const PREBUILD_DIRECTORY_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)+$/u;
 
-/** `process.platform` spellings that can name a prebuild directory. */
+/** `process.platform` spellings that can name a prebuild directory or package. */
 const SUPPORTED_PLATFORMS = new Set([
   "aix",
   "android",
@@ -35,7 +41,7 @@ const SUPPORTED_PLATFORMS = new Set([
   "win32",
 ]);
 
-/** `process.arch` spellings that can name a prebuild directory. */
+/** `process.arch` spellings that can name a prebuild directory or package. */
 const SUPPORTED_ARCHES = new Set([
   "arm",
   "arm64",
@@ -82,6 +88,59 @@ function isForeignPrebuildDirectory(
   return !(platformToken.startsWith(target.platform) && entryName.endsWith(`-${target.arch}`));
 }
 
+/**
+ * The package a directory stands for, when it is a package root
+ * (`node_modules/<name>`, `node_modules/@scope/<name>`) or a pnpm store entry
+ * (`node_modules/.pnpm/<key>`). Any other directory — a scope, a `dist/`, a
+ * `prebuilds/` child — returns null.
+ */
+function platformPackageEntryName(directory: string): string | null {
+  const parent = NodePath.dirname(directory);
+  const parentName = NodePath.basename(parent);
+  if (parentName === ".pnpm" || parentName === "node_modules") {
+    return NodePath.basename(directory);
+  }
+  if (
+    parentName.startsWith("@") &&
+    NodePath.basename(NodePath.dirname(parent)) === "node_modules"
+  ) {
+    return NodePath.basename(directory);
+  }
+  return null;
+}
+
+/**
+ * The `<platform>-<arch>` pair a package name carries, when it carries one:
+ * `@ff-labs/fff-bin-linux-x64-gnu`, `@swc/core-darwin-arm64`, or the pnpm store
+ * key `@ff-labs+fff-bin-linux-x64-gnu@0.9.4`. The surrounding words are not
+ * interpreted, so a package that merely mentions a platform stays.
+ */
+function platformPackageTarget(entryName: string): { platform: string; arch: string } | null {
+  const tokens = entryName.split("-");
+  for (let index = 0; index + 1 < tokens.length; index += 1) {
+    const platform = tokens[index] ?? "";
+    const arch = tokens[index + 1] ?? "";
+    if (SUPPORTED_PLATFORMS.has(platform) && SUPPORTED_ARCHES.has(arch)) {
+      return { platform, arch };
+    }
+  }
+  return null;
+}
+
+/**
+ * A package that ships another platform's native library. Every libc build of
+ * the target platform and arch stays (`linux-x64-gnu` and `linux-x64-musl` on a
+ * Linux x64 package), because the host may be either.
+ */
+function isForeignPlatformPackage(directory: string, target: ReleaseTarget): boolean {
+  const entryName = platformPackageEntryName(directory);
+  if (entryName === null) return false;
+  const packaged = platformPackageTarget(entryName);
+  return (
+    packaged !== null && (packaged.platform !== target.platform || packaged.arch !== target.arch)
+  );
+}
+
 function assertSupportedTarget(target: ReleaseTarget): void {
   if (!SUPPORTED_PLATFORMS.has(target.platform)) {
     throw new Error(
@@ -97,8 +156,8 @@ function assertSupportedTarget(target: ReleaseTarget): void {
 
 /**
  * Every entry the installed daemon cannot load. Directories are named instead
- * of their contents, so a foreign prebuild counts once however many binaries
- * it holds.
+ * of their contents, so a foreign prebuild or package counts once however many
+ * binaries it holds.
  */
 function collectReleaseOnlyEntries(root: string, target: ReleaseTarget): string[] {
   const entries: string[] = [];
@@ -108,11 +167,20 @@ function collectReleaseOnlyEntries(root: string, target: ReleaseTarget): string[
     for (const entry of NodeFS.readdirSync(directory, { withFileTypes: true })) {
       const entryPath = NodePath.join(directory, entry.name);
       if (entry.isDirectory()) {
-        if (isForeignPrebuildDirectory(entry.name, parentName, target)) {
+        if (
+          isForeignPrebuildDirectory(entry.name, parentName, target) ||
+          isForeignPlatformPackage(entryPath, target)
+        ) {
           entries.push(entryPath);
           continue;
         }
         walk(entryPath);
+        continue;
+      }
+      // A package link in an isolated layout is dropped with the store entry it
+      // points at; leaving it would ship a link to a path that no longer exists.
+      if (entry.isSymbolicLink() && isForeignPlatformPackage(entryPath, target)) {
+        entries.push(entryPath);
         continue;
       }
       if (hasPrunedSuffix(entry.name)) entries.push(entryPath);
@@ -139,9 +207,9 @@ function measureRemoval(entryPath: string): ReleaseTreePruning {
 
 /**
  * Refuses a staged tree that still carries source maps, debug symbols, or
- * another platform's prebuilt binaries. `pruneReleaseTree` runs this over the
- * tree as it stands on disk, so an entry the rules cannot classify fails the
- * build instead of shipping silently.
+ * another platform's prebuilt binaries and native packages. `pruneReleaseTree`
+ * runs this over the tree as it stands on disk, so an entry the rules cannot
+ * classify fails the build instead of shipping silently.
  */
 export function assertReleaseTreePruned(root: string, target: ReleaseTarget): void {
   assertSupportedTarget(target);
