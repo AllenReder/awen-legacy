@@ -17,6 +17,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { resolveBrowserNavigationTarget } from "~/browser/browserTargetResolver";
 import { isTauri } from "~/env";
+import { ensureLocalApi } from "~/localApi";
 import { useEnvironments } from "~/state/environments";
 import { previewEnvironment } from "~/state/preview";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -52,6 +53,7 @@ export function TauriProofAutomationHosts() {
 
 function TauriProofAutomationHost({ environmentId }: { readonly environmentId: EnvironmentId }) {
   const pages = useRef(new Map<string, NativePage>());
+  const closingPages = useRef(new Set<string>());
   const currentByThread = useRef(new Map<string, string>());
   const [openPages, setOpenPages] = useState<ReadonlyArray<NativePage>>([]);
   const [closeResult, setCloseResult] = useState("");
@@ -289,29 +291,43 @@ function TauriProofAutomationHost({ environmentId }: { readonly environmentId: E
   }, [clientId, connectionId, environmentId, focusHost]);
 
   const requestClose = async (page: NativePage) => {
-    if (!window.confirm(`Close Agent browser page ${page.tabId}?`)) {
-      setCloseResult(`Cancelled close of ${page.tabId}; the page remains available.`);
-      return;
-    }
-    await invoke("close", { tab: page.slot });
-    pages.current.delete(page.tabId);
-    if (currentByThread.current.get(page.threadId) === page.tabId) {
-      const remaining = Array.from(pages.current.values()).find(
-        (candidate) => candidate.threadId === page.threadId,
+    if (closingPages.current.has(page.tabId)) return;
+    closingPages.current.add(page.tabId);
+    try {
+      if (
+        !(await ensureLocalApi().dialogs.confirm(`Close Agent browser page ${page.tabId}?`, {
+          variant: "destructive",
+        }))
+      ) {
+        setCloseResult(`Cancelled close of ${page.tabId}; the page remains available.`);
+        return;
+      }
+      if (pages.current.get(page.tabId) !== page) {
+        setCloseResult(`Page ${page.tabId} changed while confirming close; nothing was closed.`);
+        return;
+      }
+      await invoke("close", { tab: page.slot });
+      pages.current.delete(page.tabId);
+      if (currentByThread.current.get(page.threadId) === page.tabId) {
+        const remaining = Array.from(pages.current.values()).find(
+          (candidate) => candidate.threadId === page.threadId,
+        );
+        if (remaining) currentByThread.current.set(page.threadId, remaining.tabId);
+        else currentByThread.current.delete(page.threadId);
+      }
+      setOpenPages(Array.from(pages.current.values()));
+      const closed = await closePreview({
+        environmentId,
+        input: { threadId: page.threadId, tabId: page.tabId },
+      });
+      setCloseResult(
+        closed._tag === "Failure"
+          ? `Native page closed, but daemon cleanup failed: ${String(squashAtomCommandFailure(closed))}`
+          : `Closed ${page.tabId}; the next Agent call must report the missing page.`,
       );
-      if (remaining) currentByThread.current.set(page.threadId, remaining.tabId);
-      else currentByThread.current.delete(page.threadId);
+    } finally {
+      closingPages.current.delete(page.tabId);
     }
-    setOpenPages(Array.from(pages.current.values()));
-    const closed = await closePreview({
-      environmentId,
-      input: { threadId: page.threadId, tabId: page.tabId },
-    });
-    setCloseResult(
-      closed._tag === "Failure"
-        ? `Native page closed, but daemon cleanup failed: ${String(squashAtomCommandFailure(closed))}`
-        : `Closed ${page.tabId}; the next Agent call must report the missing page.`,
-    );
   };
 
   return (
