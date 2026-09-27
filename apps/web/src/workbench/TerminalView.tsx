@@ -1,7 +1,9 @@
 import { TerminalViewport } from "../components/ThreadTerminalDrawer";
 import { useAwenWorkspace } from "../state/entities";
+import { useEnvironment } from "../state/environments";
 import { runtimeTerminalIdForTarget } from "./sessionTarget";
 import type { ViewTarget } from "./viewRegistry";
+import { WifiOff } from "lucide-react";
 
 interface TerminalViewProps {
   readonly target: Extract<ViewTarget, { kind: "workspaceTerminal" }>;
@@ -36,7 +38,26 @@ export function TerminalView({
 }: TerminalViewProps) {
   const workspace = useAwenWorkspace(target.environmentId, target.workspaceId);
   const terminalId = runtimeTerminalIdForTarget(target);
+  const environment = useEnvironment(target.environmentId);
   if (workspace === null || terminalId === null) {
+    const isOffline = environment !== null && environment.connection.phase !== "connected";
+    if (isOffline) {
+      return (
+        <div
+          data-testid="workspace-terminal-offline-state"
+          className="flex h-full min-h-0 flex-col items-center justify-center p-6 text-sm text-muted-foreground gap-2"
+        >
+          <WifiOff className="size-5 text-muted-foreground/60" />
+          <span>
+            {environment.label} is{" "}
+            {environment.connection.phase === "reconnecting" ? "reconnecting" : "offline"}.
+          </span>
+          <span className="text-xs text-muted-foreground/60">
+            Terminal session will reconnect automatically.
+          </span>
+        </div>
+      );
+    }
     return (
       <div className="flex h-full min-h-0 items-center justify-center p-6 text-sm text-muted-foreground">
         Terminal Session is no longer available.

@@ -10,6 +10,10 @@ import {
 } from "react";
 
 import type { EnvironmentAwenProject } from "@awen/client-runtime/state/models";
+import type { EnvironmentId } from "@awen/contracts";
+import { useEnvironment } from "../state/environments";
+import { cn } from "~/lib/utils";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import type { PaneShadow } from "@awen/contracts/settings";
 import { usePrimarySettings } from "../hooks/useSettings";
 import type { SplitDir } from "./layout";
@@ -599,6 +603,7 @@ function Pane({ tab, projects, paneId, focused }: PaneProps) {
         paneId={paneId}
         breadcrumbs={breadcrumbs}
         focused={focused}
+        target={target}
         onDragStart={drag.onPointerDown}
         onClose={() => void requestClosePane(paneId)}
       />
@@ -622,15 +627,55 @@ function Pane({ tab, projects, paneId, focused }: PaneProps) {
   );
 }
 
+function PaneEnvironmentBadge({ environmentId }: { readonly environmentId: EnvironmentId }) {
+  const environment = useEnvironment(environmentId);
+  if (!environment) return null;
+
+  const phase = environment.connection.phase;
+  const isConnected = phase === "connected";
+  const isConnecting = phase === "connecting" || phase === "reconnecting";
+  const tooltipText = `Environment: ${environment.label} (${phase})`;
+
+  const badge = (
+    <div
+      role="status"
+      data-testid="pane-environment-badge"
+      aria-label={tooltipText}
+      className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium bg-muted/60 text-muted-foreground shrink-0 select-none cursor-default"
+    >
+      <span
+        className={cn(
+          "size-1.5 rounded-full shrink-0",
+          isConnected ? "bg-success" : isConnecting ? "bg-warning animate-pulse" : "bg-destructive",
+        )}
+      />
+      <span className="truncate max-w-[120px]">{environment.label}</span>
+    </div>
+  );
+
+  if (typeof window === "undefined") {
+    return badge;
+  }
+
+  return (
+    <Tooltip>
+      <TooltipTrigger render={badge} />
+      <TooltipPopup side="top">{tooltipText}</TooltipPopup>
+    </Tooltip>
+  );
+}
+
 function PaneHeader({
   breadcrumbs,
   focused,
+  target,
   onDragStart,
   onClose,
 }: {
   readonly paneId: string;
   readonly breadcrumbs: readonly string[];
   readonly focused: boolean;
+  readonly target: ViewTarget | null;
   readonly onDragStart: (event: ReactPointerEvent<HTMLElement>) => void;
   readonly onClose: () => void;
 }) {
@@ -680,7 +725,10 @@ function PaneHeader({
           </span>
         ))}
       </div>
-      <div className="flex items-center gap-0.5">
+      <div className="flex items-center gap-1.5 shrink-0 ml-2">
+        {target !== null && "environmentId" in target ? (
+          <PaneEnvironmentBadge environmentId={target.environmentId} />
+        ) : null}
         <button
           type="button"
           aria-label="Close pane"

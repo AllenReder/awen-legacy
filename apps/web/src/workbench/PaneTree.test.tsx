@@ -12,6 +12,7 @@ import { resetWorkbenchStore, useWorkbenchStore } from "./workbenchStore";
 import { getActiveTab } from "./workbenchState";
 import { createWelcomeViewDefinition } from "./welcomeViewDefinition";
 import type { EnvironmentId, WorkspaceId } from "@awen/contracts";
+import * as environmentsModule from "../state/environments";
 
 let renderer: ReactTestRenderer | undefined;
 afterEach(async () => {
@@ -504,4 +505,60 @@ it("preserves inactive tab DOM in Keep-Alive state with display: none instead of
   expect(vp1.props.style?.display).toBeUndefined();
   expect(vp2.props["data-tab-active"]).toBe("false");
   expect(vp2.props.style?.display).toBe("none");
+});
+
+it("renders environment badge in Pane header identifying local vs remote hosts", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  registerViewDefinition({
+    id: "workspace",
+    label: "Workspace",
+    accepts: (target): target is Extract<ViewTarget, { kind: "workspace" }> =>
+      target.kind === "workspace",
+    bind: emptyViewBinding,
+    Component: () => <output>test</output>,
+  });
+
+  const targetA = {
+    kind: "workspace" as const,
+    environmentId: "local" as EnvironmentId,
+    workspaceId: "w1" as WorkspaceId,
+  };
+  const targetB = {
+    kind: "workspace" as const,
+    environmentId: "remote-wsl" as EnvironmentId,
+    workspaceId: "w1" as WorkspaceId,
+  };
+
+  vi.spyOn(environmentsModule, "useEnvironment").mockImplementation((envId) => {
+    if (envId === "remote-wsl") {
+      return {
+        environmentId: "remote-wsl" as EnvironmentId,
+        label: "WSL",
+        displayUrl: null,
+        entry: {} as any,
+        connection: { phase: "connected", error: null, traceId: null, failureCode: null },
+        serverConfig: null,
+      };
+    }
+    return {
+      environmentId: "local" as EnvironmentId,
+      label: "Local",
+      displayUrl: null,
+      entry: {} as any,
+      connection: { phase: "connected", error: null, traceId: null, failureCode: null },
+      serverConfig: null,
+    };
+  });
+
+  useWorkbenchStore.getState().openTarget(targetA);
+  useWorkbenchStore.getState().splitFocused(targetB, "right");
+
+  await act(() => {
+    renderer = create(<Harness />);
+  });
+
+  const badges = renderer!.root.findAllByProps({ "data-testid": "pane-environment-badge" });
+  expect(badges.length).toBe(2);
+  expect(badges[0]?.props["aria-label"]).toContain("Local");
+  expect(badges[1]?.props["aria-label"]).toContain("WSL");
 });

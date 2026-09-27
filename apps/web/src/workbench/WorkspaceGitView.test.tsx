@@ -6,6 +6,7 @@ import type { EnvironmentId, WorkspaceId } from "@awen/contracts";
 import { WorkspaceGitView } from "./WorkspaceGitView";
 import { resolveViewDefinition, type ViewTarget } from "./viewRegistry";
 import { registerCoreViewDefinitions } from "./viewDefinitions";
+import * as environmentsModule from "../state/environments";
 
 vi.mock("../state/entities", () => ({
   useAwenWorkspace: (env: string, id: string) =>
@@ -72,6 +73,46 @@ describe("WorkspaceGitView", () => {
         initialGitScope: "unstaged",
       }),
     );
+  });
+
+  it("renders offline state when workspace is missing and environment is disconnected", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+
+    const target: Extract<ViewTarget, { kind: "workspace" }> = {
+      kind: "workspace",
+      definitionId: "gitView",
+      environmentId: "env-offline" as EnvironmentId,
+      workspaceId: "ws-missing" as WorkspaceId,
+    };
+
+    vi.spyOn(environmentsModule, "useEnvironment").mockReturnValueOnce({
+      environmentId: "env-offline" as EnvironmentId,
+      label: "WSL-Remote",
+      displayUrl: null,
+      entry: {} as any,
+      connection: {
+        phase: "reconnecting",
+        error: "Connection lost",
+        traceId: null,
+        failureCode: null,
+      },
+      serverConfig: null,
+    });
+
+    await act(() => {
+      renderer = create(
+        <WorkspaceGitView
+          target={target}
+          paneId="pane-offline"
+          focused
+          availableSize={availableSize}
+        />,
+      );
+    });
+
+    expect(
+      renderer.root.findByProps({ "data-testid": "workspace-git-offline-state" }),
+    ).toBeDefined();
   });
 
   it("renders unavailable state when workspace is missing", async () => {

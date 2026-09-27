@@ -1,10 +1,13 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
+  AgentSessionId,
   AwenProjectId,
   type AwenProjectShell,
   type AwenWorkspaceShell,
   ProjectId,
+  type TerminalSummary,
+  ThreadId,
   WorkspaceId,
   workspaceIdForAwenProject,
 } from "@awen/contracts";
@@ -23,6 +26,7 @@ import * as OrchestrationEngine from "../orchestration/Services/OrchestrationEng
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
 import * as AwenWorkspaceService from "./AwenWorkspaceService.ts";
+import * as TerminalManager from "../terminal/Manager.ts";
 
 const NOW = "2026-09-19T00:00:00.000Z";
 
@@ -34,6 +38,21 @@ function mainWorkspace(root: string): AwenWorkspaceShell {
     title: "main",
     workspaceRoot: root,
     role: "main",
+    sessions: [],
+    createdAt: NOW,
+    updatedAt: NOW,
+  };
+}
+
+function siblingWorkspace(root: string): AwenWorkspaceShell {
+  return {
+    id: WorkspaceId.make("workspace:sibling"),
+    projectId: AwenProjectId.make("awen-project:main"),
+    awenProjectId: ProjectId.make("project-main"),
+    title: "sibling",
+    workspaceRoot: root,
+    role: "worktree",
+    origin: "awen-created",
     sessions: [],
     createdAt: NOW,
     updatedAt: NOW,
@@ -89,6 +108,7 @@ const makeLayer = (input: {
     readonly awenProjectId: AwenProjectId;
     readonly title: string;
   }) => void;
+  readonly terminals?: ReadonlyArray<TerminalSummary>;
 }) => {
   const serverConfigLayer = ServerConfig.layerTest(process.cwd(), {
     prefix: "awen-workspace-service-test-",
@@ -150,6 +170,19 @@ const makeLayer = (input: {
         return { sequence: 1 };
       }),
   });
+  const terminalManagerLayer = Layer.mock(TerminalManager.TerminalManager)({
+    getMetadata: () => Effect.succeed(input.terminals ?? []),
+    open: () => Effect.die("unexpected"),
+    attachStream: () => Effect.die("unexpected"),
+    write: () => Effect.die("unexpected"),
+    resize: () => Effect.die("unexpected"),
+    clear: () => Effect.die("unexpected"),
+    rename: () => Effect.die("unexpected"),
+    restart: () => Effect.die("unexpected"),
+    close: () => Effect.die("unexpected"),
+    subscribe: () => Effect.die("unexpected"),
+    subscribeMetadata: () => Effect.die("unexpected"),
+  });
 
   return AwenWorkspaceService.layer.pipe(
     Layer.provide(projectionLayer),
@@ -157,6 +190,7 @@ const makeLayer = (input: {
     Layer.provide(gitLayer),
     Layer.provide(workflowLayer),
     Layer.provide(orchestrationLayer),
+    Layer.provide(terminalManagerLayer),
     Layer.provide(WorkspacePaths.layer),
     Layer.provide(serverConfigLayer),
     Layer.provideMerge(NodeServices.layer),
@@ -330,6 +364,115 @@ describe("AwenWorkspaceService", () => {
         assert.equal(result.workspace.origin, "awen-created");
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("blocks Workspace removal when active agent Sessions exist", () => {
+    const workspace: AwenWorkspaceShell = {
+      ...siblingWorkspace("/tmp/sibling"),
+      sessions: [
+        {
+          kind: "agent" as const,
+          id: AgentSessionId.make("session-1"),
+          workspaceId: WorkspaceId.make("workspace:sibling"),
+          threadId: ThreadId.make("thread-1"),
+          title: "Active Session",
+          status: "open" as const,
+          createdAt: NOW,
+          updatedAt: NOW,
+        },
+      ],
+    };
+    return Effect.gen(function* () {
+      const service = yield* AwenWorkspaceService.AwenWorkspaceService;
+      const error = yield* service
+        .remove({ workspaceId: workspace.id, deleteDirectory: true })
+        .pipe(Effect.flip);
+      assert.equal(error.reason, "workspace-not-empty");
+    }).pipe(
+      Effect.provide(
+        makeLayer({
+          root: "/tmp/main",
+          sibling: "/tmp/sibling",
+          commonDir: "/tmp/main/.git",
+          onDispatch: () => undefined,
+          readProject: () => makeProject("/tmp/main"),
+          readWorkspace: () => Option.some(workspace),
+        }),
+      ),
+    );
+  });
+
+  it.effect("blocks Workspace removal when active terminal Sessions exist", () =>
+    Effect.gen(function* () {
+      const service = yield* AwenWorkspaceService.AwenWorkspaceService;
+      const workspace = siblingWorkspace("/tmp/sibling");
+      const error = yield* service
+        .remove({ workspaceId: workspace.id, deleteDirectory: true })
+        .pipe(Effect.flip);
+      assert.equal(error.reason, "workspace-not-empty");
+    }).pipe(
+      Effect.provide(
+        makeLayer({
+          root: "/tmp/main",
+          sibling: "/tmp/sibling",
+          commonDir: "/tmp/main/.git",
+          onDispatch: () => undefined,
+          readProject: () => makeProject("/tmp/main"),
+          readWorkspace: () => Option.some(siblingWorkspace("/tmp/sibling")),
+          terminals: [
+            {
+              workspaceId: "workspace:sibling",
+              terminalId: "term-1",
+              cwd: "/tmp/sibling",
+              worktreePath: "/tmp/sibling",
+              status: "running",
+              pid: 1234,
+              exitCode: null,
+              exitSignal: null,
+              hasRunningSubprocess: false,
+              label: "terminal",
+              updatedAt: NOW,
+            },
+          ],
+        }),
+      ),
+    ),
+  );
+
+  it.effect("allows Workspace removal when terminal Sessions are exited", () =>
+    Effect.gen(function* () {
+      const service = yield* AwenWorkspaceService.AwenWorkspaceService;
+      const workspace = siblingWorkspace("/tmp/sibling");
+      const result = yield* service.remove({ workspaceId: workspace.id, deleteDirectory: true });
+      assert.equal(result.removed, true);
+      assert.equal(result.deletedDirectory, true);
+    }).pipe(
+      Effect.provide(
+        makeLayer({
+          root: "/tmp/main",
+          sibling: "/tmp/sibling",
+          commonDir: "/tmp/main/.git",
+          onDispatch: () => undefined,
+          readProject: () => makeProject("/tmp/main"),
+          readWorkspace: () => Option.some(siblingWorkspace("/tmp/sibling")),
+          terminals: [
+            {
+              workspaceId: "workspace:sibling",
+              terminalId: "term-1",
+              cwd: "/tmp/sibling",
+              worktreePath: "/tmp/sibling",
+              status: "exited",
+              pid: null,
+              exitCode: 0,
+              exitSignal: null,
+              hasRunningSubprocess: false,
+              label: "terminal",
+              updatedAt: NOW,
+            },
+          ],
+        }),
+      ),
+    ),
   );
 
   it.effect("protects the main Workspace from directory deletion", () =>
