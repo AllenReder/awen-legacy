@@ -2780,8 +2780,6 @@ function toolGroupSummaryIconName(
       return "terminal";
     case "browser":
       return "browser";
-    case "device":
-      return "device";
     case "search":
       return "globe";
     case "code-search":

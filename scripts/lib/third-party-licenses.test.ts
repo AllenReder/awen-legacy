@@ -441,7 +441,7 @@ describe("third-party license generation", () => {
           name: "optional-tool",
           license: "MIT AND Apache-2.0",
           noticeFiles: ["tool-license.txt", "vendor-notice.txt"],
-          bundles: ["device-tools"],
+          bundles: ["optional-tools"],
           includeInBundles: ["mobile", "web"],
         },
       ],
@@ -454,7 +454,7 @@ describe("third-party license generation", () => {
     });
 
     expect(manifest.entries.find((entry) => entry.name === "optional-tool")).toMatchObject({
-      bundles: ["device-tools"],
+      bundles: ["optional-tools"],
       noticeText: "Tool license\n\n---\n\nVendor notice",
     });
   });
