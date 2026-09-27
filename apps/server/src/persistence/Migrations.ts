@@ -70,6 +70,7 @@ import Migration0055 from "./Migrations/055_AwenWorkspaceOrigins.ts";
 import Migration0056 from "./Migrations/056_ProjectionPendingApprovalResponseCommand.ts";
 import Migration0057 from "./Migrations/057_WorkspaceDirectoryAuthority.ts";
 import Migration0058 from "./Migrations/058_CheckpointExecutionContexts.ts";
+import Migration0059 from "./Migrations/059_AgentSessionMigrations.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -140,6 +141,7 @@ const migrationEntries = [
   [56, "ProjectionPendingApprovalResponseCommand", Migration0056],
   [57, "WorkspaceDirectoryAuthority", Migration0057],
   [58, "CheckpointExecutionContexts", Migration0058],
+  [59, "AgentSessionMigrations", Migration0059],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

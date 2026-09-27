@@ -4819,6 +4819,76 @@ it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("awen-projection-aw
         yield* projectionPipeline.projectEvent(event);
       });
 
+    const appendThreadCreated = (input: {
+      readonly eventId: string;
+      readonly threadId: string;
+      readonly projectId: string;
+      readonly title: string;
+      readonly worktreePath?: string;
+    }) =>
+      Effect.gen(function* () {
+        const eventStore = yield* OrchestrationEventStore;
+        const projectionPipeline = yield* OrchestrationProjectionPipeline;
+        const event = yield* eventStore.append({
+          type: "thread.created",
+          eventId: EventId.make(input.eventId),
+          aggregateKind: "thread",
+          aggregateId: ThreadId.make(input.threadId),
+          occurredAt: timestamp,
+          commandId: CommandId.make(`cmd-${input.eventId}`),
+          causationEventId: null,
+          correlationId: null,
+          metadata: {},
+          payload: {
+            threadId: ThreadId.make(input.threadId),
+            projectId: ProjectId.make(input.projectId),
+            title: input.title,
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("codex"),
+              model: "gpt-5-codex",
+            },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: input.worktreePath ?? null,
+            createdAt: timestamp,
+            updatedAt: timestamp,
+          },
+        });
+        yield* projectionPipeline.projectEvent(event);
+      });
+
+    const appendThreadWorkspaceMoved = (input: {
+      readonly eventId: string;
+      readonly threadId: string;
+      readonly projectId: string;
+      readonly worktreePath: string;
+      readonly branch: string;
+    }) =>
+      Effect.gen(function* () {
+        const eventStore = yield* OrchestrationEventStore;
+        const projectionPipeline = yield* OrchestrationProjectionPipeline;
+        const event = yield* eventStore.append({
+          type: "thread.meta-updated",
+          eventId: EventId.make(input.eventId),
+          aggregateKind: "thread",
+          aggregateId: ThreadId.make(input.threadId),
+          occurredAt: timestamp,
+          commandId: CommandId.make(`cmd-${input.eventId}`),
+          causationEventId: null,
+          correlationId: null,
+          metadata: {},
+          payload: {
+            threadId: ThreadId.make(input.threadId),
+            projectId: ProjectId.make(input.projectId),
+            worktreePath: input.worktreePath,
+            branch: input.branch,
+            updatedAt: timestamp,
+          },
+        });
+        yield* projectionPipeline.projectEvent(event);
+      });
+
     const appendProjectDeleted = (input: {
       readonly eventId: string;
       readonly projectId: string;
@@ -4936,6 +5006,79 @@ it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("awen-projection-aw
           WHERE awen_project_id = 'awen-project:project-meta-wt'
         `;
         assert.deepEqual(projectRows, []);
+      }),
+    );
+
+    it.effect("re-binds an Agent Session to another Workspace on a thread project update", () =>
+      Effect.gen(function* () {
+        yield* appendProjectCreated({
+          eventId: "evt-migrate-main",
+          projectId: "project-migrate-main",
+          title: "Main",
+          workspaceRoot: "/srv/migrate-main",
+        });
+        yield* appendProjectCreated({
+          eventId: "evt-migrate-worktree",
+          projectId: "project-migrate-wt",
+          title: "Worktree",
+          workspaceRoot: "/srv/migrate-main-wt",
+          awenWorkspace: {
+            awenProjectId: "awen-project:project-migrate-main",
+            role: "worktree",
+            origin: "awen-created",
+          },
+        });
+        yield* appendThreadCreated({
+          eventId: "evt-migrate-thread",
+          threadId: "thread-migrate",
+          projectId: "project-migrate-main",
+          title: "Conversation",
+        });
+
+        const sql = yield* SqlClient.SqlClient;
+        const before = yield* sql<{
+          readonly workspaceId: string;
+          readonly projectId: string;
+        }>`
+          SELECT workspace_id AS "workspaceId", project_id AS "projectId"
+          FROM projection_awen_agent_sessions
+          WHERE thread_id = 'thread-migrate'
+        `;
+        assert.deepEqual(before, [
+          { workspaceId: "workspace:project-migrate-main", projectId: "project-migrate-main" },
+        ]);
+
+        yield* appendThreadWorkspaceMoved({
+          eventId: "evt-migrate-move",
+          threadId: "thread-migrate",
+          projectId: "project-migrate-wt",
+          worktreePath: "/srv/migrate-main-wt",
+          branch: "feature",
+        });
+
+        const after = yield* sql<{
+          readonly workspaceId: string;
+          readonly projectId: string;
+        }>`
+          SELECT workspace_id AS "workspaceId", project_id AS "projectId"
+          FROM projection_awen_agent_sessions
+          WHERE thread_id = 'thread-migrate'
+        `;
+        assert.deepEqual(after, [
+          { workspaceId: "workspace:project-migrate-wt", projectId: "project-migrate-wt" },
+        ]);
+
+        const threadRow = yield* sql<{
+          readonly projectId: string;
+          readonly worktreePath: string | null;
+        }>`
+          SELECT project_id AS "projectId", worktree_path AS "worktreePath"
+          FROM projection_threads
+          WHERE thread_id = 'thread-migrate'
+        `;
+        assert.deepEqual(threadRow, [
+          { projectId: "project-migrate-wt", worktreePath: "/srv/migrate-main-wt" },
+        ]);
       }),
     );
 

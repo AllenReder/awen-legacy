@@ -68,6 +68,13 @@ import {
   AwenProjectRenameResult,
 } from "./workspace.ts";
 import {
+  AgentSessionOperationError,
+  AgentSessionMigrateToWorkspaceInput,
+  AgentSessionMigrateToWorkspaceResult,
+  AgentSessionMigrationStateInput,
+  AgentSessionMigrationStateResult,
+} from "./session.ts";
+import {
   GitActionProgressEvent,
   VcsSwitchRefInput,
   VcsSwitchRefResult,
@@ -324,6 +331,10 @@ export const WS_METHODS = {
   awenWorkspaceRemove: "awenWorkspace.remove",
   awenWorkspaceRename: "awenWorkspace.rename",
   awenProjectRename: "awenProject.rename",
+
+  // Awen Agent Session methods
+  awenSessionMigrateToWorkspace: "awenSession.migrateToWorkspace",
+  awenSessionGetMigrationState: "awenSession.getMigrationState",
 
   // Review methods
   reviewGetDiffPreview: "review.getDiffPreview",
@@ -1072,6 +1083,18 @@ const WsAwenProjectRenameRpc = Rpc.make(WS_METHODS.awenProjectRename, {
   error: Schema.Union([AwenWorkspaceError, EnvironmentAuthorizationError]),
 });
 
+const WsAwenSessionMigrateToWorkspaceRpc = Rpc.make(WS_METHODS.awenSessionMigrateToWorkspace, {
+  payload: AgentSessionMigrateToWorkspaceInput,
+  success: AgentSessionMigrateToWorkspaceResult,
+  error: Schema.Union([AgentSessionOperationError, EnvironmentAuthorizationError]),
+});
+
+const WsAwenSessionGetMigrationStateRpc = Rpc.make(WS_METHODS.awenSessionGetMigrationState, {
+  payload: AgentSessionMigrationStateInput,
+  success: AgentSessionMigrationStateResult,
+  error: Schema.Union([AgentSessionOperationError, EnvironmentAuthorizationError]),
+});
+
 /**
  * Ephemeral live diff preview for compact/mobile surfaces.
  * Not the persisted Awen Review model. Future review sessions should use
@@ -1481,8 +1504,17 @@ export const WsAwenWorkspaceRpcGroup = RpcGroup.make(
 );
 
 /**
+ * Awen Agent Session operations keep their own group for the same reason as
+ * the Workspace group: the handler layer's type inference stays usable.
+ */
+export const WsAwenSessionRpcGroup = RpcGroup.make(
+  WsAwenSessionMigrateToWorkspaceRpc,
+  WsAwenSessionGetMigrationStateRpc,
+);
+
+/**
  * The complete WebSocket surface. Runtime routing (`RpcServer.make`) and
  * clients (`RpcClient.make`) must see every method, so they use this merged
  * group; only server handler construction uses the part groups.
  */
-export const WsRpcGroupAll = WsRpcGroup.merge(WsAwenWorkspaceRpcGroup);
+export const WsRpcGroupAll = WsRpcGroup.merge(WsAwenWorkspaceRpcGroup).merge(WsAwenSessionRpcGroup);

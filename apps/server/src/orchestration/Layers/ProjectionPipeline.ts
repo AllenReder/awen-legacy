@@ -6,6 +6,7 @@ import {
   type OrchestrationEvent,
   type OrchestrationSessionStatus,
   ThreadId,
+  workspaceIdForAwenProject,
 } from "@awen/contracts";
 import { compareDateTimeStrings } from "@awen/shared/dateTime";
 import * as Effect from "effect/Effect";
@@ -649,6 +650,12 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           yield* projectionAwenProjectRepository.updateAgentSession({
             threadId: event.payload.threadId,
             ...(event.payload.title !== undefined ? { title: event.payload.title } : {}),
+            ...(event.payload.projectId !== undefined
+              ? {
+                  projectId: event.payload.projectId,
+                  workspaceId: workspaceIdForAwenProject(event.payload.projectId),
+                }
+              : {}),
             updatedAt: event.payload.updatedAt,
           });
           return;
@@ -936,6 +943,9 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             ...(event.payload.branch !== undefined ? { branch: event.payload.branch } : {}),
             ...(event.payload.worktreePath !== undefined
               ? { worktreePath: event.payload.worktreePath }
+              : {}),
+            ...(event.payload.projectId !== undefined
+              ? { projectId: event.payload.projectId }
               : {}),
             ...(event.payload.linkedPullRequest !== undefined
               ? { linkedPullRequest: event.payload.linkedPullRequest }

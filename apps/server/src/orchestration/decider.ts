@@ -6,6 +6,7 @@ import {
   ThreadLinkedPullRequest,
   UserInputRequestedPayload,
   isImportedAgentSessionMessageId,
+  isOrchestrationSessionExecuting,
   type OrchestrationCommand,
   type OrchestrationEvent,
   type OrchestrationReadModel,
@@ -907,6 +908,35 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
+      if (command.projectId !== undefined) {
+        if (
+          command.expectedProjectId !== undefined &&
+          thread.projectId !== command.expectedProjectId
+        ) {
+          return yield* new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `thread ${command.threadId} is assigned to project '${thread.projectId}', not the expected '${command.expectedProjectId}'`,
+          });
+        }
+        if (isOrchestrationSessionExecuting(thread.session)) {
+          return yield* new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `thread ${command.threadId} is executing and cannot change Workspace`,
+          });
+        }
+        if (command.projectId === thread.projectId) {
+          return yield* new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `thread ${command.threadId} is already assigned to project '${command.projectId}'`,
+          });
+        }
+        if (readModel.projects.every((project) => project.id !== command.projectId)) {
+          return yield* new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `target project '${command.projectId}' does not exist`,
+          });
+        }
+      }
       // Old clients only see the derived single link. Unlink that request through
       // the same command path as modern clients, including stack dismissal, while
       // retaining other links they cannot see. Historical metadata events still replay unchanged.
@@ -1031,6 +1061,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             : {}),
           ...(branch !== undefined ? { branch } : {}),
           ...(command.worktreePath !== undefined ? { worktreePath: command.worktreePath } : {}),
+          ...(command.projectId !== undefined ? { projectId: command.projectId } : {}),
           ...(command.linkedPullRequest !== undefined
             ? { linkedPullRequest: command.linkedPullRequest }
             : {}),

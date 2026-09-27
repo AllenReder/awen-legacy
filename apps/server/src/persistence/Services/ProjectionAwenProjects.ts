@@ -77,6 +77,14 @@ export interface UpsertProjectionAwenAgentSessionInput {
 export interface UpdateProjectionAwenAgentSessionInput {
   readonly threadId: ThreadId;
   readonly title?: string;
+  /**
+   * Re-bind the Agent Session to another Workspace after a migration. The
+   * Workspace address is derived from the orchestration project identity, so a
+   * change here moves the Sidebar row without changing the Session identity.
+   */
+  readonly projectId?: ProjectId;
+  /** The Workspace address for `projectId`, from `workspaceIdForAwenProject`. */
+  readonly workspaceId?: WorkspaceId;
   readonly updatedAt: string;
 }
 

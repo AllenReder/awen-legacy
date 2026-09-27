@@ -5,6 +5,7 @@ import { createEnvironmentProjectAtoms } from "@awen/client-runtime/state/projec
 import { createProjectEnvironmentAtoms } from "@awen/client-runtime/state/projects";
 import { createEnvironmentWorkspaceAtoms } from "@awen/client-runtime/state/workspaceEntities";
 import { createEnvironmentWorkspaceCommandAtoms } from "@awen/client-runtime/state/workspaceCommands";
+import { createEnvironmentSessionCommandAtoms } from "@awen/client-runtime/state/sessionCommands";
 import { createEnvironmentRpcQueryAtomFamily } from "@awen/client-runtime/state/runtime";
 import { WS_METHODS } from "@awen/contracts";
 
@@ -40,3 +41,4 @@ export const environmentWorkspace = createEnvironmentWorkspaceAtoms({
   snapshotAtom: environmentSnapshotAtom,
 });
 export const workspaceEnvironment = createEnvironmentWorkspaceCommandAtoms(connectionAtomRuntime);
+export const sessionEnvironment = createEnvironmentSessionCommandAtoms(connectionAtomRuntime);

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
-import { buildSessionActionMenuItems } from "./sessionActionMenu.logic";
+import type { WorkspaceId } from "@awen/contracts";
+import { buildSessionActionMenuItems, siblingWorkspacesForAgent } from "./sessionActionMenu.logic";
 
 describe("buildSessionActionMenuItems", () => {
   it("builds active Agent Session menu items with Open, Split, Rename, Close and Delete", () => {
@@ -11,6 +12,8 @@ describe("buildSessionActionMenuItems", () => {
       canRename: true,
       canClose: true,
       canDelete: true,
+      canMigrate: false,
+      canMigrateNow: false,
     });
 
     const ids = items.map((i) => i.id);
@@ -36,6 +39,8 @@ describe("buildSessionActionMenuItems", () => {
       canRename: true,
       canClose: true,
       canDelete: true,
+      canMigrate: false,
+      canMigrateNow: false,
     });
 
     const focusItem = itemsUnfocused.find((i) => i.id === "focus");
@@ -50,6 +55,8 @@ describe("buildSessionActionMenuItems", () => {
       canRename: true,
       canClose: true,
       canDelete: true,
+      canMigrate: false,
+      canMigrateNow: false,
     });
     const focusItemDisabled = itemsFocused.find((i) => i.id === "focus");
     expect(focusItemDisabled?.disabled).toBe(true);
@@ -64,6 +71,8 @@ describe("buildSessionActionMenuItems", () => {
       canRename: false,
       canClose: true,
       canDelete: true,
+      canMigrate: false,
+      canMigrateNow: false,
     });
 
     expect(items.some((i) => i.id === "rename")).toBe(false);
@@ -78,6 +87,8 @@ describe("buildSessionActionMenuItems", () => {
       canRename: true,
       canClose: true,
       canDelete: true,
+      canMigrate: false,
+      canMigrateNow: false,
     });
 
     expect(items.some((i) => i.id === "rename")).toBe(true);
@@ -92,10 +103,66 @@ describe("buildSessionActionMenuItems", () => {
       canRename: true,
       canClose: true,
       canDelete: true,
+      canMigrate: false,
+      canMigrateNow: false,
     });
 
     const ids = items.map((i) => i.id);
     expect(ids).not.toContain("close-session");
     expect(ids).toContain("delete-session");
+  });
+
+  it("offers Move to Workspace for an Agent Session with a sibling Workspace, disabled while executing", () => {
+    const enabled = buildSessionActionMenuItems({
+      kind: "agent",
+      isClosed: false,
+      isOpenInWorkbench: false,
+      isFocusedInWorkbench: false,
+      canRename: true,
+      canClose: true,
+      canDelete: true,
+      canMigrate: true,
+      canMigrateNow: true,
+    });
+    const enabledItem = enabled.find((i) => i.id === "move-workspace");
+    expect(enabledItem).toBeDefined();
+    expect(enabledItem?.disabled).toBe(false);
+
+    const executing = buildSessionActionMenuItems({
+      kind: "agent",
+      isClosed: false,
+      isOpenInWorkbench: false,
+      isFocusedInWorkbench: false,
+      canRename: true,
+      canClose: true,
+      canDelete: true,
+      canMigrate: true,
+      canMigrateNow: false,
+    });
+    expect(executing.find((i) => i.id === "move-workspace")?.disabled).toBe(true);
+  });
+});
+
+describe("siblingWorkspacesForAgent", () => {
+  const ws = (id: string) => ({ id: id as WorkspaceId });
+  const projects = [
+    { environmentId: "env-1", workspaces: [ws("workspace:a"), ws("workspace:b")] },
+    { environmentId: "env-2", workspaces: [ws("workspace:c")] },
+  ];
+
+  it("returns the other Workspaces of the Session's Project and environment", () => {
+    expect(siblingWorkspacesForAgent(projects, "env-1", "workspace:a" as WorkspaceId)).toEqual([
+      { id: "workspace:b" },
+    ]);
+  });
+
+  it("returns nothing when the Session's Workspace is not in the projection", () => {
+    expect(
+      siblingWorkspacesForAgent(projects, "env-1", "workspace:missing" as WorkspaceId),
+    ).toEqual([]);
+  });
+
+  it("does not cross environments", () => {
+    expect(siblingWorkspacesForAgent(projects, "env-2", "workspace:a" as WorkspaceId)).toEqual([]);
   });
 });

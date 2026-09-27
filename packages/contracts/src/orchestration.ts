@@ -602,6 +602,21 @@ export const OrchestrationSession = Schema.Struct({
 });
 export type OrchestrationSession = typeof OrchestrationSession.Type;
 
+/**
+ * Whether a Session is executing work that must not change directory underneath
+ * it: running, starting, or holding an active provider turn. Shared by the
+ * decider, the migration orchestrator, and the client menu so the three cannot
+ * drift.
+ */
+export function isOrchestrationSessionExecuting(
+  session: Pick<OrchestrationSession, "status" | "activeTurnId"> | null,
+): boolean {
+  return (
+    session !== null &&
+    (session.status === "running" || session.status === "starting" || session.activeTurnId !== null)
+  );
+}
+
 export const OrchestrationCheckpointFile = Schema.Struct({
   path: TrimmedNonEmptyString,
   kind: TrimmedNonEmptyString,
@@ -1232,6 +1247,14 @@ const ThreadMetaUpdateCommand = Schema.Struct({
   branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   expectedBranch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  /**
+   * Move the thread to another Workspace's backing orchestration project. The
+   * Session operations module is the only caller; it prepares the provider
+   * before publishing this assignment. `expectedProjectId` guards a stale
+   * migration from overwriting an assignment that already changed.
+   */
+  projectId: Schema.optional(ProjectId),
+  expectedProjectId: Schema.optional(ProjectId),
   linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
 }).check(
   Schema.makeFilter(
@@ -1821,6 +1844,12 @@ export const ThreadMetaUpdatedPayload = Schema.Struct({
   modelSelection: Schema.optional(ModelSelection),
   branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  /**
+   * New owning orchestration project after an Agent Session Workspace
+   * migration. Optional so older clients ignore the field and replaying older
+   * events stays decodable.
+   */
+  projectId: Schema.optional(ProjectId),
   // No longer produced; kept so persisted events from before
   // thread.pull-request-linked still decode and replay into the link table.
   linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
