@@ -1,5 +1,5 @@
 import { scopedThreadKey } from "@awen/client-runtime/environment";
-import type { DevicePlatform, ScopedThreadRef } from "@awen/contracts";
+import type { ScopedThreadRef } from "@awen/contracts";
 import { create } from "zustand";
 
 export interface PreviewMiniPlayerPosition {
@@ -12,16 +12,8 @@ export interface PreviewMiniPlayerSize {
   readonly height: number;
 }
 
-/** What the floating player mirrors: a browser tab or a device stream. */
-export type PreviewMiniPlayerSource =
-  | { readonly kind: "browser"; readonly tabId: string }
-  | {
-      readonly kind: "device";
-      readonly hostId: string;
-      readonly deviceId: string;
-      readonly platform: DevicePlatform;
-      readonly name: string;
-    };
+/** The browser tab mirrored by the floating player. */
+export type PreviewMiniPlayerSource = { readonly kind: "browser"; readonly tabId: string };
 
 export interface PreviewMiniPlayerState {
   readonly source: PreviewMiniPlayerSource;
@@ -45,9 +37,7 @@ interface PreviewMiniPlayerStoreState {
 }
 
 export function previewMiniPlayerSourceKey(source: PreviewMiniPlayerSource): string {
-  return source.kind === "browser"
-    ? `browser:${source.tabId}`
-    : `device:${encodeURIComponent(source.hostId)}:${encodeURIComponent(source.deviceId)}`;
+  return `browser:${source.tabId}`;
 }
 
 export const browserMiniPlayerSource = (tabId: string): PreviewMiniPlayerSource => ({
@@ -133,7 +123,7 @@ export function selectThreadPreviewMiniPlayer(
   return byThreadKey[scopedThreadKey(ref)] ?? null;
 }
 
-/** The floating browser tab, or null when nothing floats or a device does. */
+/** The floating browser tab, or null when nothing floats. */
 export function selectThreadPreviewMiniPlayerTabId(
   byThreadKey: Record<string, PreviewMiniPlayerState>,
   ref: ScopedThreadRef | null | undefined,

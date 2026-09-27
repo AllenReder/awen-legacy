@@ -18,7 +18,7 @@ describe("Node runtime selection", () => {
     Effect.gen(function* () {
       for (const executable of ["/runtime/node", "/Applications/Awen.app/Electron"]) {
         expect(
-          yield* resolveNodeExecutable("Local device support", { PATH: "" }).pipe(
+          yield* resolveNodeExecutable("Antigravity", { PATH: "" }).pipe(
             Effect.provideService(HostProcessExecutablePath, executable),
             Effect.provideService(HostProcessIsExecutable, false),
           ),
@@ -31,7 +31,7 @@ describe("Node runtime selection", () => {
     Effect.gen(function* () {
       const path = yield* Path.Path;
       expect(
-        yield* resolveNodeExecutable("Local device support", {
+        yield* resolveNodeExecutable("Antigravity", {
           PATH: path.dirname(process.execPath),
         }),
       ).toBe(process.execPath);
@@ -44,11 +44,9 @@ describe("Node runtime selection", () => {
 
   it.effect("explains how to install Node when a standalone helper has no runtime", () =>
     Effect.gen(function* () {
-      const error = yield* resolveNodeExecutable("Local device support", { PATH: "" }).pipe(
-        Effect.flip,
-      );
+      const error = yield* resolveNodeExecutable("Antigravity", { PATH: "" }).pipe(Effect.flip);
       expect(error._tag).toBe("NodeRuntimeUnavailableError");
-      expect(error.message).toContain("Local device support requires Node.js");
+      expect(error.message).toContain("Antigravity requires Node.js");
       expect(error.message).toContain("Install Node.js");
     }).pipe(
       Effect.provideService(HostProcessIsExecutable, true),
@@ -65,13 +63,11 @@ describe("Node runtime selection", () => {
       const node = path.join(directory, platform === "win32" ? "node.exe" : "node");
       const env = { PATH: directory };
       expect(
-        Result.isFailure(
-          yield* resolveNodeExecutable("Local device support", env).pipe(Effect.result),
-        ),
+        Result.isFailure(yield* resolveNodeExecutable("Antigravity", env).pipe(Effect.result)),
       ).toBe(true);
       yield* fs.copyFile(process.execPath, node);
       yield* fs.chmod(node, 0o755);
-      expect(yield* resolveNodeExecutable("Local device support", env)).toBe(node);
+      expect(yield* resolveNodeExecutable("Antigravity", env)).toBe(node);
     }).pipe(
       Effect.scoped,
       Effect.provideService(HostProcessExecutablePath, "/packaged/awen"),
@@ -94,7 +90,7 @@ describe("Node runtime selection", () => {
       const node = path.join(runtime, "node.exe");
       yield* fs.copyFile(process.execPath, node);
       expect(
-        yield* resolveNodeExecutable("Local device support", {
+        yield* resolveNodeExecutable("Antigravity", {
           PATH: `${wrappers};${runtime}`,
           PATHEXT: ".CMD;.BAT",
         }),
@@ -115,7 +111,7 @@ describe("Node runtime selection", () => {
       const directory = yield* fs.makeTempDirectoryScoped();
       yield* fs.writeFileString(path.join(directory, "node.cmd"), "@echo off");
       yield* fs.writeFileString(path.join(directory, "node.bat"), "@echo off");
-      const error = yield* resolveNodeExecutable("Local device support", {
+      const error = yield* resolveNodeExecutable("Antigravity", {
         PATH: directory,
         PATHEXT: ".CMD;.BAT;.EXE",
       }).pipe(Effect.flip);
@@ -140,7 +136,7 @@ describe("Node runtime selection", () => {
       yield* fs.writeFileString(executable, "standalone executable fixture");
       yield* fs.chmod(executable, 0o755);
       yield* fs.link(executable, node);
-      const error = yield* resolveNodeExecutable("Local device support", { PATH: directory }).pipe(
+      const error = yield* resolveNodeExecutable("Antigravity", { PATH: directory }).pipe(
         Effect.provideService(HostProcessExecutablePath, executable),
         Effect.flip,
       );
@@ -161,7 +157,7 @@ describe("Node runtime selection", () => {
       const platform = yield* HostProcessPlatform;
       const node = path.join(directory, platform === "win32" ? "node.exe" : "node");
       yield* fs.symlink(process.execPath, node);
-      expect(yield* resolveNodeExecutable("Local device support", { PATH: directory })).toBe(node);
+      expect(yield* resolveNodeExecutable("Antigravity", { PATH: directory })).toBe(node);
     }).pipe(
       Effect.scoped,
       Effect.provideService(HostProcessExecutablePath, "/packaged/awen"),
@@ -180,7 +176,7 @@ describe("Node runtime selection", () => {
         const platform = yield* HostProcessPlatform;
         const node = path.join(directory, platform === "win32" ? "node.exe" : "node");
         yield* fs.symlink(process.execPath, node);
-        const error = yield* resolveNodeExecutable("Local device support", {
+        const error = yield* resolveNodeExecutable("Antigravity", {
           PATH: directory,
         }).pipe(Effect.flip);
         expect(error.message).toContain("Install Node.js");

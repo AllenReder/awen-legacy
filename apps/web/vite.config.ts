@@ -213,8 +213,7 @@ export default defineConfig(() => {
         ? {
             // One entry per shared prefix; the server's dev catch-all 404s the
             // same list, so the two sides cannot drift. `/ws` is the app's own
-            // socket and `/api` carries the device hub's stream sockets —
-            // Vite's HMR socket is matched separately and exactly (path "/"
+            // socket; Vite's HMR socket is matched separately and exactly (path "/"
             // plus a vite-hmr subprotocol), so the upgrade handlers don't
             // collide.
             proxy: Object.fromEntries(

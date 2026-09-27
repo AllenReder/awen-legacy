@@ -32,10 +32,7 @@ import {
   usePreviewMiniPlayerStore,
 } from "~/previewMiniPlayerStore";
 import { useRightPanelStore } from "~/rightPanelStore";
-import { useDeviceState } from "~/state/device";
 
-import { DeviceStreamView } from "../device/DeviceStreamView";
-import type { DeviceScreenSize } from "../device/deviceStream";
 import { previewBridge } from "./previewBridge";
 import {
   clampPreviewMiniPlayerPosition,
@@ -45,8 +42,6 @@ import {
   type PreviewMiniPlayerFrame,
   type PreviewMiniPlayerObstacles,
   resizePreviewMiniPlayer,
-  resolveDeviceMiniPlayerCornerRadius,
-  resolveDeviceMiniPlayerSourceSize,
   resolvePreviewMiniPlayerFrame,
   resolvePreviewMiniPlayerSourceSize,
 } from "./previewMiniPlayerLayout";
@@ -124,22 +119,13 @@ const RESIZE_HANDLES: ReadonlyArray<{
   { direction: "southeast", className: "-bottom-2 -right-2 size-4 cursor-nwse-resize" },
 ];
 
-/** Floats the thread's browser tab or device stream over chat. */
+/** Floats the thread's browser tab over chat. */
 export function ThreadPreviewMiniPlayer({ threadRef, miniPlayer, composerOverlayElement }: Props) {
-  const { source } = miniPlayer;
-  return source.kind === "browser" ? (
+  return (
     <BrowserMiniPlayer
-      key={source.tabId}
+      key={miniPlayer.source.tabId}
       threadRef={threadRef}
-      tabId={source.tabId}
-      miniPlayer={miniPlayer}
-      composerOverlayElement={composerOverlayElement}
-    />
-  ) : (
-    <DeviceMiniPlayer
-      key={previewMiniPlayerSourceKey(source)}
-      threadRef={threadRef}
-      source={source}
+      tabId={miniPlayer.source.tabId}
       miniPlayer={miniPlayer}
       composerOverlayElement={composerOverlayElement}
     />
@@ -244,67 +230,6 @@ function BrowserMiniPlayer({
             </div>
           ) : null}
         </>
-      )}
-    </MiniPlayerShell>
-  );
-}
-
-function DeviceMiniPlayer({
-  threadRef,
-  source,
-  miniPlayer,
-  composerOverlayElement,
-}: Props & { readonly source: Extract<PreviewMiniPlayerSource, { kind: "device" }> }) {
-  const { state: deviceState } = useDeviceState(threadRef.environmentId);
-  const [screen, setScreen] = useState<DeviceScreenSize | null>(null);
-  const sourceSize = resolveDeviceMiniPlayerSourceSize(source.platform, screen);
-  const device = deviceState.devices.find(
-    (entry) => entry.hostId === source.hostId && entry.id === source.deviceId,
-  );
-  const hostLabel =
-    deviceState.hosts.find((host) => host.id === source.hostId)?.label ?? "Device host";
-  const cornerRadius = useCallback(
-    (player: PreviewMiniPlayerSize) => resolveDeviceMiniPlayerCornerRadius(source.platform, player),
-    [source.platform],
-  );
-
-  const openInPanel = () => {
-    usePreviewMiniPlayerStore.getState().close(threadRef);
-    useRightPanelStore.getState().openDevice(threadRef, {
-      hostId: source.hostId,
-      deviceId: source.deviceId,
-      platform: source.platform,
-      name: source.name,
-    });
-  };
-
-  return (
-    <MiniPlayerShell
-      threadRef={threadRef}
-      miniPlayer={miniPlayer}
-      sourceSize={sourceSize}
-      composerOverlayElement={composerOverlayElement}
-      label="Floating device preview"
-      onOpenInPanel={openInPanel}
-      cornerRadius={cornerRadius}
-    >
-      {() => (
-        // The stream is DOM, so it takes the band the browser's native webview would.
-        <div
-          className="pointer-events-auto absolute inset-0 overflow-hidden rounded-[inherit]"
-          style={{ zIndex: PREVIEW_MINI_PLAYER_WEBVIEW_Z_INDEX }}
-        >
-          <DeviceStreamView
-            environmentId={threadRef.environmentId}
-            platform={source.platform}
-            deviceId={source.deviceId}
-            hostId={source.hostId}
-            deviceName={device?.name ?? source.name}
-            deviceDescription={`${hostLabel} · ${device?.version ?? source.platform}`}
-            visible
-            onScreen={setScreen}
-          />
-        </div>
       )}
     </MiniPlayerShell>
   );

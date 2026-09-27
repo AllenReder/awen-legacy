@@ -187,10 +187,10 @@ function configuredMcpToolAvailability(
   appServerArgs: ReadonlyArray<string> | undefined,
   mcpCapabilities: ReadonlySet<string> | undefined,
 ): AwenToolAvailability {
-  if (!hasConfiguredMcpServer(appServerArgs)) return { browser: false, device: false };
+  if (!hasConfiguredMcpServer(appServerArgs)) return { browser: false };
   // Callers predating the capability set attached the browser toolkit only.
-  if (mcpCapabilities === undefined) return { browser: true, device: false };
-  return { browser: mcpCapabilities.has("preview"), device: mcpCapabilities.has("device") };
+  if (mcpCapabilities === undefined) return { browser: true };
+  return { browser: mcpCapabilities.has("preview") };
 }
 
 export const CodexResumeCursorSchema = Schema.Struct({

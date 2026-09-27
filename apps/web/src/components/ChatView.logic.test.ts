@@ -181,44 +181,6 @@ describe("floating browser preview", () => {
     ).toBe(true);
     expect(shouldRenderPreviewMiniPlayer(tab, { id: "diff", kind: "diff" })).toBe(true);
   });
-
-  it("only hides a floating device while that device is rendered in the panel", () => {
-    const pixel = {
-      kind: "device",
-      hostId: "nucbox",
-      deviceId: "emulator-5580",
-      platform: "android",
-      name: "Pixel",
-    } as const;
-    const target = {
-      hostId: "nucbox",
-      deviceId: "emulator-5580",
-      platform: "android",
-      name: "Pixel",
-    } as const;
-    expect(
-      shouldRenderPreviewMiniPlayer(pixel, {
-        id: "device:nucbox:emulator-5580",
-        kind: "device",
-        target,
-      }),
-    ).toBe(false);
-    expect(
-      shouldRenderPreviewMiniPlayer(pixel, {
-        id: "device:nucbox:emulator-5554",
-        kind: "device",
-        target: { ...target, deviceId: "emulator-5554" },
-      }),
-    ).toBe(true);
-    expect(shouldRenderPreviewMiniPlayer(pixel, { id: "device", kind: "device" })).toBe(true);
-    expect(
-      shouldRenderPreviewMiniPlayer(pixel, {
-        id: "browser:one",
-        kind: "preview",
-        resourceId: "emulator-5580",
-      }),
-    ).toBe(true);
-  });
 });
 
 describe("proactive panels", () => {

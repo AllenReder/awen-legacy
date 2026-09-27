@@ -66,6 +66,35 @@ const PullRequestsTestLayer = McpHttpServer.PullRequestsToolkitRegistrationLive.
   ),
 );
 
+const CatalogTestLayer = Layer.mergeAll(
+  McpHttpServer.PreviewToolkitRegistrationLive,
+  McpHttpServer.PullRequestsToolkitRegistrationLive,
+).pipe(
+  Layer.provideMerge(McpServer.McpServer.layer),
+  Layer.provideMerge(PreviewAutomationBroker.layer),
+  Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "awen-mcp-catalog-test-" })),
+  Layer.provide(
+    Layer.mergeAll(
+      Layer.mock(ProjectionSnapshotQuery)({
+        getThreadShellById: () => Effect.succeed(Option.none()),
+      }),
+      Layer.mock(OrchestrationEngineService)({}),
+      NodeServices.layer,
+    ),
+  ),
+);
+
+it.effect("exposes browser and pull-request tools without device controls", () =>
+  Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const names = server.tools.map(({ tool }) => tool.name);
+    expect(names).toContain("preview_status");
+    expect(names).toContain("preview_snapshot");
+    expect(names).toContain("link_pull_request");
+    expect(names.some((name) => name.startsWith("device_"))).toBe(false);
+  }).pipe(Effect.provide(CatalogTestLayer)),
+);
+
 const snapshotResult = {
   url: "http://example.test/",
   title: "Example",
