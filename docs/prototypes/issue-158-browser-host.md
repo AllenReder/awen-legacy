@@ -1,6 +1,6 @@
 # #158: Tauri browser host feasibility
 
-Status: **blocking evidence, not production delivery**. The manual native proof has been exercised on a maintainer's Mac; the broker-connected debug host below has not yet been verified there. Browser host delivery remains blocked until the promised Agent operations are demonstrated. Do not infer contract coverage from the presence of a child webview.
+Status: **partial native and broker evidence, not production delivery**. A maintainer exercised the manual proof and a limited broker-connected Agent flow on macOS. Browser host delivery remains blocked until the remaining promised operations are demonstrated or explicitly ruled out. Do not infer full contract coverage from the presence of a child webview.
 
 ## Scope and existing seam
 
@@ -20,7 +20,13 @@ AWEN_BROWSER_HOST_PROOF=1 AWEN_BROWSER_HOST_PROOF_AGENT=1 pnpm --filter @awen/de
 
 The ordinary Awen window should show **Agent browser proof (debug)** with **Broker connected**, alongside a separate **Awen Agent browser proof** native window. Enable Agent browser access in the environment's settings. Use only `gpt-5.6-luna` or `MiniMax-M3` for a real Agent test. Ask it to call `preview_open` with the dev server's `http://localhost:<webPort>/browser-host-proof-page.html`, then `preview_status`, `preview_navigate`, and `preview_evaluate` to read and change the page's input and click count. Record each tool input/result and the visible state of the same native guest. Open a second tab with `reuseExistingTab:false` and target both returned tab IDs independently. In the debug panel, cancel a page close, then confirm it; an Agent call targeting the closed tab must return an explicit error. Any unimplemented operation should return the broker's unsupported-capability result, never a false success.
 
-This mode still needs a native macOS run and does not validate snapshot, trusted click/type/press/scroll, wait conditions, appearance, recording, full profile mapping, or Workbench Pane placement. Each of those remains a blocker for host-dependent delivery.
+### Maintainer-reported macOS result
+
+The maintainer ran the broker-connected mode against `http://localhost:6933/browser-host-proof-page.html` in environment `3f622771-cb8e-4213-9a41-3c6c9b869c7e`. The Agent reported successful `preview_open`/`preview_navigate` on `tab_1`; `preview_status` returned `available: true`, `visible: true`, title `Native proof page`, `loading: false`, fill viewport `430×510`. `preview_evaluate` read the live input/button/count, changed `#message` from `initial` to `agent proof`, and dispatched a synthetic click that changed `#count` from `0` to `1`. A second tab, `tab_2`, opened for an independent target check. These are reported tool results, not independently captured native UI evidence.
+
+`preview_snapshot`, `preview_click`, and `preview_wait_for` repeatedly returned `PreviewAutomationNoAvailableHostError` in the same environment; snapshot also failed on `tab_2`. This is expected from this prototype: its registered `supportedOperations` set contains only `status`, `open`, `navigate`, and `evaluate`. The broker filters hosts by operation, so the errors do **not** show that the host, page, or tab disappeared. Restarting or opening another tab cannot add unsupported operations. Here `preview_status.available: true` means this limited native host/page is available, **not** that every `preview_*` operation is supported. `evaluate`-driven DOM changes are synthetic and do not validate trusted click/type/press input.
+
+This result still does not validate snapshot, trusted click/type/press/scroll, wait conditions, appearance, recording, full profile mapping, or Workbench Pane placement. Each remains a blocker for host-dependent delivery. Capture the actual tool transcript, OS version, app PID/bundle identity, and matching native-window image before treating the limited broker round trip as independently reproducible evidence.
 
 ## Operation inventory
 
@@ -58,7 +64,7 @@ For the complete Agent-contract gate, expand and validate the native adapter for
 
 ## Evidence from this checkout
 
-- Platform in this checkout: Linux. A maintainer reported that the manual proof looked correct on macOS, but no OS version, operation log, or Agent result was captured here. The broker-connected mode has not been run on a Mac.
+- Platform in this checkout: Linux. The maintainer reported both manual and limited broker-connected macOS runs, including the tool results summarized above. OS version, app identity, and native-window capture have not yet been attached.
 - `pnpm typecheck` and `pnpm test`: passed. `AWEN_BROWSER_HOST_PROOF=1 pnpm --filter @awen/web build`: passed and emitted `dist/browser-host-proof.html`. `cargo fmt --check`: passed.
 - `cargo check --features browser-host-proof`: blocked before checking this module because Linux development packages for `dbus-1` and WebKitGTK are absent (`libdbus-sys` cannot find `dbus-1.pc`; `webkit2gtk-4.1.pc` is also absent).
 
