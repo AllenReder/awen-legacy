@@ -41,7 +41,10 @@ pub fn start(app: &mut tauri::App) -> tauri::Result<()> {
     if let Some(main) = app.get_webview_window("main") {
         // The controller must retain the bundled app origin so its Tauri
         // commands pass the normal capability check in a registered .app.
-        let mut url = main.url()?.join("browser-host-proof.html")?;
+        let mut url = main
+            .url()?
+            .join("browser-host-proof.html")
+            .map_err(|error| tauri::Error::Anyhow(error.into()))?;
         let guest_page = proof_url("browser-host-proof-page.html")
             .map_err(|error| tauri::Error::Anyhow(std::io::Error::other(error).into()))?;
         url.query_pairs_mut()
