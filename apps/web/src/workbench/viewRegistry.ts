@@ -7,7 +7,6 @@ import type {
   TerminalSessionId,
   WorkspaceId,
 } from "@awen/contracts";
-import type { DraftId } from "../composerDraftStore";
 
 /** Product identities only. Runtime identities belong to trusted adapters. */
 export type ViewTarget = (
@@ -27,14 +26,7 @@ export type ViewTarget = (
   | {
       readonly kind: "agentSession";
       readonly environmentId: EnvironmentId;
-      readonly workspaceId: WorkspaceId;
       readonly agentSessionId: AgentSessionId;
-    }
-  | {
-      readonly kind: "newAgentSession";
-      readonly environmentId: EnvironmentId;
-      readonly workspaceId: WorkspaceId;
-      readonly draftId: DraftId;
     }
   | {
       readonly kind: "workspaceTerminal";
@@ -71,9 +63,7 @@ export function targetKey(target: ViewTarget): string {
         target.workspaceId,
       ]);
     case "agentSession":
-      return `agentSession:${target.environmentId}:${target.workspaceId}:${target.agentSessionId}`;
-    case "newAgentSession":
-      return `newAgentSession:${target.environmentId}:${target.workspaceId}:${target.draftId}`;
+      return JSON.stringify(["agentSession", target.environmentId, target.agentSessionId]);
     case "workspaceTerminal":
       return `workspaceTerminal:${target.environmentId}:${target.workspaceId}:${target.terminalSessionId}`;
   }
@@ -145,7 +135,6 @@ export const emptyViewBinding = () => ({
 const REGISTRY = new Map<string, RegisteredViewDefinition>();
 
 export function definitionIdForTarget(target: ViewTarget): string {
-  if (target.kind === "newAgentSession") return "agentSession";
   return target.definitionId ?? target.kind;
 }
 

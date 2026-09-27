@@ -1,22 +1,17 @@
 import {
-  agentSessionsIn,
-  type AgentSessionId,
   type EnvironmentId,
   type TerminalSessionId,
   type ThreadId,
   type WorkspaceId,
 } from "@awen/contracts";
 import type { EnvironmentAwenProject } from "@awen/client-runtime/state/models";
-import { normalizeProjectPathForComparison } from "@awen/shared/path";
-import type { DraftId } from "../composerDraftStore";
+import { findAgentSession } from "../state/agentSessionLookup";
 
 import type { ViewTarget } from "./viewRegistry";
 
 export type SessionTarget = Extract<ViewTarget, { kind: "agentSession" | "workspaceTerminal" }>;
-export type NewAgentSessionTarget = Extract<ViewTarget, { kind: "newAgentSession" }>;
-
 export type SessionRoutePath =
-  | "/$environmentId/workspaces/$workspaceId/agent-sessions/$agentSessionId"
+  | "/$environmentId/$threadId"
   | "/$environmentId/workspaces/$workspaceId/terminal-sessions/$terminalSessionId";
 
 export interface SessionRouteLocation {
@@ -24,112 +19,17 @@ export interface SessionRouteLocation {
   readonly params: Readonly<Record<string, string>>;
 }
 
-export function draftIdFromParams(params: {
-  readonly draftId?: string | undefined;
-}): DraftId | null {
-  return params.draftId === undefined || params.draftId.length === 0
-    ? null
-    : (params.draftId as DraftId);
-}
-
-export function newAgentSessionTargetForDraft(
-  draftId: DraftId,
-  draft: { readonly environmentId: EnvironmentId; readonly workspaceId: WorkspaceId },
-): NewAgentSessionTarget {
-  return {
-    kind: "newAgentSession",
-    environmentId: draft.environmentId,
-    workspaceId: draft.workspaceId,
-    draftId,
-  };
-}
-
-/** Resolve a reloaded draft route to the Agent Session it was promoted into, if any. */
-export function resolveDraftRecoveryTarget(
-  draftId: DraftId,
-  draft: {
-    readonly environmentId: EnvironmentId;
-    readonly workspaceId: WorkspaceId;
-    readonly threadId: ThreadId;
-    readonly worktreePath?: string | null | undefined;
-    readonly promotedTo?: { readonly threadId: ThreadId } | null | undefined;
-  },
-  projects: ReadonlyArray<EnvironmentAwenProject>,
-): SessionTarget | NewAgentSessionTarget | null {
-  const threadId = draft.promotedTo?.threadId ?? draft.threadId;
-  for (const project of projects) {
-    if (project.environmentId !== draft.environmentId) continue;
-    for (const workspace of project.workspaces) {
-      const session = agentSessionsIn(workspace).find(
-        (candidate) => candidate.threadId === threadId,
-      );
-      if (session !== undefined) {
-        return {
-          kind: "agentSession",
-          environmentId: project.environmentId,
-          workspaceId: workspace.id,
-          agentSessionId: session.id,
-        };
-      }
-    }
-  }
-  return resolveNewAgentSessionTarget(draftId, draft, projects);
-}
-
-export function resolveNewAgentSessionTarget(
-  draftId: DraftId,
-  draft: {
-    readonly environmentId: EnvironmentId;
-    readonly workspaceId: WorkspaceId;
-    readonly worktreePath?: string | null | undefined;
-  },
-  projects: ReadonlyArray<EnvironmentAwenProject>,
-): NewAgentSessionTarget | null {
-  if (draft.worktreePath) {
-    const normalizedCheckout = normalizeProjectPathForComparison(draft.worktreePath);
-    for (const project of projects) {
-      if (project.environmentId !== draft.environmentId) continue;
-      const workspace = project.workspaces.find(
-        (candidate) =>
-          normalizeProjectPathForComparison(candidate.workspaceRoot) === normalizedCheckout,
-      );
-      if (workspace !== undefined) {
-        return newAgentSessionTargetForDraft(draftId, {
-          environmentId: draft.environmentId,
-          workspaceId: workspace.id,
-        });
-      }
-    }
-  }
-
-  const storedWorkspace = projects
-    .find((project) => project.environmentId === draft.environmentId)
-    ?.workspaces.find((workspace) => workspace.id === draft.workspaceId);
-  return storedWorkspace === undefined
-    ? null
-    : newAgentSessionTargetForDraft(draftId, {
-        environmentId: draft.environmentId,
-        workspaceId: draft.workspaceId,
-      });
-}
-
 export type DeepLinkRouteInput =
   | {
       readonly kind: "agentSession";
       readonly environmentId: EnvironmentId;
-      readonly workspaceId: WorkspaceId;
-      readonly agentSessionId: AgentSessionId;
+      readonly threadId: ThreadId;
     }
   | {
       readonly kind: "workspaceTerminal";
       readonly environmentId: EnvironmentId;
       readonly workspaceId: WorkspaceId;
       readonly terminalSessionId: TerminalSessionId;
-    }
-  | {
-      readonly kind: "legacyThread";
-      readonly environmentId: EnvironmentId;
-      readonly threadId: ThreadId;
     };
 
 export type DeepLinkResolution =
@@ -139,7 +39,6 @@ export type DeepLinkResolution =
       readonly state: "ready";
       readonly target: SessionTarget;
       readonly canonicalRoute: SessionRouteLocation;
-      readonly legacy: boolean;
     }
   | {
       readonly state: "missing";
@@ -156,11 +55,10 @@ export interface DeepLinkEnvironmentState {
 export function sessionRouteForTarget(target: SessionTarget): SessionRouteLocation {
   if (target.kind === "agentSession") {
     return {
-      to: "/$environmentId/workspaces/$workspaceId/agent-sessions/$agentSessionId",
+      to: "/$environmentId/$threadId",
       params: {
         environmentId: target.environmentId,
-        workspaceId: target.workspaceId,
-        agentSessionId: target.agentSessionId,
+        threadId: target.agentSessionId,
       },
     };
   }
@@ -176,15 +74,7 @@ export function sessionRouteForTarget(target: SessionTarget): SessionRouteLocati
 
 export function deepLinkInputFromParams(
   params: Partial<
-    Record<
-      | "environmentId"
-      | "workspaceId"
-      | "agentSessionId"
-      | "terminalSessionId"
-      | "threadId"
-      | "draftId",
-      string | undefined
-    >
+    Record<"environmentId" | "workspaceId" | "terminalSessionId" | "threadId", string | undefined>
   >,
 ): DeepLinkRouteInput | null {
   if (params.environmentId === undefined) return null;
@@ -192,22 +82,7 @@ export function deepLinkInputFromParams(
 
   if (
     params.workspaceId !== undefined &&
-    params.agentSessionId !== undefined &&
-    params.terminalSessionId === undefined &&
-    params.threadId === undefined
-  ) {
-    return {
-      kind: "agentSession",
-      environmentId,
-      workspaceId: params.workspaceId as WorkspaceId,
-      agentSessionId: params.agentSessionId as AgentSessionId,
-    };
-  }
-
-  if (
-    params.workspaceId !== undefined &&
     params.terminalSessionId !== undefined &&
-    params.agentSessionId === undefined &&
     params.threadId === undefined
   ) {
     return {
@@ -218,9 +93,13 @@ export function deepLinkInputFromParams(
     };
   }
 
-  if (params.threadId !== undefined) {
+  if (
+    params.workspaceId === undefined &&
+    params.terminalSessionId === undefined &&
+    params.threadId !== undefined
+  ) {
     return {
-      kind: "legacyThread",
+      kind: "agentSession",
       environmentId,
       threadId: params.threadId as ThreadId,
     };
@@ -261,48 +140,23 @@ export function resolveDeepLink(
   const pending = pendingEnvironment(environment);
   if (pending !== null) return pending;
 
-  if (input.kind === "legacyThread") {
-    for (const project of projects) {
-      if (project.environmentId !== input.environmentId) continue;
-      for (const workspace of project.workspaces) {
-        const session = agentSessionsIn(workspace).find(
-          (candidate) => candidate.threadId === input.threadId,
-        );
-        if (session !== undefined) {
-          const target: SessionTarget = {
-            kind: "agentSession",
-            environmentId: input.environmentId,
-            workspaceId: workspace.id,
-            agentSessionId: session.id,
-          };
-          return {
-            state: "ready",
-            target,
-            canonicalRoute: sessionRouteForTarget(target),
-            legacy: true,
-          };
-        }
-      }
-    }
-    return { state: "missing", reason: "session" };
+  if (input.kind === "agentSession") {
+    const session = findAgentSession(projects, input.environmentId, input.threadId);
+    if (session === null) return { state: "missing", reason: "session" };
+    const target: SessionTarget = {
+      kind: "agentSession",
+      environmentId: input.environmentId,
+      agentSessionId: session.id,
+    };
+    return {
+      state: "ready",
+      target,
+      canonicalRoute: sessionRouteForTarget(target),
+    };
   }
 
   const workspace = workspaceFor(projects, input.environmentId, input.workspaceId);
   if (workspace === null) return { state: "missing", reason: "workspace" };
-
-  if (input.kind === "agentSession") {
-    const exists = agentSessionsIn(workspace).some(
-      (session) => session.id === input.agentSessionId,
-    );
-    if (!exists) return { state: "missing", reason: "session" };
-    return {
-      state: "ready",
-      target: input,
-      canonicalRoute: sessionRouteForTarget(input),
-      legacy: false,
-    };
-  }
-
   const terminalExists = [...(workspace.sessions ?? []), ...(workspace.historySessions ?? [])].some(
     (session) => session.kind === "terminal" && session.id === input.terminalSessionId,
   );
@@ -311,6 +165,5 @@ export function resolveDeepLink(
     state: "ready",
     target: input,
     canonicalRoute: sessionRouteForTarget(input),
-    legacy: false,
   };
 }

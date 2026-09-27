@@ -111,7 +111,6 @@ const makeRepository = Effect.gen(function* () {
       }
       yield* sql`
         INSERT INTO projection_awen_agent_sessions (
-          agent_session_id,
           workspace_id,
           project_id,
           thread_id,
@@ -121,7 +120,6 @@ const makeRepository = Effect.gen(function* () {
           archived_at,
           deleted_at
         ) VALUES (
-          ${input.agentSessionId},
           ${workspace.value.workspaceId},
           ${input.projectId},
           ${input.threadId},
@@ -133,7 +131,6 @@ const makeRepository = Effect.gen(function* () {
         )
         ON CONFLICT (thread_id)
         DO UPDATE SET
-          agent_session_id = excluded.agent_session_id,
           workspace_id = excluded.workspace_id,
           project_id = excluded.project_id,
           title = excluded.title,
@@ -279,7 +276,7 @@ const makeRepository = Effect.gen(function* () {
     Result: ProjectionAwenAgentSessionRow,
     execute: ({ projectId }) => sql`
       SELECT
-        sessions.agent_session_id AS "agentSessionId",
+        sessions.thread_id AS "agentSessionId",
         sessions.workspace_id AS "workspaceId",
         sessions.project_id AS "projectId",
         sessions.thread_id AS "threadId",
@@ -291,7 +288,7 @@ const makeRepository = Effect.gen(function* () {
       FROM projection_awen_agent_sessions AS sessions
       WHERE sessions.deleted_at IS NULL
         AND (${projectId ?? null} IS NULL OR sessions.project_id = ${projectId ?? null})
-      ORDER BY sessions.created_at ASC, sessions.agent_session_id ASC
+      ORDER BY sessions.created_at ASC, sessions.thread_id ASC
     `,
   });
 
@@ -329,7 +326,7 @@ const makeRepository = Effect.gen(function* () {
     Result: ProjectionAwenAgentSessionRow,
     execute: ({ threadId }) => sql`
       SELECT
-        agent_session_id AS "agentSessionId",
+        thread_id AS "agentSessionId",
         workspace_id AS "workspaceId",
         project_id AS "projectId",
         thread_id AS "threadId",

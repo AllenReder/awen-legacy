@@ -46,6 +46,16 @@ it.layer(NodeSqliteClient.layerMemory())("054_AwenAgentSessions", (it) => {
           ${timestamp}, ${timestamp}, NULL, NULL
         )
       `;
+      yield* sql`
+        INSERT INTO projection_threads (
+          thread_id, project_id, title, model_selection_json, runtime_mode,
+          interaction_mode, created_at, updated_at, archived_at, deleted_at
+        ) VALUES (
+          'thread-empty-two', 'project-session', 'Another empty session',
+          '{"instanceId":"codex","model":"gpt-5.4"}', 'full-access', 'default',
+          ${timestamp}, ${timestamp}, NULL, NULL
+        )
+      `;
 
       yield* runMigrations({ toMigrationInclusive: 54 });
 
@@ -56,21 +66,32 @@ it.layer(NodeSqliteClient.layerMemory())("054_AwenAgentSessions", (it) => {
         readonly threadId: string;
       }>`
         SELECT
-          agent_session_id AS "agentSessionId",
+          thread_id AS "agentSessionId",
           workspace_id AS "workspaceId",
           project_id AS "projectId",
           thread_id AS "threadId"
         FROM projection_awen_agent_sessions
+        ORDER BY thread_id
       `;
 
       assert.deepEqual(rows, [
         {
-          agentSessionId: "agent-session:legacy:thread-session",
+          agentSessionId: "thread-empty-two",
+          workspaceId: "workspace:project-session",
+          projectId: "project-session",
+          threadId: "thread-empty-two",
+        },
+        {
+          agentSessionId: "thread-session",
           workspaceId: "workspace:project-session",
           projectId: "project-session",
           threadId: "thread-session",
         },
       ]);
+      const columns = yield* sql<{ readonly name: string }>`
+        PRAGMA table_info(projection_awen_agent_sessions)
+      `;
+      assert.isFalse(columns.some((column) => column.name === "agent_session_id"));
     }),
   );
 });

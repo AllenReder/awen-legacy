@@ -24,7 +24,6 @@ const now = "2026-09-20T00:00:00.000Z";
 const agentTarget = {
   kind: "agentSession",
   environmentId,
-  workspaceId,
   agentSessionId,
 } satisfies ViewTarget;
 
@@ -127,7 +126,6 @@ describe("resolveTargetTitle", () => {
         {
           kind: "agentSession",
           environmentId,
-          workspaceId,
           agentSessionId: "missing" as AgentSessionId,
         },
         projects,
@@ -164,12 +162,11 @@ describe("resolveTargetTitle", () => {
         {
           kind: "agentSession",
           environmentId,
-          workspaceId,
           agentSessionId: "missing" as AgentSessionId,
         },
         projects,
       ),
-    ).toEqual(["Awen", "Main checkout", "Agent"]);
+    ).toEqual(["Project", "Workspace", "Agent"]);
     expect(resolveTargetBreadcrumbs({ kind: "welcome" }, projects)).toEqual(["Welcome"]);
   });
 });

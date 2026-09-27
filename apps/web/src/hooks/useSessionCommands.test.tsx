@@ -41,8 +41,7 @@ vi.mock("../state/terminal", () => ({
 vi.mock("../state/entities", () => ({
   readThreadDetail: () => null,
   readThreadShell: (ref: unknown) => readThreadShellMock(ref),
-  useAwenAgentSessionShell: (env: unknown, ws: unknown, id: unknown) =>
-    useAwenAgentSessionShellMock(env, ws, id),
+  useAwenAgentSessionShell: (env: unknown, id: unknown) => useAwenAgentSessionShellMock(env, id),
 }));
 
 vi.mock("../workbench/workbenchStore", () => ({
@@ -59,12 +58,11 @@ vi.mock("../components/ui/toast", () => ({
   stackedThreadToast: vi.fn(),
 }));
 
-describe("useSessionCommands zero-turn session cleanup", () => {
+describe("useSessionCommands Agent lifecycle", () => {
   const target = {
     kind: "agentSession" as const,
     environmentId: "env-1" as EnvironmentId,
-    workspaceId: "ws-1" as WorkspaceId,
-    agentSessionId: "session-1" as AgentSessionId,
+    agentSessionId: "thread-1" as AgentSessionId,
   };
 
   let closeOptions: Parameters<typeof useSessionCommands>[1];
@@ -85,7 +83,7 @@ describe("useSessionCommands zero-turn session cleanup", () => {
     useComposerDraftStore.setState(useComposerDraftStore.getInitialState());
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     useAwenAgentSessionShellMock.mockReturnValue({
-      id: "session-1",
+      id: "thread-1",
       threadId: "thread-1" as ThreadId,
       title: "New Agent Session",
     });
@@ -99,8 +97,8 @@ describe("useSessionCommands zero-turn session cleanup", () => {
     vi.unstubAllGlobals();
   });
 
-  it("permanently deletes zero-turn sessions upon close instead of archiving to history", async () => {
-    deleteMock.mockResolvedValue({ _tag: "Success" });
+  it("archives a zero-turn Session when Archive is requested", async () => {
+    archiveMock.mockResolvedValue({ _tag: "Success" });
     // zero-turn: latestTurn and session are both null
     readThreadShellMock.mockReturnValue({
       id: "thread-1",
@@ -116,11 +114,11 @@ describe("useSessionCommands zero-turn session cleanup", () => {
       await commandsHandle?.closeSession();
     });
 
-    expect(deleteMock).toHaveBeenCalledWith({
+    expect(archiveMock).toHaveBeenCalledWith({
       environmentId: "env-1",
       input: { threadId: "thread-1" },
     });
-    expect(archiveMock).not.toHaveBeenCalled();
+    expect(deleteMock).not.toHaveBeenCalled();
     expect(removeSessionViewsMock).toHaveBeenCalledWith(target);
   });
 
@@ -162,7 +160,7 @@ describe("useSessionCommands zero-turn session cleanup", () => {
     expect(deleteMock).not.toHaveBeenCalled();
   });
 
-  it("rechecks content after the close animation before choosing permanent deletion", async () => {
+  it("keeps unsent content during the close animation", async () => {
     readThreadShellMock.mockReturnValue({ latestTurn: null, session: null });
     archiveMock.mockResolvedValue({ _tag: "Success" });
     closeOptions = {
@@ -207,11 +205,11 @@ describe("useSessionCommands zero-turn session cleanup", () => {
     expect(deleteMock).not.toHaveBeenCalled();
   });
 
-  it("restores the row and retains Views when deleting an empty Session fails", async () => {
+  it("restores the row and retains Views when archiving an empty Session fails", async () => {
     readThreadShellMock.mockReturnValue({ latestTurn: null, session: null });
     const revert = vi.fn();
     closeOptions = { onWillClose: () => revert };
-    deleteMock.mockRejectedValueOnce(new Error("offline"));
+    archiveMock.mockRejectedValueOnce(new Error("offline"));
     await act(() => {
       renderer = create(<Probe />);
     });

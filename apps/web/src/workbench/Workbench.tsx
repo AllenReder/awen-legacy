@@ -1,25 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useRouter, useParams } from "@tanstack/react-router";
+import { useParams } from "@tanstack/react-router";
 
 import { useAwenProjects, useEnvironmentShellSnapshotPresent } from "../state/entities";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { useEnvironmentCatalogSnapshot } from "../state/environmentCatalogSnapshot";
 import { useEnvironments } from "../state/environments";
-import { AgentSessionLifecycle } from "./AgentSessionLifecycle";
 import { PaneTree } from "./PaneTree";
 import { TabTransitionController } from "./tabTransitionReact";
 import { installTabSwitchProfiler } from "./transitionProfiler";
 import { WorkbenchWindowChrome } from "./WorkbenchWindowChrome";
 import { MaterialSurface } from "../components/MaterialSurface";
 import { WorkbenchDropOverlay } from "./workbenchDrag";
-import {
-  deepLinkInputFromParams,
-  draftIdFromParams,
-  resolveDraftRecoveryTarget,
-  resolveDeepLink,
-  sessionRouteForTarget,
-  type DeepLinkResolution,
-} from "./deepLinks";
+import { deepLinkInputFromParams, resolveDeepLink, type DeepLinkResolution } from "./deepLinks";
 import { targetKey, type ViewTarget } from "./viewRegistry";
 import "./viewDefinitions";
 import { useWorkbenchStore } from "./workbenchStore";
@@ -27,16 +19,8 @@ import { useWorkbenchStore } from "./workbenchStore";
 // Opt-in tab-switch profiler; no-op unless `?profileTabSwitch` or the localStorage flag is set.
 installTabSwitchProfiler();
 
-interface WorkbenchProps {
-  readonly navigate?: (input: {
-    readonly to: string;
-    readonly params: Record<string, string>;
-    readonly replace?: boolean;
-  }) => void;
-}
-
 /** The Workbench shell: URL recovery input plus Workbench command execution. */
-export function Workbench({ navigate: navigateTo }: WorkbenchProps = {}) {
+export function Workbench() {
   const snapshot = useWorkbenchStore();
   const openDeepLinkTarget = useWorkbenchStore((s) => s.openDeepLinkTarget);
   const pruneWorkspaceViews = useWorkbenchStore((s) => s.pruneWorkspaceViews);
@@ -52,28 +36,11 @@ export function Workbench({ navigate: navigateTo }: WorkbenchProps = {}) {
         .map((environment) => environment.environmentId),
     [environments],
   );
-  const router = useRouter();
-  const navigate =
-    navigateTo ??
-    ((input: { to: string; params: Record<string, string>; replace?: boolean }) =>
-      void router.navigate({
-        to: input.to as never,
-        params: input.params,
-        ...(input.replace ? { replace: true } : {}),
-      } as never));
   const [missingDismissed, setMissingDismissed] = useState(false);
   const handledRouteKeyRef = useRef<string | null>(null);
 
   const params = useParams({ strict: false }) as Parameters<typeof deepLinkInputFromParams>[0];
   const deepLinkInput = deepLinkInputFromParams(params);
-  const draftId = draftIdFromParams(params as { draftId?: string });
-  const draft = useComposerDraftStore((state) =>
-    draftId === null ? null : state.getDraftSession(draftId),
-  );
-  const draftTarget =
-    draftId === null || draft === null
-      ? null
-      : resolveDraftRecoveryTarget(draftId, draft, projects);
   const environmentId = deepLinkInput?.environmentId ?? null;
   const catalog = useEnvironmentCatalogSnapshot(environmentId);
   const environmentSnapshotPresent = useEnvironmentShellSnapshotPresent(environmentId);
@@ -96,7 +63,6 @@ export function Workbench({ navigate: navigateTo }: WorkbenchProps = {}) {
               ? {
                   kind: "agentSession",
                   environmentId: project.environmentId,
-                  workspaceId: workspace.id,
                   agentSessionId: session.id,
                 }
               : {
@@ -154,28 +120,12 @@ export function Workbench({ navigate: navigateTo }: WorkbenchProps = {}) {
     const routeKey = `deep-link:${JSON.stringify(deepLinkInput)}`;
     if (handledRouteKeyRef.current === routeKey) return;
     handledRouteKeyRef.current = routeKey;
-    if (resolution.legacy) {
-      navigate({ ...resolution.canonicalRoute, replace: true });
-      return;
-    }
     openDeepLinkTarget(resolution.target);
-  }, [deepLinkInput, navigate, openDeepLinkTarget, resolution]);
-
-  useEffect(() => {
-    if (draftTarget === null) return;
-    const routeKey = `draft:${targetKey(draftTarget)}`;
-    if (handledRouteKeyRef.current === routeKey) return;
-    handledRouteKeyRef.current = routeKey;
-    openDeepLinkTarget(draftTarget);
-    if (draftTarget.kind === "agentSession") {
-      navigate({ ...sessionRouteForTarget(draftTarget), replace: true });
-    }
-  }, [draftTarget, openDeepLinkTarget]);
+  }, [deepLinkInput, openDeepLinkTarget, resolution]);
 
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col">
       <TabTransitionController />
-      <AgentSessionLifecycle projects={projects} />
       <WorkbenchWindowChrome snapshot={snapshot} projects={projects} />
       <MaterialSurface
         kind="workbench"

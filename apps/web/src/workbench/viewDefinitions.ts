@@ -1,7 +1,7 @@
 import { WorkspaceFileView } from "./WorkspaceFileView";
 import { WorkspaceGitView } from "./WorkspaceGitView";
 import { createWelcomeViewDefinition } from "./welcomeViewDefinition";
-import { AgentSessionView } from "./NewAgentSessionView";
+import { AgentView } from "./AgentView";
 import { TerminalView } from "./TerminalView";
 import {
   emptyViewBinding,
@@ -12,15 +12,13 @@ import {
 
 // Agent/Terminal remain trusted runtime adapters. Their migration to dedicated
 // data sources belongs to the Session adapter tickets; no handles cross this seam.
-export const agentViewDefinition: ViewDefinition<
-  Extract<ViewTarget, { kind: "agentSession" | "newAgentSession" }>
-> = {
+export const agentViewDefinition: ViewDefinition<Extract<ViewTarget, { kind: "agentSession" }>> = {
   id: "agentSession",
   label: "Agent",
-  accepts: (target): target is Extract<ViewTarget, { kind: "agentSession" | "newAgentSession" }> =>
-    target.kind === "agentSession" || target.kind === "newAgentSession",
+  accepts: (target): target is Extract<ViewTarget, { kind: "agentSession" }> =>
+    target.kind === "agentSession",
   bind: emptyViewBinding,
-  Component: AgentSessionView,
+  Component: AgentView,
 };
 
 export const workspaceFileViewDefinition: ViewDefinition<

@@ -1323,6 +1323,34 @@ describe("composerDraftStore project draft thread mapping", () => {
     }
   });
 
+  it("persists pending options for two empty durable Sessions in one Workspace", () => {
+    const workspaceId = WorkspaceId.make("workspace-main");
+    const firstThread = ThreadId.make("thread-empty-one");
+    const secondThread = ThreadId.make("thread-empty-two");
+    const firstKey = DraftId.make(firstThread);
+    const secondKey = DraftId.make(secondThread);
+    const store = useComposerDraftStore.getState();
+
+    store.setWorkspaceDraftThreadId(workspaceId, projectRef, firstKey, {
+      threadId: firstThread,
+      envMode: "worktree",
+      branch: "main",
+    });
+    store.setWorkspaceDraftThreadId(workspaceId, projectRef, secondKey, {
+      threadId: secondThread,
+      envMode: "local",
+    });
+
+    expect(useComposerDraftStore.getState().getDraftSession(firstKey)).toMatchObject({
+      threadId: firstThread,
+      envMode: "worktree",
+      branch: "main",
+    });
+    const persisted = partializeComposerDraftStoreState(useComposerDraftStore.getState());
+    expect(persisted.draftThreadsByThreadKey[firstKey]).toMatchObject({ envMode: "worktree" });
+    expect(persisted.draftThreadsByThreadKey[secondKey]).toMatchObject({ envMode: "local" });
+  });
+
   it("migrates a legacy project draft to the Project's main Workspace", () => {
     const persistApi = useComposerDraftStore.persist as unknown as {
       getOptions: () => {

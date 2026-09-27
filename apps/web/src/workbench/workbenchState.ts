@@ -61,6 +61,7 @@ export type ViewDragSource =
   | {
       readonly kind: "sidebar";
       readonly target: ViewTarget;
+      readonly workspaceId?: import("@awen/contracts").WorkspaceId;
       readonly onCommit?: (result: ViewDropResult) => void;
     }
   | { readonly kind: "pane"; readonly tabId: string; readonly paneId: string }
@@ -457,25 +458,6 @@ function insertPresentationTab(
   return { snapshot: { tabs, activeTabId: tab.id }, tabId: tab.id, paneId };
 }
 
-function findNewAgentSessionPane(
-  snapshot: WorkbenchSnapshot,
-  target: Extract<ViewTarget, { kind: "newAgentSession" }>,
-): { readonly tabId: string; readonly paneId: string } | null {
-  for (const tab of snapshot.tabs) {
-    for (const [paneId, view] of tab.panes) {
-      if (
-        view.target.kind === "newAgentSession" &&
-        view.target.environmentId === target.environmentId &&
-        view.target.workspaceId === target.workspaceId &&
-        view.target.draftId === target.draftId
-      ) {
-        return { tabId: tab.id, paneId };
-      }
-    }
-  }
-  return null;
-}
-
 /**
  * Focus an existing Session View across tabs (leftmost tab if multiple, or current tab if open in active tab);
  * otherwise replace an active Welcome View or create a new Tab next to the active Tab.
@@ -485,13 +467,6 @@ export function applyOpenTarget(
   target: ViewTarget,
   generateId: () => string,
 ): WorkbenchSnapshot {
-  if (target.kind === "newAgentSession") {
-    const existing = findNewAgentSessionPane(snapshot, target);
-    if (existing !== null) {
-      return applySetFocused(applyActivateTab(snapshot, existing.tabId), existing.paneId);
-    }
-  }
-
   // 1. If already open in the active Tab, focus it directly.
   const activeTab = getActiveTab(snapshot);
   const existingInActive = findPaneByTarget(activeTab, target);
@@ -544,13 +519,6 @@ export function applySplitPane(
   dir: SplitDir,
   generateId: () => string,
 ): WorkbenchSnapshot {
-  if (target.kind === "newAgentSession") {
-    const existing = findNewAgentSessionPane(snapshot, target);
-    if (existing !== null) {
-      return applySetFocused(applyActivateTab(snapshot, existing.tabId), existing.paneId);
-    }
-  }
-
   const tab = getActiveTab(snapshot);
   if (!tab.panes.has(sourcePaneId)) return applyOpenTarget(snapshot, target, generateId);
 
@@ -1157,14 +1125,10 @@ export function applyMoveTab(
   return { ...snapshot, tabs: nextTabs };
 }
 
-/** Compare two targets by Session identity across environments and workspaces. */
+/** Compare two targets by stable Session identity. */
 export function isSameSessionTarget(a: ViewTarget, b: ViewTarget): boolean {
   if (a.kind === "agentSession" && b.kind === "agentSession") {
-    return (
-      a.environmentId === b.environmentId &&
-      a.workspaceId === b.workspaceId &&
-      a.agentSessionId === b.agentSessionId
-    );
+    return a.environmentId === b.environmentId && a.agentSessionId === b.agentSessionId;
   }
   if (a.kind === "workspaceTerminal" && b.kind === "workspaceTerminal") {
     return (
@@ -1342,23 +1306,6 @@ export function applyRemoveWorkspaceViews(
   return applyRemoveMatchingViews(snapshot, (target) => target.kind === "workspace", generateId);
 }
 
-/** Remove the explicit New Agent Session View without deleting its draft payload. */
-export function applyRemoveNewAgentSessionViews(
-  snapshot: WorkbenchSnapshot,
-  target: Extract<ViewTarget, { kind: "newAgentSession" }>,
-  generateId: () => string,
-): WorkbenchSnapshot {
-  return applyRemoveMatchingViews(
-    snapshot,
-    (candidate) =>
-      candidate.kind === "newAgentSession" &&
-      candidate.environmentId === target.environmentId &&
-      candidate.workspaceId === target.workspaceId &&
-      candidate.draftId === target.draftId,
-    generateId,
-  );
-}
-
 export interface KnownWorkspace {
   readonly environmentId: string;
   readonly workspaceId: string;
@@ -1380,14 +1327,13 @@ export function applyPruneWorkspaceViews(
     (target) => {
       switch (target.kind) {
         case "workspace":
-        case "agentSession":
-        case "newAgentSession":
         case "workspaceTerminal":
           return (
             observedEnvironments.has(target.environmentId) &&
             !known.has(`${target.environmentId}:${target.workspaceId}`)
           );
         case "project":
+        case "agentSession":
         case "welcome":
           return false;
       }

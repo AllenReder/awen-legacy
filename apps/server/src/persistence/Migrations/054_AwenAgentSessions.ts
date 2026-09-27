@@ -2,18 +2,17 @@ import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 /**
- * Persists the Awen identity that points at a durable Awen thread. Runtime and
- * provider session identifiers deliberately do not participate in this key.
+ * Projects durable Threads into their current Workspace assignment. Runtime
+ * and provider session identifiers do not participate in this key.
  */
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
   yield* sql`
     CREATE TABLE IF NOT EXISTS projection_awen_agent_sessions (
-      agent_session_id TEXT PRIMARY KEY,
+      thread_id TEXT PRIMARY KEY,
       workspace_id TEXT NOT NULL,
       project_id TEXT NOT NULL,
-      thread_id TEXT NOT NULL UNIQUE,
       title TEXT NOT NULL,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
@@ -32,12 +31,9 @@ export default Effect.gen(function* () {
     ON projection_awen_agent_sessions(project_id)
   `;
 
-  // Existing Awen threads become Awen sessions on upgrade. This legacy prefix
-  // is only a migration identity; newly created sessions use their creation
-  // event id and never derive identity from a provider or thread id.
+  // The durable Thread is the Agent Session identity.
   yield* sql`
     INSERT OR IGNORE INTO projection_awen_agent_sessions (
-      agent_session_id,
       workspace_id,
       project_id,
       thread_id,
@@ -48,7 +44,6 @@ export default Effect.gen(function* () {
       deleted_at
     )
     SELECT
-      'agent-session:legacy:' || threads.thread_id,
       workspaces.workspace_id,
       threads.project_id,
       threads.thread_id,

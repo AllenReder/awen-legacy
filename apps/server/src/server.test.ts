@@ -5612,7 +5612,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               Effect.succeed(
                 Option.some({
                   kind: "agent",
-                  id: AgentSessionId.make("agent-session:event-1"),
+                  id: AgentSessionId.make(threadId),
                   workspaceId: WorkspaceId.make("workspace:project-1"),
                   threadId,
                   title: "Session result",
@@ -5647,7 +5647,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       );
 
       assert.equal(response.sequence, 9);
-      assert.equal(response.agentSession?.id, "agent-session:event-1");
+      assert.equal(response.agentSession?.id, String(threadId));
       assert.equal(response.agentSession?.threadId, threadId);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );

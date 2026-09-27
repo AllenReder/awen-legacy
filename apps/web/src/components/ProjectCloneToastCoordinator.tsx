@@ -1,5 +1,5 @@
 import { useParams } from "@tanstack/react-router";
-import { scopeProjectRef } from "@awen/client-runtime/environment";
+import { scopeProjectRef, scopeThreadRef } from "@awen/client-runtime/environment";
 import {
   type AtomCommandResult,
   isAtomCommandInterrupted,
@@ -11,6 +11,7 @@ import {
   type EnvironmentId,
   type ProjectCloneSnapshot,
   type ProjectId,
+  type ThreadId,
 } from "@awen/contracts";
 import { useCallback, useEffect, useRef } from "react";
 
@@ -20,7 +21,7 @@ import { useEnvironments } from "../state/environments";
 import { useEnvironmentProjectClones } from "../state/projectClones";
 import { sourceControlEnvironment } from "../state/sourceControl";
 import { useAtomCommand } from "../state/use-atom-command";
-import { type DraftId, useComposerDraftStore } from "../composerDraftStore";
+import { useComposerDraftStore } from "../composerDraftStore";
 import { toastManager } from "./ui/toast";
 import { stackedThreadToast } from "./ui/toastHelpers";
 
@@ -54,7 +55,7 @@ function renderKey(clone: ProjectCloneSnapshot): string {
 function EnvironmentCloneToasts({ environmentId }: { environmentId: EnvironmentId }) {
   const clones = useEnvironmentProjectClones(environmentId);
   const handleNewThread = useNewThreadHandler();
-  const { draftId: routeDraftId } = useParams({ strict: false });
+  const { threadId: routeThreadId } = useParams({ strict: false });
   const cancelClone = useAtomCommand(sourceControlEnvironment.cancelProjectClone, {
     reportFailure: false,
   });
@@ -82,16 +83,18 @@ function EnvironmentCloneToasts({ environmentId }: { environmentId: EnvironmentI
   const removeClonedProject = useRemoveClonedProject();
   const toasts = useRef(new Map<ProjectId, TrackedToast>());
 
-  // Whether the user is already looking at this project's draft: the composer
+  // Whether the user is already looking at this project's Session: the composer
   // banner shows the same progress and actions there, so the toast steps
   // aside and comes back if they navigate away mid-clone.
   const isViewingProjectDraft = useCallback(
     (projectId: ProjectId) => {
-      if (!routeDraftId) return false;
-      const draft = useComposerDraftStore.getState().getDraftSession(routeDraftId as DraftId);
+      if (!routeThreadId) return false;
+      const draft = useComposerDraftStore
+        .getState()
+        .getDraftSessionByRef(scopeThreadRef(environmentId, routeThreadId as ThreadId));
       return draft?.environmentId === environmentId && draft.projectId === projectId;
     },
-    [environmentId, routeDraftId],
+    [environmentId, routeThreadId],
   );
 
   const openProject = useCallback(

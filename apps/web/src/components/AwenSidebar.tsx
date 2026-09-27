@@ -1,12 +1,12 @@
-import type {
+import {
   AgentSessionId,
-  AwenWorkspaceShell,
-  ContextMenuItem,
-  EnvironmentId,
-  ProjectId,
-  TerminalSessionId,
-  ThreadId,
-  WorkspaceId,
+  type AwenWorkspaceShell,
+  type ContextMenuItem,
+  type EnvironmentId,
+  type ProjectId,
+  type TerminalSessionId,
+  type ThreadId,
+  type WorkspaceId,
 } from "@awen/contracts";
 import type { EnvironmentAwenProject } from "@awen/client-runtime/state/models";
 import type { ConnectionTarget } from "@awen/client-runtime/connection";
@@ -36,10 +36,10 @@ import {
 } from "react";
 import { useNavigate } from "@tanstack/react-router";
 
-import { useComposerDraftStore } from "../composerDraftStore";
+import { DraftId, useComposerDraftStore } from "../composerDraftStore";
 import { useUiStateStore } from "../uiStateStore";
 import { openCommandPalette } from "../commandPaletteBus";
-import { newDraftId, newThreadId } from "../lib/utils";
+import { newThreadId } from "../lib/utils";
 import { readLocalApi } from "../localApi";
 import { environmentServerConfigsAtom } from "../state/server";
 import { useEnvironments } from "../state/environments";
@@ -358,19 +358,16 @@ export function AwenSidebar() {
     });
   }, []);
 
-  const openDraft = useCallback(
-    (
-      environmentId: EnvironmentId,
-      workspaceId: WorkspaceId,
-      draftId: ReturnType<typeof newDraftId>,
-    ) => {
-      useWorkbenchStore.getState().openTarget({
-        kind: "newAgentSession",
+  const openAgentSession = useCallback(
+    (environmentId: EnvironmentId, threadId: ThreadId) => {
+      const target = {
+        kind: "agentSession" as const,
         environmentId,
-        workspaceId,
-        draftId,
-      });
-      void navigate({ to: "/draft/$draftId", params: { draftId } });
+        agentSessionId: AgentSessionId.make(threadId),
+      };
+      useWorkbenchStore.getState().openTarget(target);
+      const route = sessionRouteForTarget(target);
+      void navigate({ to: route.to as never, params: route.params } as never);
     },
     [navigate],
   );
@@ -379,16 +376,24 @@ export function AwenSidebar() {
     (
       project: EnvironmentAwenProject,
       workspace: AwenWorkspaceShell,
-      draftId: ReturnType<typeof newDraftId>,
       threadId: ReturnType<typeof newThreadId>,
     ) => {
+      const createdAt = new Date().toISOString();
+      const draftId = DraftId.make(threadId);
       useComposerDraftStore
         .getState()
         .setWorkspaceDraftThreadId(
           workspace.id,
           scopeProjectRef(project.environmentId, workspace.awenProjectId),
           draftId,
-          { threadId, createdAt: new Date().toISOString() },
+          {
+            threadId,
+            createdAt,
+            envMode: workspace.role === "main" ? "local" : "worktree",
+            worktreePath: workspace.role === "main" ? null : workspace.workspaceRoot,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+          },
         );
       void createThread({
         environmentId: project.environmentId,
@@ -400,9 +405,21 @@ export function AwenSidebar() {
           runtimeMode: "full-access",
           interactionMode: "default",
           branch: null,
-          worktreePath: workspace.workspaceRoot,
-          createdAt: new Date().toISOString(),
+          worktreePath: workspace.role === "main" ? null : workspace.workspaceRoot,
+          createdAt,
         },
+      }).then((result) => {
+        if (result._tag === "Failure") {
+          useComposerDraftStore.getState().clearDraftThread(draftId);
+          useWorkbenchStore.getState().removeSessionViews({
+            kind: "agentSession",
+            environmentId: project.environmentId,
+            agentSessionId: AgentSessionId.make(threadId),
+          });
+          if (!isAtomCommandInterrupted(result)) {
+            commandFailureToast("Unable to create Agent Session", squashAtomCommandFailure(result));
+          }
+        }
       });
     },
     [createThread],
@@ -410,12 +427,11 @@ export function AwenSidebar() {
 
   const newAgentSession = useCallback(
     (project: EnvironmentAwenProject, workspace: AwenWorkspaceShell) => {
-      const draftId = newDraftId();
       const threadId = newThreadId();
-      createEagerAgentSession(project, workspace, draftId, threadId);
-      openDraft(project.environmentId, workspace.id, draftId);
+      createEagerAgentSession(project, workspace, threadId);
+      openAgentSession(project.environmentId, threadId);
     },
-    [createEagerAgentSession, openDraft],
+    [createEagerAgentSession, openAgentSession],
   );
 
   const newTerminalSession = useCallback(
@@ -587,20 +603,19 @@ export function AwenSidebar() {
               );
             },
             onDragNewAgentSession: (event) => {
-              const draftId = newDraftId();
               const threadId = newThreadId();
               const target = {
-                kind: "newAgentSession" as const,
+                kind: "agentSession" as const,
                 environmentId: project.environmentId,
-                workspaceId: workspace.id,
-                draftId,
+                agentSessionId: AgentSessionId.make(threadId),
               };
               dragController.beginDrag(
                 {
                   kind: "sidebar",
                   target,
+                  workspaceId: workspace.id,
                   onCommit: () => {
-                    createEagerAgentSession(project, workspace, draftId, threadId);
+                    createEagerAgentSession(project, workspace, threadId);
                   },
                 },
                 "New Agent Session",
@@ -1061,6 +1076,7 @@ function WorkspaceAgentSessionRow({
   return (
     <SessionRow
       key={session.id}
+      workspaceId={workspace.id}
       style={style}
       data-testid="sidebar-session-row"
       data-session-kind="agent"
@@ -1072,7 +1088,6 @@ function WorkspaceAgentSessionRow({
       target={{
         kind: "agentSession",
         environmentId: project.environmentId,
-        workspaceId: workspace.id,
         agentSessionId: session.id as AgentSessionId,
       }}
       onStartRename={() => renameAgent(project.environmentId, session.threadId, session.title)}
@@ -1131,6 +1146,7 @@ function WorkspaceTerminalSessionRow({
   return (
     <SessionRow
       key={session.id}
+      workspaceId={workspace.id}
       style={style}
       data-testid="sidebar-session-row"
       data-session-kind="terminal"
@@ -1212,7 +1228,7 @@ function WorkspaceActiveSessions({
     isSidebarDrag &&
     isSessionTarget &&
     dragState.source.target.environmentId === project.environmentId &&
-    dragState.source.target.workspaceId === workspace.id;
+    dragState.source.workspaceId === workspace.id;
 
   const draggedSessionId =
     isCurrentWorkspaceDrag && dragState && isSessionTarget

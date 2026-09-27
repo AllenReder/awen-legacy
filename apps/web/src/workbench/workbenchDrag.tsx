@@ -692,7 +692,7 @@ export function WorkbenchDragProvider({ children }: { readonly children: ReactNo
             source.target.kind === "agentSession"
               ? source.target.agentSessionId
               : source.target.terminalSessionId;
-          const workspaceKey = `${source.target.environmentId}:${source.target.workspaceId}`;
+          const workspaceKey = `${source.target.environmentId}:${source.workspaceId ?? (source.target.kind === "workspaceTerminal" ? source.target.workspaceId : "")}`;
           const allSessionRows = Array.from(
             document.querySelectorAll<HTMLElement>(
               `[data-sidebar-session-row][data-workspace-key="${escapeCss(workspaceKey)}"]:not([data-session-closed="true"])`,
@@ -818,7 +818,7 @@ export function WorkbenchDragProvider({ children }: { readonly children: ReactNo
           lastSidebarDropTarget = null;
           return { isOverSidebar: false, sidebarDropTarget: null };
         }
-        const sourceWorkspaceKey = `${source.target.environmentId}:${source.target.workspaceId}`;
+        const sourceWorkspaceKey = `${source.target.environmentId}:${source.workspaceId ?? (source.target.kind === "workspaceTerminal" ? source.target.workspaceId : "")}`;
         const sourceSessionId =
           source.target.kind === "agentSession"
             ? source.target.agentSessionId
@@ -988,12 +988,6 @@ function ghostInfoForView(
     return {
       icon: <FolderIcon className="size-5 text-primary" />,
       typeLabel: "Browse Files",
-    };
-  }
-  if (target.kind === "newAgentSession") {
-    return {
-      icon: <MessageSquarePlusIcon className="size-5 text-primary" />,
-      typeLabel: "New Agent Session",
     };
   }
   return {

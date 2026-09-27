@@ -1,6 +1,6 @@
 # Make Awen identity the canonical deep-link boundary
 
-**Status: accepted**
+**Status: superseded by ADR-0026 for Agent Session links; Terminal links and Workbench ownership remain accepted**
 
 Awen deep links identify an Environment-scoped Awen target, not a provider
 Thread or a Workbench layout. The canonical Session routes are

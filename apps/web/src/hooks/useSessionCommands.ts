@@ -4,6 +4,7 @@ import { scopeThreadRef } from "@awen/client-runtime/environment";
 import { squashAtomCommandFailure } from "@awen/client-runtime/state/runtime";
 import { requestDestructiveConfirmation } from "../lib/destructiveConfirmation";
 import { readThreadShell, useAwenAgentSessionShell } from "../state/entities";
+import { useComposerDraftStore } from "../composerDraftStore";
 import { terminalEnvironment } from "../state/terminal";
 import { threadEnvironment } from "../state/threads";
 import { useAtomCommand } from "../state/use-atom-command";
@@ -41,7 +42,6 @@ export function useSessionCommands(
 
   const agentSession = useAwenAgentSessionShell(
     target.kind === "agentSession" ? target.environmentId : null,
-    target.kind === "agentSession" ? target.workspaceId : null,
     target.kind === "agentSession" ? target.agentSessionId : null,
   );
 
@@ -71,7 +71,6 @@ export function useSessionCommands(
         return;
       }
       const closed = await closeAgent(scopeThreadRef(target.environmentId, threadId), {
-        reason: "session",
         ...(options?.onWillClose ? { onWillClose: options.onWillClose } : {}),
       });
       if (!closed) return;
@@ -150,6 +149,9 @@ export function useSessionCommands(
           failureToast("Failed to delete agent session", squashAtomCommandFailure(deleteResult));
           return;
         }
+        useComposerDraftStore
+          .getState()
+          .clearDraftThread(scopeThreadRef(target.environmentId, threadId));
         store.removeSessionViews(target);
         toastManager.add({ type: "success", title: "Agent session deleted" });
       } else {

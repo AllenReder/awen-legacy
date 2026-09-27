@@ -1,6 +1,6 @@
 # Make New Agent Session drafts Workbench Views
 
-**Status: superseded by ADR-0016**
+**Status: superseded by ADR-0016 and ADR-0026**
 
 Agent-session creation starts in a Workbench-owned **New Agent Session View**
 bound to one Workspace and a client-local draft identity. A draft is not a

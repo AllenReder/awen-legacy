@@ -84,17 +84,7 @@ function isViewTarget(value: unknown): value is ViewTarget {
     case "workspace":
       return typeof value.environmentId === "string" && typeof value.workspaceId === "string";
     case "agentSession":
-      return (
-        typeof value.environmentId === "string" &&
-        typeof value.workspaceId === "string" &&
-        typeof value.agentSessionId === "string"
-      );
-    case "newAgentSession":
-      return (
-        typeof value.environmentId === "string" &&
-        typeof value.workspaceId === "string" &&
-        typeof value.draftId === "string"
-      );
+      return typeof value.environmentId === "string" && typeof value.agentSessionId === "string";
     case "workspaceTerminal":
       return (
         typeof value.environmentId === "string" &&
@@ -135,7 +125,16 @@ function decodeWorkbenchTab(value: unknown): WorkbenchTab | null {
   for (const entry of value.panes) {
     if (!Array.isArray(entry) || entry.length !== 2 || typeof entry[0] !== "string") return null;
     if (!isViewInstance(entry[1]) || panes.has(entry[0])) return null;
-    const target = entry[1].target;
+    const savedTarget = entry[1].target;
+    const target: ViewTarget =
+      savedTarget.kind === "agentSession"
+        ? {
+            kind: "agentSession",
+            environmentId: savedTarget.environmentId,
+            agentSessionId: savedTarget.agentSessionId,
+            ...(savedTarget.definitionId ? { definitionId: savedTarget.definitionId } : {}),
+          }
+        : savedTarget;
     // A Session View is repaired to one View after decoding (ADR-0010), so a
     // legacy snapshot may legitimately list the same Session twice. Other
     // targets must still be unique inside one Tab.
@@ -144,7 +143,7 @@ function decodeWorkbenchTab(value: unknown): WorkbenchTab | null {
       if (perTabTargetKeys.has(key)) return null;
       perTabTargetKeys.add(key);
     }
-    panes.set(entry[0], entry[1]);
+    panes.set(entry[0], { ...entry[1], target });
   }
   const ids = leafIds(value.layout);
   if (new Set(ids).size !== ids.length) return null;
@@ -200,16 +199,9 @@ function decodeWorkbenchSnapshot(value: unknown): WorkbenchSnapshot | null {
   }
   const tabs: WorkbenchTab[] = [];
   const tabIds = new Set<string>();
-  const draftWorkspaceKeys = new Set<string>();
   for (const candidate of value.tabs) {
     const tab = decodeWorkbenchTab(candidate);
     if (tab === null || tabIds.has(tab.id)) return null;
-    for (const view of tab.panes.values()) {
-      if (view.target.kind !== "newAgentSession") continue;
-      const key = `${view.target.environmentId}:${view.target.workspaceId}`;
-      if (draftWorkspaceKeys.has(key)) return null;
-      draftWorkspaceKeys.add(key);
-    }
     tabIds.add(tab.id);
     tabs.push(tab);
   }

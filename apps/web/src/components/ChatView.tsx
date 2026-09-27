@@ -2497,78 +2497,14 @@ export default function ChatView(props: ChatViewProps) {
       if (!activeProject) {
         throw new Error("No active project is available for this pull request.");
       }
-      const activeProjectRef = scopeProjectRef(activeProject.environmentId, activeProject.id);
-      const logicalProjectKey = deriveLogicalProjectKeyFromSettings(
-        activeProject,
-        projectGroupingSettings,
+      const opened = await handleNewThread(
+        scopeProjectRef(activeProject.environmentId, activeProject.id),
+        input,
       );
-      const storedDraftSession = getDraftSessionByLogicalProjectKey(logicalProjectKey);
-      if (storedDraftSession) {
-        setDraftThreadContext(storedDraftSession.draftId, input);
-        setLogicalProjectDraftThreadId(
-          logicalProjectKey,
-          activeProjectRef,
-          storedDraftSession.draftId,
-          {
-            threadId: storedDraftSession.threadId,
-            ...input,
-          },
-        );
-        if (routeKind !== "draft" || draftId !== storedDraftSession.draftId) {
-          await navigate({
-            to: "/draft/$draftId",
-            params: buildDraftThreadRouteParams(storedDraftSession.draftId),
-          });
-        }
-        return storedDraftSession.threadId;
-      }
-
-      const activeDraftSession = routeKind === "draft" && draftId ? getDraftSession(draftId) : null;
-      if (
-        !isServerThread &&
-        activeDraftSession?.logicalProjectKey === logicalProjectKey &&
-        draftId
-      ) {
-        setDraftThreadContext(draftId, input);
-        setLogicalProjectDraftThreadId(logicalProjectKey, activeProjectRef, draftId, {
-          threadId: activeDraftSession.threadId,
-          createdAt: activeDraftSession.createdAt,
-          runtimeMode: activeDraftSession.runtimeMode,
-          interactionMode: activeDraftSession.interactionMode,
-          ...input,
-        });
-        return activeDraftSession.threadId;
-      }
-
-      const nextDraftId = newDraftId();
-      const nextThreadId = newThreadId();
-      setLogicalProjectDraftThreadId(logicalProjectKey, activeProjectRef, nextDraftId, {
-        threadId: nextThreadId,
-        createdAt: new Date().toISOString(),
-        runtimeMode: resolveProjectSettings(settings, activeProject.id, activeProject).settings
-          .defaultRuntimeMode,
-        interactionMode: DEFAULT_INTERACTION_MODE,
-        ...input,
-      });
-      await navigate({
-        to: "/draft/$draftId",
-        params: buildDraftThreadRouteParams(nextDraftId),
-      });
-      return nextThreadId;
+      if (!opened) throw new Error("Could not create an Agent Session for this pull request.");
+      return opened.threadId;
     },
-    [
-      activeProject,
-      draftId,
-      getDraftSession,
-      getDraftSessionByLogicalProjectKey,
-      isServerThread,
-      navigate,
-      projectGroupingSettings,
-      routeKind,
-      settings,
-      setDraftThreadContext,
-      setLogicalProjectDraftThreadId,
-    ],
+    [activeProject, handleNewThread],
   );
 
   const handlePreparedPullRequestThread = useCallback(
@@ -5768,11 +5704,14 @@ export default function ChatView(props: ChatViewProps) {
   const activeThreadBranch =
     canOverrideServerThreadEnvMode && pendingServerThreadBranch !== undefined
       ? pendingServerThreadBranch
-      : (activeThread?.branch ?? null);
+      : canOverrideServerThreadEnvMode
+        ? (draftThread?.branch ?? activeThread?.branch ?? null)
+        : (activeThread?.branch ?? null);
   const startFromOrigin = isLocalDraftThread
     ? (draftThread?.startFromOrigin ?? false)
     : canOverrideServerThreadEnvMode
       ? (pendingServerThreadStartFromOriginByThreadId[activeThread?.id ?? ""] ??
+        draftThread?.startFromOrigin ??
         activeProjectSettings.settings.newWorktreesStartFromOrigin)
       : false;
   const sendEnvMode = resolveSendEnvMode({
@@ -8183,9 +8122,12 @@ export default function ChatView(props: ChatViewProps) {
               title: "Background task failed",
               description: error instanceof Error ? error.message : "Failed to send message.",
               actionProps: {
-                children: "Open draft",
+                children: "Open session",
                 onClick: () => {
-                  void navigate({ to: "/draft/$draftId", params: { draftId } });
+                  void navigate({
+                    to: "/$environmentId/$threadId",
+                    params: { environmentId, threadId: threadIdForSend },
+                  });
                 },
               },
             }),
@@ -8945,6 +8887,14 @@ export default function ChatView(props: ChatViewProps) {
     (mode: DraftThreadEnvMode) => {
       if (canOverrideServerThreadEnvMode) {
         setPendingServerThreadEnvMode(mode);
+        setDraftThreadContext(composerDraftTarget, {
+          envMode: mode,
+          startFromOrigin: resolveNewDraftStartFromOrigin({
+            envMode: mode,
+            newWorktreesStartFromOrigin: activeProjectSettings.settings.newWorktreesStartFromOrigin,
+          }),
+          ...(mode === "worktree" && draftThread?.worktreePath ? { worktreePath: null } : {}),
+        });
         scheduleComposerFocus();
         return;
       }
@@ -9038,6 +8988,7 @@ export default function ChatView(props: ChatViewProps) {
 
   const onStartFromOriginChange = (nextStartFromOrigin: boolean) => {
     if (canOverrideServerThreadEnvMode && activeThread) {
+      setDraftThreadContext(composerDraftTarget, { startFromOrigin: nextStartFromOrigin });
       setPendingServerThreadStartFromOriginByThreadId((current) =>
         current[activeThread.id] === nextStartFromOrigin
           ? current
@@ -9748,8 +9699,10 @@ export default function ChatView(props: ChatViewProps) {
                                 {...(canOverrideServerThreadEnvMode
                                   ? {
                                       activeThreadBranchOverride: activeThreadBranch,
-                                      onActiveThreadBranchOverrideChange:
-                                        setPendingServerThreadBranch,
+                                      onActiveThreadBranchOverrideChange: (branch) => {
+                                        setPendingServerThreadBranch(branch);
+                                        setDraftThreadContext(composerDraftTarget, { branch });
+                                      },
                                     }
                                   : {})}
                                 envLocked={envLocked}

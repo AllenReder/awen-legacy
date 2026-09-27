@@ -35,7 +35,6 @@ function agentTarget(
   return {
     kind: "agentSession",
     environmentId: FIX_ENV,
-    workspaceId: FIX_WORKSPACE,
     agentSessionId: FIX_AGENT,
     ...overrides,
   };
@@ -69,6 +68,10 @@ describe("targetKey", () => {
     const a = agentTarget({ agentSessionId: "agent-1" as AgentSessionId });
     const b = agentTarget({ agentSessionId: "agent-2" as AgentSessionId });
     expect(targetKey(a)).not.toBe(targetKey(b));
+  });
+
+  it("keys an Agent Pane by Environment and Session", () => {
+    expect(targetKey(agentTarget())).toBe('["agentSession","primary","agent-1"]');
   });
 });
 

@@ -29,10 +29,8 @@ import { Route as SettingsArchivedRouteImport } from './routes/settings.archived
 import { Route as SettingsAppearanceRouteImport } from './routes/settings.appearance'
 import { Route as ProjectsProjectKeyRouteImport } from './routes/projects.$projectKey'
 import { Route as ChatPullRequestsRouteImport } from './routes/_chat.pull-requests'
-import { Route as ChatDraftDraftIdRouteImport } from './routes/_chat.draft.$draftId'
 import { Route as ChatEnvironmentIdThreadIdRouteImport } from './routes/_chat.$environmentId.$threadId'
 import { Route as ChatEnvironmentIdWorkspacesWorkspaceIdTerminalSessionsTerminalSessionIdRouteImport } from './routes/_chat.$environmentId.workspaces.$workspaceId.terminal-sessions.$terminalSessionId'
-import { Route as ChatEnvironmentIdWorkspacesWorkspaceIdAgentSessionsAgentSessionIdRouteImport } from './routes/_chat.$environmentId.workspaces.$workspaceId.agent-sessions.$agentSessionId'
 
 const WelcomeRoute = WelcomeRouteImport.update({
   id: '/welcome',
@@ -134,11 +132,6 @@ const ChatPullRequestsRoute = ChatPullRequestsRouteImport.update({
   path: '/pull-requests',
   getParentRoute: () => ChatRoute,
 } as any)
-const ChatDraftDraftIdRoute = ChatDraftDraftIdRouteImport.update({
-  id: '/draft/$draftId',
-  path: '/draft/$draftId',
-  getParentRoute: () => ChatRoute,
-} as any)
 const ChatEnvironmentIdThreadIdRoute =
   ChatEnvironmentIdThreadIdRouteImport.update({
     id: '/$environmentId/$threadId',
@@ -150,14 +143,6 @@ const ChatEnvironmentIdWorkspacesWorkspaceIdTerminalSessionsTerminalSessionIdRou
     {
       id: '/$environmentId/workspaces/$workspaceId/terminal-sessions/$terminalSessionId',
       path: '/$environmentId/workspaces/$workspaceId/terminal-sessions/$terminalSessionId',
-      getParentRoute: () => ChatRoute,
-    } as any,
-  )
-const ChatEnvironmentIdWorkspacesWorkspaceIdAgentSessionsAgentSessionIdRoute =
-  ChatEnvironmentIdWorkspacesWorkspaceIdAgentSessionsAgentSessionIdRouteImport.update(
-    {
-      id: '/$environmentId/workspaces/$workspaceId/agent-sessions/$agentSessionId',
-      path: '/$environmentId/workspaces/$workspaceId/agent-sessions/$agentSessionId',
       getParentRoute: () => ChatRoute,
     } as any,
   )
@@ -183,8 +168,6 @@ export interface FileRoutesByFullPath {
   '/settings/snap-shot': typeof SettingsSnapShotRoute
   '/settings/source-control': typeof SettingsSourceControlRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
-  '/draft/$draftId': typeof ChatDraftDraftIdRoute
-  '/$environmentId/workspaces/$workspaceId/agent-sessions/$agentSessionId': typeof ChatEnvironmentIdWorkspacesWorkspaceIdAgentSessionsAgentSessionIdRoute
   '/$environmentId/workspaces/$workspaceId/terminal-sessions/$terminalSessionId': typeof ChatEnvironmentIdWorkspacesWorkspaceIdTerminalSessionsTerminalSessionIdRoute
 }
 export interface FileRoutesByTo {
@@ -208,8 +191,6 @@ export interface FileRoutesByTo {
   '/settings/source-control': typeof SettingsSourceControlRoute
   '/': typeof ChatIndexRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
-  '/draft/$draftId': typeof ChatDraftDraftIdRoute
-  '/$environmentId/workspaces/$workspaceId/agent-sessions/$agentSessionId': typeof ChatEnvironmentIdWorkspacesWorkspaceIdAgentSessionsAgentSessionIdRoute
   '/$environmentId/workspaces/$workspaceId/terminal-sessions/$terminalSessionId': typeof ChatEnvironmentIdWorkspacesWorkspaceIdTerminalSessionsTerminalSessionIdRoute
 }
 export interface FileRoutesById {
@@ -235,8 +216,6 @@ export interface FileRoutesById {
   '/settings/source-control': typeof SettingsSourceControlRoute
   '/_chat/': typeof ChatIndexRoute
   '/_chat/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
-  '/_chat/draft/$draftId': typeof ChatDraftDraftIdRoute
-  '/_chat/$environmentId/workspaces/$workspaceId/agent-sessions/$agentSessionId': typeof ChatEnvironmentIdWorkspacesWorkspaceIdAgentSessionsAgentSessionIdRoute
   '/_chat/$environmentId/workspaces/$workspaceId/terminal-sessions/$terminalSessionId': typeof ChatEnvironmentIdWorkspacesWorkspaceIdTerminalSessionsTerminalSessionIdRoute
 }
 export interface FileRouteTypes {
@@ -262,8 +241,6 @@ export interface FileRouteTypes {
     | '/settings/snap-shot'
     | '/settings/source-control'
     | '/$environmentId/$threadId'
-    | '/draft/$draftId'
-    | '/$environmentId/workspaces/$workspaceId/agent-sessions/$agentSessionId'
     | '/$environmentId/workspaces/$workspaceId/terminal-sessions/$terminalSessionId'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -287,8 +264,6 @@ export interface FileRouteTypes {
     | '/settings/source-control'
     | '/'
     | '/$environmentId/$threadId'
-    | '/draft/$draftId'
-    | '/$environmentId/workspaces/$workspaceId/agent-sessions/$agentSessionId'
     | '/$environmentId/workspaces/$workspaceId/terminal-sessions/$terminalSessionId'
   id:
     | '__root__'
@@ -313,8 +288,6 @@ export interface FileRouteTypes {
     | '/settings/source-control'
     | '/_chat/'
     | '/_chat/$environmentId/$threadId'
-    | '/_chat/draft/$draftId'
-    | '/_chat/$environmentId/workspaces/$workspaceId/agent-sessions/$agentSessionId'
     | '/_chat/$environmentId/workspaces/$workspaceId/terminal-sessions/$terminalSessionId'
   fileRoutesById: FileRoutesById
 }
@@ -469,13 +442,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatPullRequestsRouteImport
       parentRoute: typeof ChatRoute
     }
-    '/_chat/draft/$draftId': {
-      id: '/_chat/draft/$draftId'
-      path: '/draft/$draftId'
-      fullPath: '/draft/$draftId'
-      preLoaderRoute: typeof ChatDraftDraftIdRouteImport
-      parentRoute: typeof ChatRoute
-    }
     '/_chat/$environmentId/$threadId': {
       id: '/_chat/$environmentId/$threadId'
       path: '/$environmentId/$threadId'
@@ -490,13 +456,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatEnvironmentIdWorkspacesWorkspaceIdTerminalSessionsTerminalSessionIdRouteImport
       parentRoute: typeof ChatRoute
     }
-    '/_chat/$environmentId/workspaces/$workspaceId/agent-sessions/$agentSessionId': {
-      id: '/_chat/$environmentId/workspaces/$workspaceId/agent-sessions/$agentSessionId'
-      path: '/$environmentId/workspaces/$workspaceId/agent-sessions/$agentSessionId'
-      fullPath: '/$environmentId/workspaces/$workspaceId/agent-sessions/$agentSessionId'
-      preLoaderRoute: typeof ChatEnvironmentIdWorkspacesWorkspaceIdAgentSessionsAgentSessionIdRouteImport
-      parentRoute: typeof ChatRoute
-    }
   }
 }
 
@@ -504,8 +463,6 @@ interface ChatRouteChildren {
   ChatPullRequestsRoute: typeof ChatPullRequestsRoute
   ChatIndexRoute: typeof ChatIndexRoute
   ChatEnvironmentIdThreadIdRoute: typeof ChatEnvironmentIdThreadIdRoute
-  ChatDraftDraftIdRoute: typeof ChatDraftDraftIdRoute
-  ChatEnvironmentIdWorkspacesWorkspaceIdAgentSessionsAgentSessionIdRoute: typeof ChatEnvironmentIdWorkspacesWorkspaceIdAgentSessionsAgentSessionIdRoute
   ChatEnvironmentIdWorkspacesWorkspaceIdTerminalSessionsTerminalSessionIdRoute: typeof ChatEnvironmentIdWorkspacesWorkspaceIdTerminalSessionsTerminalSessionIdRoute
 }
 
@@ -513,9 +470,6 @@ const ChatRouteChildren: ChatRouteChildren = {
   ChatPullRequestsRoute: ChatPullRequestsRoute,
   ChatIndexRoute: ChatIndexRoute,
   ChatEnvironmentIdThreadIdRoute: ChatEnvironmentIdThreadIdRoute,
-  ChatDraftDraftIdRoute: ChatDraftDraftIdRoute,
-  ChatEnvironmentIdWorkspacesWorkspaceIdAgentSessionsAgentSessionIdRoute:
-    ChatEnvironmentIdWorkspacesWorkspaceIdAgentSessionsAgentSessionIdRoute,
   ChatEnvironmentIdWorkspacesWorkspaceIdTerminalSessionsTerminalSessionIdRoute:
     ChatEnvironmentIdWorkspacesWorkspaceIdTerminalSessionsTerminalSessionIdRoute,
 }

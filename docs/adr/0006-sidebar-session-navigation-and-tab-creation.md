@@ -14,7 +14,7 @@ Previously, clicking a Session row in the Sidebar, opening a session via context
 
 We update the Workbench target opening policy (`applyOpenTarget`):
 
-1. **Reuse Existing Views**: If the target Session or draft already exists in the active Tab, focus its Pane directly. If it exists in another Tab, activate the leftmost Tab containing it and focus its Pane.
+1. **Reuse Existing Views**: If the target Session already exists in the active Tab, focus its Pane directly. If it exists in another Tab, activate the leftmost Tab containing it and focus its Pane.
 2. **Reuse Welcome Tab**: If the target Session is not open in any Tab, and the active Tab is an empty Welcome Tab (`welcome` View), replace the Welcome View in-place with the target Session.
 3. **Open in New Tab**: If the target Session is not open in any Tab and the active Tab contains existing work, insert a new Tab immediately to the right of the active Tab containing the target Session as its sole first Pane, and immediately activate that Tab.
 4. **Explicit Splitting**: In-tab splitting remains accessible via explicit gestures: `Alt + Click` (or `Alt + Shift + Click`) on a Session row, and dragging a Session onto an existing Pane's drop zones.

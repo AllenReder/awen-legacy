@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import type { AwenProjectId, AgentSessionId, EnvironmentId, WorkspaceId } from "@awen/contracts";
-import type { DraftId } from "../composerDraftStore";
 
 import {
   getActiveTab,
@@ -18,7 +17,6 @@ import {
   applySetSplitRatio,
   applySetLayoutMode,
   applySplitFocused,
-  applyRemoveNewAgentSessionViews,
   applyReplacePaneTarget,
   applyViewDrop,
   initialPaneDropTarget,
@@ -40,16 +38,11 @@ const WS_A: WorkspaceId = "ws-a" as WorkspaceId;
 const WS_B: WorkspaceId = "ws-b" as WorkspaceId;
 const AGENT_X: AgentSessionId = "agent-x" as AgentSessionId;
 const AGENT_Y: AgentSessionId = "agent-y" as AgentSessionId;
-const DRAFT_X: DraftId = "draft-x" as DraftId;
 
-function agent(
-  id: AgentSessionId,
-  workspaceId: WorkspaceId = WS_A,
-): Extract<ViewTarget, { kind: "agentSession" }> {
+function agent(id: AgentSessionId): Extract<ViewTarget, { kind: "agentSession" }> {
   return {
     kind: "agentSession",
     environmentId: ENV_A,
-    workspaceId,
     agentSessionId: id,
   };
 }
@@ -63,18 +56,6 @@ function terminal(
     workspaceId,
     terminalId: id,
   });
-}
-
-function newAgentSession(
-  draftId: DraftId = DRAFT_X,
-  workspaceId: WorkspaceId = WS_A,
-): Extract<ViewTarget, { kind: "newAgentSession" }> {
-  return {
-    kind: "newAgentSession",
-    environmentId: ENV_A,
-    workspaceId,
-    draftId,
-  };
 }
 
 /** Deterministic id generator for tests. */
@@ -251,21 +232,6 @@ describe("applyOpenDeepLinkTarget", () => {
     expect(snap.tabs).toHaveLength(1);
     expect([...getActiveTab(snap).panes.values()][0]?.target).toEqual(agent(AGENT_X));
   });
-
-  it("focuses the Workspace's existing draft instead of creating a stray Welcome Tab", () => {
-    const ids = makeIds();
-    let snap = applyOpenTarget(emptyWorkbenchSnapshot(ids), newAgentSession(DRAFT_X), ids);
-    const firstTabId = snap.activeTabId;
-    const firstPaneId = getActiveTab(snap).focusedPaneId;
-    snap = applyCreateTab(snap, ids);
-
-    snap = applyOpenDeepLinkTarget(snap, newAgentSession(DRAFT_X), ids);
-
-    expect(snap.tabs).toHaveLength(2);
-    expect(snap.activeTabId).toBe(firstTabId);
-    expect(getActiveTab(snap).focusedPaneId).toBe(firstPaneId);
-    expect([...getActiveTab(snap).panes.values()][0]?.target).toEqual(newAgentSession(DRAFT_X));
-  });
 });
 
 describe("applyOpenTarget", () => {
@@ -356,44 +322,6 @@ describe("applyOpenTarget", () => {
       terminal("term-1"),
     );
   });
-
-  it("focuses the existing New Agent Session draft instead of duplicating it in another Tab", () => {
-    const ids = makeIds();
-    let snap = applyOpenTarget(emptyWorkbenchSnapshot(ids), newAgentSession(), ids);
-    const firstTabId = snap.activeTabId;
-    const firstPaneId = getActiveTab(snap).focusedPaneId;
-
-    snap = applyCreateTab(snap, ids);
-    snap = applyOpenTarget(snap, newAgentSession(), ids);
-
-    expect(snap.tabs).toHaveLength(2);
-    expect(snap.activeTabId).toBe(firstTabId);
-    expect(getActiveTab(snap).focusedPaneId).toBe(firstPaneId);
-    expect(
-      snap.tabs.reduce(
-        (count, tab) =>
-          count +
-          [...tab.panes.values()].filter((view) => view.target.kind === "newAgentSession").length,
-        0,
-      ),
-    ).toBe(1);
-  });
-
-  it("keeps at most one New Agent Session View for the same draft under ADR 0016", () => {
-    const ids = makeIds();
-    const firstDraft = newAgentSession(DRAFT_X);
-    let snap = applyOpenTarget(emptyWorkbenchSnapshot(ids), firstDraft, ids);
-    const firstPaneId = getActiveTab(snap).focusedPaneId;
-
-    snap = applyOpenTarget(snap, firstDraft, ids);
-
-    expect(getActiveTab(snap).focusedPaneId).toBe(firstPaneId);
-    expect(
-      [...getActiveTab(snap).panes.values()].filter(
-        (view) => view.target.kind === "newAgentSession",
-      ),
-    ).toEqual([expect.objectContaining({ target: firstDraft })]);
-  });
 });
 
 describe("applySplitFocused", () => {
@@ -419,18 +347,6 @@ describe("applySplitFocused", () => {
     const layout = getActiveTab(snap).layout;
     if (layout.type !== "split") throw new Error("expected split");
     expect(layout.dir).toBe("down");
-  });
-
-  it("focuses the existing Workspace draft when splitting the same draft, but allows distinct drafts under ADR 0016", () => {
-    const ids = makeIds();
-    let snap = applyOpenTarget(emptyWorkbenchSnapshot(ids), newAgentSession(DRAFT_X), ids);
-    const firstPaneId = getActiveTab(snap).focusedPaneId;
-    snap = applySplitFocused(snap, newAgentSession(DRAFT_X), "right", ids);
-    expect(getActiveTab(snap).panes.size).toBe(1);
-    expect(getActiveTab(snap).focusedPaneId).toBe(firstPaneId);
-
-    snap = applySplitFocused(snap, newAgentSession("draft-y" as DraftId), "right", ids);
-    expect(getActiveTab(snap).panes.size).toBe(2);
   });
 });
 
@@ -713,26 +629,24 @@ describe("applyRemoveSessionViews", () => {
     expect([...after.tabs[0]!.panes.values()][0]?.target).toEqual({ kind: "welcome" });
   });
 
-  it("does not remove sessions with the same id in different environment or workspace", () => {
+  it("removes a Session across Workspace assignments but preserves another Environment", () => {
     const ids = makeIds();
     const envBTarget: ViewTarget = {
       kind: "agentSession",
       environmentId: ENV_B,
-      workspaceId: WS_A,
       agentSessionId: AGENT_X,
     };
     const wsBTarget: ViewTarget = {
       kind: "agentSession",
       environmentId: ENV_A,
-      workspaceId: WS_B,
       agentSessionId: AGENT_X,
     };
     let snap = applyOpenTarget(emptyWorkbenchSnapshot(ids), envBTarget, ids);
     snap = applySplitFocused(snap, wsBTarget, "right", ids);
 
     const after = applyRemoveSessionViews(snap, agent(AGENT_X), ids);
-    expect(after).toBe(snap);
-    expect(getActiveTab(after).panes.size).toBe(2);
+    expect(getActiveTab(after).panes.size).toBe(1);
+    expect([...getActiveTab(after).panes.values()][0]?.target).toEqual(envBTarget);
   });
 
   it("matches session even when custom definitionId is present on target", () => {
@@ -757,33 +671,7 @@ describe("applyRemoveSessionViews", () => {
   });
 });
 
-describe("applyRemoveNewAgentSessionViews", () => {
-  it("restores Welcome when the New Agent Session View is explicitly discarded", () => {
-    const ids = makeIds();
-    const target = newAgentSession();
-    const opened = applyOpenTarget(emptyWorkbenchSnapshot(ids), target, ids);
-    const after = applyRemoveNewAgentSessionViews(opened, target, ids);
-    const tab = getActiveTab(after);
-    expect(tab.panes.size).toBe(1);
-    expect(tab.panes.get(tab.focusedPaneId)?.target).toEqual({ kind: "welcome" });
-  });
-});
-
 describe("applyReplacePaneTarget", () => {
-  it("promotes a New Agent Session View in place without changing its View instance", () => {
-    const ids = makeIds();
-    const draftTarget = newAgentSession();
-    let snap = applyOpenTarget(emptyWorkbenchSnapshot(ids), draftTarget, ids);
-    const paneId = getActiveTab(snap).focusedPaneId;
-    const viewBefore = getActiveTab(snap).panes.get(paneId)!;
-
-    snap = applyReplacePaneTarget(snap, paneId, agent(AGENT_X), ids);
-
-    const viewAfter = getActiveTab(snap).panes.get(paneId)!;
-    expect(viewAfter.id).toBe(viewBefore.id);
-    expect(viewAfter.target).toEqual(agent(AGENT_X));
-  });
-
   it("focuses an existing Session instead of creating a duplicate during promotion", () => {
     const ids = makeIds();
     let snap = applyOpenTarget(emptyWorkbenchSnapshot(ids), agent(AGENT_X), ids);
@@ -1274,24 +1162,6 @@ describe("applyViewDrop", () => {
 });
 
 describe("applyPruneWorkspaceViews", () => {
-  it("removes Views whose Workspace no longer exists", () => {
-    const ids = makeIds();
-    const draft = newAgentSession();
-    const workspaceTarget: ViewTarget = {
-      kind: "workspace",
-      environmentId: ENV_A,
-      workspaceId: WS_A,
-    };
-    let snap = applyOpenTarget(emptyWorkbenchSnapshot(ids), draft, ids);
-    snap = applySplitFocused(snap, workspaceTarget, "right", ids);
-
-    snap = applyPruneWorkspaceViews(snap, [], ids, [ENV_A]);
-
-    const tab = getActiveTab(snap);
-    expect(tab.panes.size).toBe(1);
-    expect(tab.panes.get(tab.focusedPaneId)?.target.kind).toBe("welcome");
-  });
-
   it("restores Welcome instead of closing the Tab when a background prune empties it", () => {
     const ids = makeIds();
     let snap = applyOpenTarget(emptyWorkbenchSnapshot(ids), workspaceFile(), ids);
@@ -1306,20 +1176,6 @@ describe("applyPruneWorkspaceViews", () => {
     expect(after.tabs.map((tab) => tab.id)).toEqual([prunedTabId, activeId]);
     expect(after.activeTabId).toBe(activeId);
     expect([...after.tabs[0]!.panes.values()][0]?.target).toEqual({ kind: "welcome" });
-  });
-
-  it("keeps Views when their Environment is temporarily unavailable", () => {
-    const ids = makeIds();
-    const remoteTarget: ViewTarget = {
-      ...newAgentSession(),
-      environmentId: ENV_B,
-    };
-    const snap = applyOpenTarget(emptyWorkbenchSnapshot(ids), remoteTarget, ids);
-
-    const after = applyPruneWorkspaceViews(snap, [], ids, [ENV_A]);
-
-    expect(after).toBe(snap);
-    expect([...getActiveTab(after).panes.values()][0]?.target).toEqual(remoteTarget);
   });
 });
 
@@ -1600,27 +1456,6 @@ describe("Session View uniqueness across the Workbench", () => {
     expect(paneTargetsOf(snap, emptyTabId)).toEqual([agent(AGENT_X)]);
     expect(paneTargetsOf(snap, sourceTabId)).toEqual([{ kind: "welcome" }]);
   });
-
-  it("focuses the Session's existing View when promotion targets it in another Tab", () => {
-    const ids = makeIds();
-    let snap = applyOpenTarget(emptyWorkbenchSnapshot(ids), agent(AGENT_X), ids);
-    const existingTabId = snap.activeTabId;
-    const existingPaneId = getActiveTab(snap).focusedPaneId;
-    snap = applyCreateTab(snap, ids);
-    snap = applyOpenTarget(snap, newAgentSession(), ids);
-    const promotionPaneId = getActiveTab(snap).focusedPaneId;
-
-    snap = applyReplacePaneTarget(snap, promotionPaneId, agent(AGENT_X), ids);
-
-    // ADR-0010: the Session's one View keeps its Tab and focus; the promoted
-    // Pane falls back to Welcome instead of becoming a second View.
-    expect(countSessionViews(snap, agent(AGENT_X))).toBe(1);
-    expect(snap.activeTabId).toBe(existingTabId);
-    expect(getActiveTab(snap).focusedPaneId).toBe(existingPaneId);
-    expect(paneTargetsOf(snap, existingTabId)).toEqual([agent(AGENT_X)]);
-    const promotionTab = snap.tabs.find((tab) => tab.id !== existingTabId)!;
-    expect([...promotionTab.panes.values()][0]?.target.kind).toBe("welcome");
-  });
 });
 
 describe("session identity", () => {
@@ -1634,7 +1469,6 @@ describe("session identity", () => {
     for (const other of [
       agent(AGENT_Y),
       { ...agent(AGENT_X), environmentId: ENV_B },
-      { ...agent(AGENT_X), workspaceId: WS_B },
       terminal("term-1"),
     ]) {
       expect(isSameSessionTarget(plain, other)).toBe(false);

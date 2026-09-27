@@ -9,6 +9,7 @@ import { useWorkbenchDragSource, useWorkbenchDragState } from "../../workbench/w
 import { FLUID_MOTION_DURATION_MS, scaledMotionDuration } from "../../workbench/workbenchMotion";
 import type { WillCloseRevert } from "../../hooks/useSessionCommands";
 import type { SessionStatus } from "./sidebarSessionPresentation";
+import type { WorkspaceId } from "@awen/contracts";
 
 export type SessionTarget = Extract<ViewTarget, { kind: "agentSession" | "workspaceTerminal" }>;
 export type SessionTabState = SessionRowTabState;
@@ -26,6 +27,7 @@ const UNREAD_COMPLETION_DOT_CLASS = "size-1.5 rounded-full bg-emerald-500";
 
 export interface SessionRowProps extends ComponentProps<"button"> {
   readonly target: SessionTarget;
+  readonly workspaceId?: WorkspaceId;
   readonly isClosed?: boolean;
   readonly isClosing?: boolean;
   readonly onWillClose?: () => Promise<WillCloseRevert | void> | WillCloseRevert | void;
@@ -43,6 +45,7 @@ export interface SessionRowProps extends ComponentProps<"button"> {
 /** Sidebar navigation addresses Sessions; Workbench commands own layout and uniqueness. */
 export function SessionRow({
   target,
+  workspaceId: assignedWorkspaceId,
   isClosed = false,
   isClosing = false,
   onWillClose,
@@ -67,7 +70,9 @@ export function SessionRow({
   const isOpenInActiveTab = isFocused || tabState === "active-unfocused";
   const isOpenInWorkbench = tabState !== "unopened";
 
-  const workspaceKey = `${target.environmentId}:${target.workspaceId}`;
+  const workspaceId =
+    assignedWorkspaceId ?? (target.kind === "workspaceTerminal" ? target.workspaceId : null);
+  const workspaceKey = `${target.environmentId}:${workspaceId ?? ""}`;
   const sessionId =
     target.kind === "agentSession" ? target.agentSessionId : target.terminalSessionId;
 
@@ -80,7 +85,7 @@ export function SessionRow({
     draggedTarget !== null &&
     draggedTarget.kind === target.kind &&
     draggedTarget.environmentId === target.environmentId &&
-    draggedTarget.workspaceId === target.workspaceId &&
+    (dragState?.source.kind !== "sidebar" || dragState.source.workspaceId === workspaceId) &&
     (draggedTarget.kind === "agentSession" && target.kind === "agentSession"
       ? draggedTarget.agentSessionId === target.agentSessionId
       : draggedTarget.kind === "workspaceTerminal" && target.kind === "workspaceTerminal"
@@ -113,7 +118,7 @@ export function SessionRow({
     onWillClose: handleWillClose,
   });
   const drag = useWorkbenchDragSource(
-    { kind: "sidebar", target },
+    { kind: "sidebar", target, ...(workspaceId ? { workspaceId } : {}) },
     sessionTitle ?? (target.kind === "agentSession" ? "Agent Session" : "Terminal Session"),
   );
   const navigateTarget = () => {

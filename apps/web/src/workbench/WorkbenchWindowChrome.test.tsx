@@ -24,7 +24,6 @@ const now = "2026-09-20T00:00:00.000Z";
 const agentTarget = {
   kind: "agentSession",
   environmentId,
-  workspaceId,
   agentSessionId,
 } satisfies ViewTarget;
 

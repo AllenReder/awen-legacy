@@ -1,6 +1,5 @@
 import {
   ApprovalRequestId,
-  agentSessionIdForThreadCreatedEvent,
   isImportedAgentSessionMessageId,
   UserInputAttachmentAnswerPayload,
   type ChatAttachment,
@@ -619,7 +618,6 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         case "thread.created":
           yield* projectionAwenProjectRepository
             .upsertAgentSession({
-              agentSessionId: agentSessionIdForThreadCreatedEvent(event.eventId),
               projectId: event.payload.projectId,
               threadId: event.payload.threadId,
               title: event.payload.title,

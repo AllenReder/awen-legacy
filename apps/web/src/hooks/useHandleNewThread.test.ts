@@ -1,282 +1,171 @@
-import { describe, expect, it, vi } from "vite-plus/test";
-import type { RuntimeMode } from "@awen/contracts";
+import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-const testState = vi.hoisted(() => {
-  let completeProjectFileRead: (value: null) => void = () => undefined;
-  let projectFileRead = Promise.resolve<null>(null);
-  let targetSettings = {
-    defaultThreadEnvMode: "local" as "local" | "worktree",
-    newWorktreesStartFromOrigin: false,
-    defaultModelSelection: null,
-    defaultRuntimeMode: "full-access" as RuntimeMode,
-  };
-  let storedDraft: {
-    readonly draftId: string;
-    readonly environmentId: string;
-    readonly promotedTo: null;
-    readonly threadId: string;
-  } | null = null;
-  const router = {
-    state: {
-      location: { href: "/" },
-      matches: [{ params: {} }],
-    },
-    navigate: vi.fn(async (request: { readonly params: { readonly draftId: string } }) => {
-      router.state.location.href = `/draft/${request.params.draftId}`;
-    }),
-  };
-  const draftStore = {
-    getComposerDraft: vi.fn(() => ({})),
-    getDraftSessionByLogicalProjectKey: vi.fn(() => storedDraft),
-    getDraftSession: vi.fn(() => null),
-    getDraftThread: vi.fn(() => null),
+const state = vi.hoisted(() => {
+  let nextId = 0;
+  const create = vi.fn(async () => ({ _tag: "Success", value: {} }));
+  const openTarget = vi.fn();
+  const navigate = vi.fn(async () => undefined);
+  const setWorkspaceDraftThreadId = vi.fn();
+  const clearDraftThread = vi.fn();
+  const store = {
+    setWorkspaceDraftThreadId,
+    clearDraftThread,
     applyStickyState: vi.fn(),
-    setDraftThreadContext: vi.fn(),
-    setLogicalProjectDraftThreadId: vi.fn(),
     setModelSelection: vi.fn(),
   };
-
   return {
-    completeProjectFileRead: (value: null) => completeProjectFileRead(value),
-    draftStore,
-    get projectFileRead() {
-      return projectFileRead;
+    create,
+    openTarget,
+    navigate,
+    store,
+    nextThreadId: () => `thread-${++nextId}`,
+    reset: () => {
+      nextId = 0;
+      create.mockReset().mockResolvedValue({ _tag: "Success", value: {} });
+      openTarget.mockReset();
+      navigate.mockReset().mockResolvedValue(undefined);
+      setWorkspaceDraftThreadId.mockReset();
+      clearDraftThread.mockReset();
+      store.applyStickyState.mockReset();
+      store.setModelSelection.mockReset();
     },
-    get targetSettings() {
-      return targetSettings;
-    },
-    reset(
-      nextStoredDraft: typeof storedDraft,
-      workspaceDefaults = {
-        envMode: "local" as "local" | "worktree",
-        startFromOrigin: false,
-      },
-    ) {
-      storedDraft = nextStoredDraft;
-      targetSettings = {
-        defaultThreadEnvMode: workspaceDefaults.envMode,
-        newWorktreesStartFromOrigin: workspaceDefaults.startFromOrigin,
-        defaultModelSelection: null,
-        defaultRuntimeMode: "full-access",
-      };
-      router.state.location.href = "/";
-      router.navigate.mockClear();
-      draftStore.setDraftThreadContext.mockClear();
-      draftStore.setLogicalProjectDraftThreadId.mockClear();
-      projectFileRead = new Promise<null>((resolve) => {
-        completeProjectFileRead = resolve;
-      });
-    },
-    router,
   };
 });
 
-vi.mock("@effect/atom-react", () => ({
-  useAtomValue: (atom: unknown) =>
-    atom === "primary-settings"
-      ? { newWorktreesStartFromOrigin: !testState.targetSettings.newWorktreesStartFromOrigin }
-      : new Map([
-          [
-            "environment-primary",
-            {
-              settings: {
-                ...testState.targetSettings,
-                newWorktreesStartFromOrigin: !testState.targetSettings.newWorktreesStartFromOrigin,
-              },
-            },
-          ],
-          ["environment-ssh", { settings: testState.targetSettings }],
-        ]),
-}));
-vi.mock("@awen/client-runtime/environment", () => ({
-  scopedProjectKey: () => "remote-project",
-  scopeProjectRef: (environmentId: string, projectId: string) => ({ environmentId, projectId }),
-  scopeThreadRef: (environmentId: string, threadId: string) => ({ environmentId, threadId }),
-}));
-vi.mock("@awen/contracts", () => ({
-  DEFAULT_RUNTIME_MODE: "default",
-  DEFAULT_SERVER_SETTINGS: {},
-}));
-vi.mock("@awen/shared/projectSettings", () => ({
-  // Environment settings pass through; the tests set project fields on the
-  // project record, which the hook still honors until the server folds them.
-  resolveProjectSettings: (settings: Record<string, unknown>) => ({
-    settings,
-    sources: { defaultModelSelection: "environment", defaultThreadEnvMode: "environment" },
-    overrides: {},
-  }),
-}));
-vi.mock("@awen/shared/threadEnvMode", () => ({
-  resolveDefaultThreadEnvMode: (input: {
-    readonly projectFile: "local" | "worktree" | null;
-    readonly globalDefault: "local" | "worktree";
-  }) => input.projectFile ?? input.globalDefault,
-}));
-vi.mock("@tanstack/react-router", () => ({
-  useParams: () => null,
-  useRouter: () => testState.router,
-}));
 vi.mock("react", () => ({
   useCallback: <T>(callback: T) => callback,
   useMemo: <T>(factory: () => T) => factory(),
 }));
-vi.mock("../components/Sidebar.logic", () => ({ orderItemsByPreferredIds: () => [] }));
-vi.mock("../composerDraftStore", () => {
-  const useComposerDraftStore = Object.assign(() => null, {
-    getState: () => testState.draftStore,
-  });
-  return {
-    composerDraftHasUserContent: () => false,
-    markPromotedDraftThreadByRef: vi.fn(),
-    useComposerDraftStore,
-  };
-});
-vi.mock("../lib/chatThreadActions", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../lib/chatThreadActions")>()),
-  hasExplicitComposerModelSelection: () => false,
-  resolveNewThreadModelSelectionOverride: () => null,
+vi.mock("@effect/atom-react", () => ({
+  useAtomValue: () =>
+    new Map([
+      [
+        "env",
+        {
+          settings: {
+            defaultThreadEnvMode: "local",
+            newWorktreesStartFromOrigin: false,
+            defaultModelSelection: null,
+            defaultRuntimeMode: "full-access",
+          },
+        },
+      ],
+    ]),
 }));
-vi.mock("../lib/awenProjectFileDefaults", () => ({
-  readAwenProjectFileDefaultThreadEnvMode: () => testState.projectFileRead,
+vi.mock("@tanstack/react-router", () => ({
+  useParams: () => null,
+  useRouter: () => ({ state: { matches: [{ params: {} }] }, navigate: state.navigate }),
 }));
-vi.mock("../lib/utils", () => ({
-  newDraftId: () => "draft-delayed",
-  newThreadId: () => "thread-delayed",
+vi.mock("../composerDraftStore", () => ({
+  DraftId: { make: (value: string) => value },
+  useComposerDraftStore: Object.assign(() => null, { getState: () => state.store }),
 }));
-vi.mock("../logicalProject", () => ({
-  deriveLogicalProjectKeyFromSettings: () => "remote-project",
-  getProjectOrderKey: () => "remote-project",
-  selectProjectGroupingSettings: () => ({}),
-}));
+vi.mock("../lib/utils", () => ({ newThreadId: () => state.nextThreadId() }));
 vi.mock("../state/entities", () => ({
-  readProjects: () => [
+  readProjects: () => [{ id: "project", environmentId: "env", workspaceRoot: "/project" }],
+  readThreadShell: () => null,
+  useAwenProjects: () => [
     {
-      id: "project-remote",
-      environmentId: "environment-ssh",
-      workspaceRoot: "/remote/project",
-      defaultThreadEnvMode: null,
-      defaultModelSelection: null,
+      environmentId: "env",
+      workspaces: [
+        {
+          id: "workspace",
+          awenProjectId: "project",
+          workspaceRoot: "/project",
+          role: "main",
+        },
+      ],
     },
   ],
-  readThreadShell: () => null,
-  useProjects: () => [],
-  useThread: () => null,
 }));
-vi.mock("../state/server", () => ({
-  environmentServerConfigsAtom: {},
-  primaryServerSettingsAtom: "primary-settings",
+vi.mock("@awen/shared/projectSettings", () => ({
+  resolveProjectSettings: (settings: Record<string, unknown>) => ({
+    settings,
+    sources: { defaultThreadEnvMode: "environment" },
+  }),
 }));
+vi.mock("@awen/shared/threadEnvMode", () => ({
+  resolveDefaultThreadEnvMode: ({ globalDefault }: { globalDefault: string }) => globalDefault,
+}));
+vi.mock("../lib/awenProjectFileDefaults", () => ({
+  readAwenProjectFileDefaultThreadEnvMode: async () => null,
+}));
+vi.mock("../lib/chatThreadActions", () => ({
+  resolveNewDraftStartFromOrigin: () => false,
+}));
+vi.mock("../providerInstances", () => ({
+  NO_PROVIDER_MODEL_SELECTION: { instanceId: "none", model: "" },
+}));
+vi.mock("../state/use-atom-command", () => ({ useAtomCommand: () => state.create }));
+vi.mock("../state/threads", () => ({ threadEnvironment: { create: "create" } }));
+vi.mock("../workbench/workbenchStore", () => ({
+  useWorkbenchStore: Object.assign(() => null, {
+    getState: () => ({ openTarget: state.openTarget }),
+  }),
+}));
+vi.mock("../state/server", () => ({ environmentServerConfigsAtom: {} }));
 vi.mock("../threadRoutes", () => ({ resolveThreadRouteTarget: () => null }));
-vi.mock("../uiStateStore", () => ({
-  legacyProjectCwdPreferenceKey: () => "remote-project",
-  useUiStateStore: () => [],
-}));
-vi.mock("./useSettings", () => ({ useClientSettings: () => ({}) }));
 
 import { useNewThreadHandler } from "./useHandleNewThread";
 
-describe.each([
-  ["new", null],
-  [
-    "reusable",
-    {
-      draftId: "draft-existing",
-      environmentId: "environment-ssh",
-      promotedTo: null,
-      threadId: "thread-existing",
-    },
-  ],
-])("useNewThreadHandler with a %s draft", (_, draft) => {
-  it.each(["approval-required", "auto-accept-edits", "auto", "full-access"] as const)(
-    "uses the target environment's %s permissions for new threads",
-    async (runtimeMode) => {
-      testState.reset(draft);
-      testState.targetSettings.defaultRuntimeMode = runtimeMode;
-      const projectRef = {
-        environmentId: "environment-ssh",
-        projectId: "project-remote",
-      } as never;
-      const pendingOpen = useNewThreadHandler()(projectRef);
-      testState.completeProjectFileRead(null);
-      const opened = await pendingOpen;
+const projectRef = { environmentId: "env", projectId: "project" } as never;
 
-      expect(testState.draftStore.setLogicalProjectDraftThreadId).toHaveBeenCalledWith(
-        "remote-project",
-        projectRef,
-        opened!.draftId,
-        expect.objectContaining({ runtimeMode }),
-      );
-    },
-  );
+beforeEach(() => state.reset());
 
-  it("abandons a delayed draft open when the user navigates elsewhere", async () => {
-    testState.reset(draft);
-    const openThread = useNewThreadHandler();
-    const pendingOpen = openThread(
-      { environmentId: "environment-ssh", projectId: "project-remote" } as never,
-      { replace: true },
+describe("creating Agent Sessions", () => {
+  it("creates two durable empty Sessions and opens each by its stable Thread identity", async () => {
+    const createSession = useNewThreadHandler();
+    const first = await createSession(projectRef);
+    const second = await createSession(projectRef);
+
+    expect(first?.threadId).toBe("thread-1");
+    expect(second?.threadId).toBe("thread-2");
+    expect(state.create).toHaveBeenCalledTimes(2);
+    expect(state.create).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        input: expect.objectContaining({ threadId: "thread-1", worktreePath: null }),
+      }),
     );
-
-    testState.router.state.location.href = "/usage";
-    testState.completeProjectFileRead(null);
-    await pendingOpen;
-
-    expect(testState.router.state.location.href).toBe("/usage");
-    expect(testState.router.navigate).not.toHaveBeenCalled();
-    expect(testState.draftStore.setLogicalProjectDraftThreadId).not.toHaveBeenCalled();
+    expect(state.openTarget).toHaveBeenNthCalledWith(1, {
+      kind: "agentSession",
+      environmentId: "env",
+      agentSessionId: "thread-1",
+    });
+    expect(state.openTarget).toHaveBeenNthCalledWith(2, {
+      kind: "agentSession",
+      environmentId: "env",
+      agentSessionId: "thread-2",
+    });
+    expect(state.navigate).toHaveBeenLastCalledWith({
+      to: "/$environmentId/$threadId",
+      params: { environmentId: "env", threadId: "thread-2" },
+      replace: false,
+    });
+    expect(state.store.setWorkspaceDraftThreadId).toHaveBeenCalledTimes(2);
   });
 
-  it.each([true, false])(
-    "uses the target environment's start-from-origin default of %s",
-    async (startFromOrigin) => {
-      testState.reset(draft, { envMode: "worktree", startFromOrigin });
-      const openThread = useNewThreadHandler();
-      const projectRef = {
-        environmentId: "environment-ssh",
-        projectId: "project-remote",
-      } as never;
-      const pendingOpen = openThread(projectRef);
-
-      testState.completeProjectFileRead(null);
-      const opened = await pendingOpen;
-
-      expect(opened).toEqual({
-        draftId: draft?.draftId ?? "draft-delayed",
-        threadId: draft?.threadId ?? "thread-delayed",
-      });
-      expect(testState.draftStore.setLogicalProjectDraftThreadId).toHaveBeenCalledWith(
-        "remote-project",
-        projectRef,
-        opened!.draftId,
-        expect.objectContaining({ envMode: "worktree", startFromOrigin }),
-      );
-      if (draft) {
-        expect(testState.draftStore.setDraftThreadContext).toHaveBeenCalledWith(
-          draft.draftId,
-          expect.objectContaining({ envMode: "worktree", startFromOrigin }),
-        );
-      }
-    },
-  );
-
-  it.each([true, false])(
-    "preserves an explicit start-from-origin choice of %s",
-    async (startFromOrigin) => {
-      testState.reset(draft, { envMode: "worktree", startFromOrigin: !startFromOrigin });
-      const openThread = useNewThreadHandler();
-      const projectRef = {
-        environmentId: "environment-ssh",
-        projectId: "project-remote",
-      } as never;
-
-      const opened = await openThread(projectRef, { envMode: "worktree", startFromOrigin });
-
-      expect(testState.draftStore.setLogicalProjectDraftThreadId).toHaveBeenCalledWith(
-        "remote-project",
-        projectRef,
-        opened!.draftId,
-        expect.objectContaining({ envMode: "worktree", startFromOrigin }),
-      );
-    },
-  );
+  it("keeps pending send options on the same Thread and does not open a failed Session", async () => {
+    const createSession = useNewThreadHandler();
+    const created = await createSession(projectRef, { envMode: "worktree", startFromOrigin: true });
+    expect(state.store.setWorkspaceDraftThreadId).toHaveBeenCalledWith(
+      "workspace",
+      projectRef,
+      created?.draftId,
+      expect.objectContaining({
+        threadId: created?.threadId,
+        envMode: "worktree",
+        startFromOrigin: true,
+      }),
+    );
+    expect(state.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: expect.objectContaining({ threadId: created?.threadId, worktreePath: null }),
+      }),
+    );
+    state.create.mockResolvedValueOnce({ _tag: "Failure", cause: new Error("offline") } as never);
+    await expect(createSession(projectRef)).rejects.toBeDefined();
+    expect(state.store.clearDraftThread).toHaveBeenCalledWith("thread-2");
+    expect(state.openTarget).toHaveBeenCalledTimes(1);
+  });
 });
