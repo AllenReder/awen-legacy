@@ -5,8 +5,9 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import { HostProcessPlatform } from "@awen/shared/hostProcess";
+import { HostProcessArchitecture, HostProcessPlatform } from "@awen/shared/hostProcess";
 import * as Effect from "effect/Effect";
+import { describeReleaseTreePruning, pruneReleaseTree } from "./lib/release-tree.ts";
 import { packageManagerInvocation } from "./lib/spawn-command.ts";
 
 const ROOT = NodePath.resolve(import.meta.dirname, "..");
@@ -354,6 +355,15 @@ export async function stageDesktopRuntime({ target }: StageRuntimeArguments = {}
     throw new Error("The staged desktop runtime is missing dist/bin.mjs.");
   }
   removeNodeModulesBinShims(STAGE);
+  // The installer carries this tree as desktop resources, so it ships only what
+  // the packaged daemon loads: no source maps (the bundle embeds the full
+  // TypeScript text) and no prebuilds for another platform.
+  const runtimeTreeTarget = {
+    platform: runtimeTarget?.platform ?? hostPlatform,
+    arch: runtimeTarget?.arch ?? Effect.runSync(HostProcessArchitecture),
+  };
+  const pruned = pruneReleaseTree(STAGE, runtimeTreeTarget);
+  console.log(`[awen] pruned ${describeReleaseTreePruning(pruned)} from the staged runtime`);
   assertLinkFreeRuntime(STAGE);
   console.log(`[awen] staged desktop daemon and Node runtime in ${STAGE}`);
 }

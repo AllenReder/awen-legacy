@@ -17,6 +17,7 @@ import { HostProcessArchitecture, HostProcessPlatform } from "@awen/shared/hostP
 import * as Effect from "effect/Effect";
 import packageJson from "../apps/server/package.json" with { type: "json" };
 import productPackageJson from "../package.json" with { type: "json" };
+import { describeReleaseTreePruning, pruneReleaseTree } from "./lib/release-tree.ts";
 
 const REPO_ROOT = NodePath.resolve(import.meta.dirname, "..");
 const DEFAULT_OUTPUT_DIR = NodePath.join(REPO_ROOT, "release-server");
@@ -102,6 +103,17 @@ export function buildServerPackage(options: BuildServerPackageOptions = {}) {
         cwd: REPO_ROOT,
         stdio: "inherit",
       },
+    );
+
+    // The deploy copies the published package verbatim: the bundle ships source
+    // maps with the full TypeScript text, and node-pty ships every platform
+    // prebuild including ~53 MB of Windows .pdb symbols. Drop what the daemon
+    // cannot load before the archive is written.
+    const releaseTarget = { platform, arch };
+    // pruneReleaseTree refuses to return while a release-only entry remains.
+    const pruned = pruneReleaseTree(stageDir, releaseTarget);
+    console.log(
+      `[build-server-package] Pruned ${describeReleaseTreePruning(pruned)} from the staged deployment.`,
     );
 
     const binDir = NodePath.join(stageDir, "bin");
