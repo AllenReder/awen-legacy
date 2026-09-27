@@ -310,27 +310,29 @@ const make = Effect.gen(function* () {
       }
     }
 
-    yield* checkpointStore.captureCheckpoint({
-      cwd: input.cwd,
-      checkpointRef: targetCheckpointRef,
-    });
-    const afterCapture = yield* inspectExecutionContext(input.cwd);
-    if (
-      input.provenanceVerified &&
-      beforeCapture &&
-      afterCapture &&
-      beforeCapture.workspaceId === afterCapture.workspaceId &&
-      beforeCapture.rootPath === afterCapture.rootPath &&
-      beforeCapture.gitCommonDir === afterCapture.gitCommonDir &&
-      beforeCapture.headRef === afterCapture.headRef &&
-      beforeCapture.headCommit === afterCapture.headCommit
-    ) {
-      yield* rememberCheckpointContext(
-        input.threadId,
-        targetCheckpointRef,
-        input.cwd,
-        beforeCapture,
-      );
+    if (!existingTargetOid) {
+      yield* checkpointStore.captureCheckpoint({
+        cwd: input.cwd,
+        checkpointRef: targetCheckpointRef,
+      });
+      const afterCapture = yield* inspectExecutionContext(input.cwd);
+      if (
+        input.provenanceVerified &&
+        beforeCapture &&
+        afterCapture &&
+        beforeCapture.workspaceId === afterCapture.workspaceId &&
+        beforeCapture.rootPath === afterCapture.rootPath &&
+        beforeCapture.gitCommonDir === afterCapture.gitCommonDir &&
+        beforeCapture.headRef === afterCapture.headRef &&
+        beforeCapture.headCommit === afterCapture.headCommit
+      ) {
+        yield* rememberCheckpointContext(
+          input.threadId,
+          targetCheckpointRef,
+          input.cwd,
+          beforeCapture,
+        );
+      }
     }
 
     // Refresh the workspace entry index so the @-mention file picker
@@ -557,12 +559,32 @@ const make = Effect.gen(function* () {
         }
       }
       const turnBaselineRef = checkpointBaselineRefForTurn(thread.id, turnId);
-      yield* checkpointStore.captureCheckpoint({
-        cwd: checkpointCwd,
-        checkpointRef: turnBaselineRef,
-      });
-      if (context) {
-        yield* rememberCheckpointContext(thread.id, turnBaselineRef, checkpointCwd, context);
+      const existingTurnBaselineOid = yield* executionContexts.oidForRef(
+        checkpointCwd,
+        turnBaselineRef,
+      );
+      if (existingTurnBaselineOid) {
+        const saved = yield* executionContexts.find(thread.id, `checkpoint:${turnBaselineRef}`);
+        if (
+          !context ||
+          !saved ||
+          saved.checkpointOid !== existingTurnBaselineOid ||
+          !(yield* executionContexts.compatible(saved, context))
+        ) {
+          return yield* Effect.fail(
+            new CheckpointOwnershipConflict(
+              "An existing turn baseline belongs to another or unverifiable checkout.",
+            ),
+          );
+        }
+      } else {
+        yield* checkpointStore.captureCheckpoint({
+          cwd: checkpointCwd,
+          checkpointRef: turnBaselineRef,
+        });
+        if (context) {
+          yield* rememberCheckpointContext(thread.id, turnBaselineRef, checkpointCwd, context);
+        }
       }
       if (!baselineExists) {
         yield* receiptBus.publish({
@@ -1045,7 +1067,16 @@ const make = Effect.gen(function* () {
         startedTurns.set(event.threadId, turnId);
         pending.delete(event.threadId);
       }
-      yield* ensurePreTurnBaselineFromTurnStart(event);
+      yield* ensurePreTurnBaselineFromTurnStart(event).pipe(
+        Effect.catch((error) =>
+          appendCaptureFailureActivity({
+            threadId: event.threadId,
+            turnId,
+            detail: error.message,
+            createdAt: event.createdAt,
+          }).pipe(Effect.catch(() => Effect.void)),
+        ),
+      );
       return;
     }
 

@@ -62,7 +62,10 @@ import {
   ProviderService,
   type ProviderServiceShape,
 } from "../../provider/Services/ProviderService.ts";
-import { checkpointRefForThreadTurn } from "../../checkpointing/Utils.ts";
+import {
+  checkpointBaselineRefForTurn,
+  checkpointRefForThreadTurn,
+} from "../../checkpointing/Utils.ts";
 import { ProviderValidationError } from "../../provider/Errors.ts";
 import { ServerConfig } from "../../config.ts";
 import * as WorkspaceEntries from "../../workspace/WorkspaceEntries.ts";
@@ -2354,5 +2357,87 @@ describe("CheckpointReactor", () => {
       "later edit\n",
     );
     expect(harness.provider.rollbackConversation).not.toHaveBeenCalled();
+  });
+
+  it("keeps the first file checkpoint when a missing completion is retried", async () => {
+    const harness = await createHarness({ seedFilesystemCheckpoints: false });
+    const threadId = ThreadId.make("thread-1");
+    const turnId = asTurnId("retried-completion");
+    const createdAt = "2026-01-01T00:00:00.000Z";
+    harness.provider.emit({
+      type: "turn.started",
+      eventId: EventId.make("evt-retried-start"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt,
+      threadId,
+      turnId,
+    });
+    await harness.drain();
+
+    NodeFS.writeFileSync(NodePath.join(harness.cwd, "README.md"), "first completion\n");
+    harness.provider.emit({
+      type: "turn.completed",
+      eventId: EventId.make("evt-retried-missing"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt,
+      threadId,
+      turnId,
+      payload: { state: "cancelled" },
+    });
+    await harness.drain();
+    expect((await harness.readModel()).threads[0]?.checkpoints[0]?.status).toBe("missing");
+
+    NodeFS.writeFileSync(NodePath.join(harness.cwd, "README.md"), "later completion\n");
+    harness.provider.emit({
+      type: "turn.completed",
+      eventId: EventId.make("evt-retried-ready"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt,
+      threadId,
+      turnId,
+      payload: { state: "completed" },
+    });
+    await harness.drain();
+
+    NodeFS.writeFileSync(NodePath.join(harness.cwd, "README.md"), "unsaved edit\n");
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.checkpoint.revert",
+        commandId: CommandId.make("cmd-revert-retried-completion"),
+        threadId,
+        turnCount: 1,
+        createdAt,
+      }),
+    );
+    await harness.drain();
+    expect(NodeFS.readFileSync(NodePath.join(harness.cwd, "README.md"), "utf8")).toBe(
+      "first completion\n",
+    );
+  });
+
+  it("keeps the turn-start baseline when the start event is repeated", async () => {
+    const harness = await createHarness({ seedFilesystemCheckpoints: false });
+    const threadId = ThreadId.make("thread-1");
+    const turnId = asTurnId("repeated-start");
+    const createdAt = "2026-01-01T00:00:00.000Z";
+    const emitStart = (eventId: string) =>
+      harness.provider.emit({
+        type: "turn.started",
+        eventId: EventId.make(eventId),
+        provider: ProviderDriverKind.make("codex"),
+        createdAt,
+        threadId,
+        turnId,
+      });
+
+    emitStart("evt-first-start");
+    await harness.drain();
+    const baselineRef = checkpointBaselineRefForTurn(threadId, turnId);
+    const originalOid = runGit(harness.cwd, ["rev-parse", baselineRef]).trim();
+    NodeFS.writeFileSync(NodePath.join(harness.cwd, "README.md"), "edit after start\n");
+
+    emitStart("evt-repeated-start");
+    await harness.drain();
+    expect(runGit(harness.cwd, ["rev-parse", baselineRef]).trim()).toBe(originalOid);
   });
 });

@@ -125,12 +125,7 @@ const make = Effect.gen(function* () {
         (thread_id, context_key, workspace_id, root_path, git_common_dir, head_ref, head_commit, checkpoint_oid)
       VALUES
         (${threadId}, ${key}, ${context.workspaceId}, ${context.rootPath}, ${context.gitCommonDir}, ${context.headRef}, ${context.headCommit}, ${checkpointOid})
-      ON CONFLICT (thread_id, context_key) DO UPDATE SET checkpoint_oid = excluded.checkpoint_oid
-      WHERE workspace_id = excluded.workspace_id
-        AND root_path = excluded.root_path
-        AND git_common_dir = excluded.git_common_dir
-        AND head_ref IS excluded.head_ref
-        AND head_commit = excluded.head_commit
+      ON CONFLICT (thread_id, context_key) DO NOTHING
     `;
     const saved = yield* find(threadId, key);
     if (
