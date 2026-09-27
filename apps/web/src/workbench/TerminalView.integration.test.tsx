@@ -17,6 +17,7 @@ vi.mock("@effect/atom-react", () => ({ useAtomValue: () => null }));
 vi.mock("../state/entities", () => ({ useAwenWorkspace: () => ({ workspaceRoot: "/checkout" }) }));
 vi.mock("../state/terminalSessions", () => ({
   useAttachedTerminalSession: (input: unknown) => boundary.attach(input),
+  useTerminalSessionSummary: () => null,
 }));
 vi.mock("../state/use-atom-command", () => ({
   useAtomCommand: (command: string) => (command === "resize" ? boundary.resize : boundary.write),

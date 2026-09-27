@@ -6,6 +6,7 @@ import {
   EnvironmentId,
   ProjectId,
   WorkspaceId,
+  TerminalSessionId,
   type OrchestrationShellSnapshot,
 } from "@awen/contracts";
 import { describe, expect, it } from "@effect/vitest";
@@ -111,6 +112,8 @@ it("projects live Terminal Sessions beside Agent Sessions and removes only the t
   const terminal: TerminalSummary = {
     workspaceId: WORKSPACE_ID,
     terminalId: "term-1",
+    sessionId: TerminalSessionId.make("term-1"),
+    kind: "terminal",
     cwd: workspace.workspaceRoot,
     worktreePath: null,
     status: "running",
@@ -138,7 +141,7 @@ it("projects live Terminal Sessions beside Agent Sessions and removes only the t
     agent,
     {
       kind: "terminal",
-      id: "terminal-session:25:workspace:shared-local-id:term-1",
+      id: TerminalSessionId.make("term-1"),
       workspaceId: WORKSPACE_ID,
       title: "Primary shell",
       status: "open",

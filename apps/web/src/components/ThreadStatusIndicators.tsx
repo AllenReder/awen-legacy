@@ -3,6 +3,7 @@ import { scopedThreadKey, scopeThreadRef } from "@awen/client-runtime/environmen
 import { pullRequestDetailToVcsStatus } from "@awen/client-runtime/state/pull-requests";
 import {
   resolveEnvironmentMachineKind,
+  workspaceIdForAwenProject,
   type EnvironmentId,
   type ThreadLinkedPullRequest,
   type ThreadPullRequestLink,
@@ -23,7 +24,7 @@ import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { parseChangeRequestUrl } from "../lib/openPullRequestLink";
 import { useEnvironmentQuery } from "../state/query";
 import { linkedPullRequestDetailAtom, useSharedPullRequestSummary } from "../state/pullRequests";
-import { useThreadRunningTerminalIds } from "../state/terminalSessions";
+import { useWorkspaceRunningTerminalIds } from "../state/terminalSessions";
 import { useUiStateStore } from "../uiStateStore";
 import { resolveChangeRequestPresentation } from "../sourceControlPresentation";
 import { resolveThreadStatusPill, type ThreadStatusPill } from "./Sidebar.logic";
@@ -545,9 +546,9 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
  * environment indicator, matching the sidebar's trailing indicators.
  */
 export function ThreadRowTrailingStatus({ thread }: { thread: SidebarThreadSummary }) {
-  const runningTerminalIds = useThreadRunningTerminalIds({
+  const runningTerminalIds = useWorkspaceRunningTerminalIds({
     environmentId: thread.environmentId,
-    threadId: thread.id,
+    workspaceId: workspaceIdForAwenProject(thread.projectId),
   });
   const environment = useEnvironment(thread.environmentId);
   const primaryEnvironmentId = usePrimaryEnvironmentId();

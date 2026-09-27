@@ -708,7 +708,6 @@ function AgentInstallTerminal({
       const opened = await openTerminal({
         environmentId,
         input: {
-          threadId: AGENT_ONBOARDING_THREAD_ID,
           terminalId,
           cwd,
           providerInstanceId,
@@ -723,7 +722,7 @@ function AgentInstallTerminal({
 
       const wrote = await writeTerminal({
         environmentId,
-        input: { threadId: AGENT_ONBOARDING_THREAD_ID, terminalId, data: command },
+        input: { terminalId, data: command },
       });
       if (activeSetupGenerationRef.current !== generation) return;
       setSetupState(wrote._tag === "Success" ? "ready" : "writeFailed");
@@ -740,7 +739,7 @@ function AgentInstallTerminal({
       setupQueueRef.current = setupQueueRef.current.then(async () => {
         await closeTerminal({
           environmentId,
-          input: { threadId: AGENT_ONBOARDING_THREAD_ID, terminalId, deleteHistory: true },
+          input: { terminalId, deleteHistory: true },
         });
       });
     };

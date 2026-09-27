@@ -61,7 +61,7 @@ import {
 import { AddWorkspaceDialog, NewWorkspaceDialog } from "./sidebar/WorkspaceDialogs";
 import { SidebarRenameDialog } from "./sidebar/SidebarRenameDialog";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
-import { nextWorkspaceTerminalId } from "./Sidebar.logic";
+import { createTerminalId } from "../lib/terminalIds";
 import { requestDestructiveConfirmation } from "../lib/destructiveConfirmation";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { SidebarContent, SidebarGroup } from "./ui/sidebar";
@@ -436,7 +436,7 @@ export function AwenSidebar() {
 
   const newTerminalSession = useCallback(
     (project: EnvironmentAwenProject, workspace: AwenWorkspaceShell) => {
-      const terminalId = nextWorkspaceTerminalId();
+      const terminalId = createTerminalId();
       void openTerminal({
         environmentId: project.environmentId,
         input: { workspaceId: workspace.id, terminalId },
@@ -623,7 +623,7 @@ export function AwenSidebar() {
               );
             },
             onDragNewTerminalSession: (event) => {
-              const terminalId = nextWorkspaceTerminalId();
+              const terminalId = createTerminalId();
               const target = terminalTargetForRuntime({
                 environmentId: project.environmentId,
                 workspaceId: workspace.id,
@@ -743,16 +743,13 @@ export function AwenSidebar() {
       const title = window.prompt("Session name", currentTitle)?.trim();
       if (!title) return;
       const terminalId = runtimeTerminalIdForTarget(target);
-      if (!terminalId) {
-        commandFailureToast(
-          "Could not rename Terminal Session",
-          new Error("Terminal id is unavailable."),
-        );
-        return;
-      }
       void renameTerminalSession({
         environmentId: target.environmentId,
-        input: { workspaceId: target.workspaceId, terminalId, title },
+        input: {
+          terminalId,
+          ...(target.workspaceId !== undefined ? { workspaceId: target.workspaceId } : {}),
+          title,
+        },
       }).then((result) => {
         if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
           commandFailureToast(
@@ -1121,23 +1118,13 @@ function WorkspaceTerminalSessionRow({
 }) {
   const knownSessions = useKnownTerminalSessions({
     environmentId: project.environmentId,
-    threadId: null,
     workspaceId: workspace.id,
-  });
-  const runtimeTerminalId = runtimeTerminalIdForTarget({
-    kind: "workspaceTerminal",
-    environmentId: project.environmentId,
-    workspaceId: workspace.id,
-    terminalSessionId: session.id as TerminalSessionId,
   });
   const terminalSession = knownSessions.find(
     (item) =>
       item.target.terminalId === session.id ||
-      item.state.summary?.sessionId === session.id ||
       item.state.summary?.terminalId === session.id ||
-      (runtimeTerminalId !== null &&
-        (item.target.terminalId === runtimeTerminalId ||
-          item.state.summary?.terminalId === runtimeTerminalId)),
+      item.state.summary?.sessionId === session.id,
   );
   const summary = terminalSession?.state.summary;
   const TerminalOrAgentIcon = resolveTerminalIcon(summary);

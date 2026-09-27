@@ -7,7 +7,6 @@ import {
   selectThreadTerminalUiState,
   useTerminalUiStateStore,
 } from "./terminalUiStateStore";
-import { DEFAULT_THREAD_TERMINAL_ID } from "./types";
 
 const THREAD_ID = ThreadId.make("thread-1");
 const THREAD_REF = scopeThreadRef("environment-a" as never, THREAD_ID);
@@ -40,6 +39,11 @@ describe("terminalUiStateStore actions", () => {
   it("opens and splits terminals into the active group", () => {
     const store = useTerminalUiStateStore.getState();
     store.setTerminalOpen(THREAD_REF, true);
+    const defaultTerminalId = selectThreadTerminalUiState(
+      useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
+      THREAD_REF,
+    ).terminalIds[0]!;
+    expect(defaultTerminalId).toMatch(/^term-/);
     store.splitTerminal(THREAD_REF, "terminal-2");
 
     const terminalUiState = selectThreadTerminalUiState(
@@ -47,12 +51,12 @@ describe("terminalUiStateStore actions", () => {
       THREAD_REF,
     );
     expect(terminalUiState.terminalOpen).toBe(true);
-    expect(terminalUiState.terminalIds).toEqual([DEFAULT_THREAD_TERMINAL_ID, "terminal-2"]);
+    expect(terminalUiState.terminalIds).toEqual([defaultTerminalId, "terminal-2"]);
     expect(terminalUiState.activeTerminalId).toBe("terminal-2");
     expect(terminalUiState.terminalGroups).toEqual([
       {
-        id: `group-${DEFAULT_THREAD_TERMINAL_ID}`,
-        terminalIds: [DEFAULT_THREAD_TERMINAL_ID, "terminal-2"],
+        id: `group-${defaultTerminalId}`,
+        terminalIds: [defaultTerminalId, "terminal-2"],
       },
     ]);
   });
@@ -60,6 +64,10 @@ describe("terminalUiStateStore actions", () => {
   it("stacks vertically split terminals in the active group", () => {
     const store = useTerminalUiStateStore.getState();
     store.setTerminalOpen(THREAD_REF, true);
+    const defaultTerminalId = selectThreadTerminalUiState(
+      useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
+      THREAD_REF,
+    ).terminalIds[0]!;
     store.splitTerminalVertical(THREAD_REF, "terminal-2");
 
     const terminalUiState = selectThreadTerminalUiState(
@@ -68,32 +76,34 @@ describe("terminalUiStateStore actions", () => {
     );
     expect(terminalUiState.terminalGroups).toEqual([
       {
-        id: `group-${DEFAULT_THREAD_TERMINAL_ID}`,
-        terminalIds: [DEFAULT_THREAD_TERMINAL_ID, "terminal-2"],
+        id: `group-${defaultTerminalId}`,
+        terminalIds: [defaultTerminalId, "terminal-2"],
         splitDirection: "vertical",
       },
     ]);
   });
 
-  it("materializes the default terminal when opening an empty drawer", () => {
+  it("materializes a unique default terminal when opening an empty drawer", () => {
     useTerminalUiStateStore.getState().setTerminalOpen(THREAD_REF, true);
 
     const terminalUiState = selectThreadTerminalUiState(
       useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
       THREAD_REF,
     );
+    const defaultTerminalId = terminalUiState.terminalIds[0]!;
+    expect(defaultTerminalId).toMatch(/^term-/);
     expect(terminalUiState).toEqual({
       terminalOpen: true,
       terminalHeight: 280,
-      terminalIds: [DEFAULT_THREAD_TERMINAL_ID],
-      activeTerminalId: DEFAULT_THREAD_TERMINAL_ID,
+      terminalIds: [defaultTerminalId],
+      activeTerminalId: defaultTerminalId,
       terminalGroups: [
         {
-          id: `group-${DEFAULT_THREAD_TERMINAL_ID}`,
-          terminalIds: [DEFAULT_THREAD_TERMINAL_ID],
+          id: `group-${defaultTerminalId}`,
+          terminalIds: [defaultTerminalId],
         },
       ],
-      activeTerminalGroupId: `group-${DEFAULT_THREAD_TERMINAL_ID}`,
+      activeTerminalGroupId: `group-${defaultTerminalId}`,
     });
   });
 

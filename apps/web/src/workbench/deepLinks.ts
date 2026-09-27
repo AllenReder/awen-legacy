@@ -1,8 +1,9 @@
 import {
   type EnvironmentId,
   type TerminalSessionId,
+  type TerminalSummary,
   type ThreadId,
-  type WorkspaceId,
+  WorkspaceId,
 } from "@awen/contracts";
 import type { EnvironmentAwenProject } from "@awen/client-runtime/state/models";
 import { findAgentSession } from "../state/agentSessionLookup";
@@ -12,7 +13,7 @@ import type { ViewTarget } from "./viewRegistry";
 export type SessionTarget = Extract<ViewTarget, { kind: "agentSession" | "workspaceTerminal" }>;
 export type SessionRoutePath =
   | "/$environmentId/$threadId"
-  | "/$environmentId/workspaces/$workspaceId/terminal-sessions/$terminalSessionId";
+  | "/$environmentId/terminal-sessions/$terminalSessionId";
 
 export interface SessionRouteLocation {
   readonly to: SessionRoutePath;
@@ -28,8 +29,9 @@ export type DeepLinkRouteInput =
   | {
       readonly kind: "workspaceTerminal";
       readonly environmentId: EnvironmentId;
-      readonly workspaceId: WorkspaceId;
       readonly terminalSessionId: TerminalSessionId;
+      /** Current assignment, resolved from the projection when it exists. */
+      readonly workspaceId?: WorkspaceId;
     };
 
 export type DeepLinkResolution =
@@ -42,7 +44,7 @@ export type DeepLinkResolution =
     }
   | {
       readonly state: "missing";
-      readonly reason: "environment" | "workspace" | "session";
+      readonly reason: "environment" | "session";
     };
 
 export interface DeepLinkEnvironmentState {
@@ -63,10 +65,9 @@ export function sessionRouteForTarget(target: SessionTarget): SessionRouteLocati
     };
   }
   return {
-    to: "/$environmentId/workspaces/$workspaceId/terminal-sessions/$terminalSessionId",
+    to: "/$environmentId/terminal-sessions/$terminalSessionId",
     params: {
       environmentId: target.environmentId,
-      workspaceId: target.workspaceId,
       terminalSessionId: target.terminalSessionId,
     },
   };
@@ -81,14 +82,13 @@ export function deepLinkInputFromParams(
   const environmentId = params.environmentId as EnvironmentId;
 
   if (
-    params.workspaceId !== undefined &&
     params.terminalSessionId !== undefined &&
-    params.threadId === undefined
+    params.threadId === undefined &&
+    params.workspaceId === undefined
   ) {
     return {
       kind: "workspaceTerminal",
       environmentId,
-      workspaceId: params.workspaceId as WorkspaceId,
       terminalSessionId: params.terminalSessionId as TerminalSessionId,
     };
   }
@@ -117,15 +117,22 @@ function pendingEnvironment(environment: DeepLinkEnvironmentState): DeepLinkReso
   return null;
 }
 
-function workspaceFor(
+/** The Workspace whose projection currently carries this Terminal Session. */
+function workspaceProjectingTerminal(
   projects: ReadonlyArray<EnvironmentAwenProject>,
   environmentId: EnvironmentId,
-  workspaceId: WorkspaceId,
-) {
+  terminalSessionId: TerminalSessionId,
+): { readonly workspaceId: WorkspaceId } | null {
   for (const project of projects) {
     if (project.environmentId !== environmentId) continue;
-    const workspace = project.workspaces.find((candidate) => candidate.id === workspaceId);
-    if (workspace !== undefined) return workspace;
+    for (const workspace of project.workspaces) {
+      const sessions = [...(workspace.sessions ?? []), ...(workspace.historySessions ?? [])];
+      if (
+        sessions.some((session) => session.kind === "terminal" && session.id === terminalSessionId)
+      ) {
+        return { workspaceId: workspace.id };
+      }
+    }
   }
   return null;
 }
@@ -134,6 +141,7 @@ export function resolveDeepLink(
   input: DeepLinkRouteInput | null,
   projects: ReadonlyArray<EnvironmentAwenProject>,
   environment: DeepLinkEnvironmentState,
+  terminals: ReadonlyArray<TerminalSummary>,
 ): DeepLinkResolution {
   if (input === null) return { state: "idle" };
 
@@ -155,15 +163,29 @@ export function resolveDeepLink(
     };
   }
 
-  const workspace = workspaceFor(projects, input.environmentId, input.workspaceId);
-  if (workspace === null) return { state: "missing", reason: "workspace" };
-  const terminalExists = [...(workspace.sessions ?? []), ...(workspace.historySessions ?? [])].some(
-    (session) => session.kind === "terminal" && session.id === input.terminalSessionId,
+  // The terminal metadata stream is authoritative and includes unassigned
+  // terminals; the Workspace projection is a fallback while metadata loads.
+  const summary =
+    terminals.find((terminal) => terminal.sessionId === input.terminalSessionId) ?? null;
+  const projected = workspaceProjectingTerminal(
+    projects,
+    input.environmentId,
+    input.terminalSessionId,
   );
-  if (!terminalExists) return { state: "missing", reason: "session" };
+  if (summary === null && projected === null) return { state: "missing", reason: "session" };
+  const workspaceId =
+    summary?.workspaceId !== undefined
+      ? WorkspaceId.make(summary.workspaceId)
+      : projected?.workspaceId;
+  const target: SessionTarget = {
+    kind: "workspaceTerminal",
+    environmentId: input.environmentId,
+    terminalSessionId: input.terminalSessionId,
+    ...(workspaceId !== undefined ? { workspaceId } : {}),
+  };
   return {
     state: "ready",
-    target: input,
-    canonicalRoute: sessionRouteForTarget(input),
+    target,
+    canonicalRoute: sessionRouteForTarget(target),
   };
 }

@@ -1756,7 +1756,7 @@ const makeWsRpcLayer = (
                     ? terminalManager.close({
                         ...(targetProjectId
                           ? { workspaceId: workspaceIdForAwenProject(targetProjectId) }
-                          : { threadId }),
+                          : {}),
                         terminalId: setupTerminalId,
                         deleteHistory: true,
                       })

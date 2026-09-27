@@ -88,8 +88,8 @@ function isViewTarget(value: unknown): value is ViewTarget {
     case "workspaceTerminal":
       return (
         typeof value.environmentId === "string" &&
-        typeof value.workspaceId === "string" &&
-        typeof value.terminalSessionId === "string"
+        typeof value.terminalSessionId === "string" &&
+        (value.workspaceId === undefined || typeof value.workspaceId === "string")
       );
     default:
       return false;

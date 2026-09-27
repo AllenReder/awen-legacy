@@ -209,7 +209,6 @@ export const make = Effect.gen(function* () {
    */
   const observeTerminalCompletion = (input: {
     readonly workspaceId?: string;
-    readonly threadId?: string;
     readonly terminalId: string;
     /** Per-run sentinel, so only this run's wrapper can settle completion. */
     readonly sentinel: string;
@@ -256,11 +255,7 @@ export const make = Effect.gen(function* () {
         });
 
       const unsubscribe = yield* terminalManager.subscribe((event) => {
-        const ownerMatches =
-          input.workspaceId !== undefined
-            ? event.workspaceId === input.workspaceId
-            : event.threadId === input.threadId;
-        if (!ownerMatches || event.terminalId !== input.terminalId) {
+        if (event.terminalId !== input.terminalId) {
           return Effect.void;
         }
         if (event.type === "output") {
@@ -367,9 +362,7 @@ export const make = Effect.gen(function* () {
             completionSentinel(completionToken),
           )
         : script.command;
-    const terminalOwner = input.workspaceId
-      ? { workspaceId: input.workspaceId }
-      : { threadId: input.threadId };
+    const terminalOwner = input.workspaceId !== undefined ? { workspaceId: input.workspaceId } : {};
 
     yield* terminalManager
       .open({

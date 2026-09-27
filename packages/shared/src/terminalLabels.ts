@@ -21,20 +21,3 @@ export function resolveTerminalSessionLabel(
   }
   return getTerminalLabel(terminalId);
 }
-
-/**
- * Client-side terminal id allocator. Ids are ALWAYS chosen by the client and sent explicitly
- * on every `terminal.open` / `terminal.attach` call — the server never allocates.
- *
- * Returns the lowest unused `term-N` id (starting at `term-1`), skipping any ids already in
- * `existingTerminalIds`.
- */
-export function nextTerminalId(existingTerminalIds: ReadonlyArray<string>): string {
-  const usedIds = new Set(existingTerminalIds.filter((id) => id.trim().length > 0));
-  let nextIndex = 1;
-  while (usedIds.has(`term-${nextIndex}`)) {
-    nextIndex += 1;
-  }
-
-  return `term-${nextIndex}`;
-}

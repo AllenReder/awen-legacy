@@ -31,8 +31,13 @@ export type ViewTarget = (
   | {
       readonly kind: "workspaceTerminal";
       readonly environmentId: EnvironmentId;
-      readonly workspaceId: WorkspaceId;
+      /**
+       * Stable Awen Terminal Session identity. The Workspace is a nullable,
+       * mutable assignment, so it is not part of the target identity.
+       */
       readonly terminalSessionId: TerminalSessionId;
+      /** Current assignment, absent when the terminal is unassigned. */
+      readonly workspaceId?: WorkspaceId;
     }
 ) & { readonly definitionId?: string };
 
@@ -65,7 +70,7 @@ export function targetKey(target: ViewTarget): string {
     case "agentSession":
       return JSON.stringify(["agentSession", target.environmentId, target.agentSessionId]);
     case "workspaceTerminal":
-      return `workspaceTerminal:${target.environmentId}:${target.workspaceId}:${target.terminalSessionId}`;
+      return `workspaceTerminal:${target.environmentId}:${target.terminalSessionId}`;
   }
 }
 

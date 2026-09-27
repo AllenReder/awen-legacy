@@ -21,35 +21,18 @@ export function createTerminalEnvironmentAtoms<R, E>(
 ) {
   const lifecycleScheduler = createAtomCommandScheduler();
   const resizeScheduler = createAtomCommandScheduler();
-  const terminalThreadKey = ({
+  // Every terminal-scoped command serializes on its stable identity, so a
+  // Workspace reassignment can never interleave two commands for one PTY.
+  const terminalKey = ({
     environmentId,
     input,
   }: {
     readonly environmentId: string;
     readonly input: {
-      readonly workspaceId?: string | undefined;
-      readonly threadId?: string | undefined;
       readonly terminalId?: string | undefined;
     };
-  }) => JSON.stringify([environmentId, input.workspaceId ?? null, input.threadId ?? null]);
-  const terminalSessionKey = ({
-    environmentId,
-    input,
-  }: {
-    readonly environmentId: string;
-    readonly input: {
-      readonly workspaceId?: string | undefined;
-      readonly threadId?: string | undefined;
-      readonly terminalId?: string | undefined;
-    };
-  }) =>
-    JSON.stringify([
-      environmentId,
-      input.workspaceId ?? null,
-      input.threadId ?? null,
-      input.terminalId ?? null,
-    ]);
-  const lifecycleConcurrency = { mode: "serial" as const, key: terminalThreadKey };
+  }) => JSON.stringify([environmentId, input.terminalId ?? null]);
+  const lifecycleConcurrency = { mode: "serial" as const, key: terminalKey };
   return {
     attach: createEnvironmentSubscriptionAtomFamily(runtime, {
       label: "environment-data:terminal:attach",
@@ -85,7 +68,7 @@ export function createTerminalEnvironmentAtoms<R, E>(
       label: "environment-data:terminal:resize",
       tag: WS_METHODS.terminalResize,
       scheduler: resizeScheduler,
-      concurrency: { mode: "latest", key: terminalSessionKey },
+      concurrency: { mode: "latest", key: terminalKey },
     }),
     clear: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:terminal:clear",

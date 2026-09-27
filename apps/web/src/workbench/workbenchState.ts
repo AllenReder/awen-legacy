@@ -1131,11 +1131,7 @@ export function isSameSessionTarget(a: ViewTarget, b: ViewTarget): boolean {
     return a.environmentId === b.environmentId && a.agentSessionId === b.agentSessionId;
   }
   if (a.kind === "workspaceTerminal" && b.kind === "workspaceTerminal") {
-    return (
-      a.environmentId === b.environmentId &&
-      a.workspaceId === b.workspaceId &&
-      a.terminalSessionId === b.terminalSessionId
-    );
+    return a.environmentId === b.environmentId && a.terminalSessionId === b.terminalSessionId;
   }
   return false;
 }
@@ -1327,11 +1323,14 @@ export function applyPruneWorkspaceViews(
     (target) => {
       switch (target.kind) {
         case "workspace":
-        case "workspaceTerminal":
           return (
             observedEnvironments.has(target.environmentId) &&
             !known.has(`${target.environmentId}:${target.workspaceId}`)
           );
+        case "workspaceTerminal":
+          // A terminal's Workspace is a mutable assignment. Unregistering the
+          // Workspace must not close or replace a still-running terminal.
+          return false;
         case "project":
         case "agentSession":
         case "welcome":

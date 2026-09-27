@@ -4,7 +4,6 @@ import type {
   TerminalMetadataStreamEvent,
   TerminalSessionSnapshot,
   TerminalSummary,
-  ThreadId,
   WorkspaceId,
 } from "@awen/contracts";
 import {
@@ -47,9 +46,9 @@ export interface TerminalBufferState {
 
 export interface KnownTerminalSessionTarget {
   readonly environmentId: EnvironmentId;
-  readonly workspaceId?: WorkspaceId;
-  readonly threadId?: ThreadId;
   readonly terminalId: string;
+  /** Current assignment; absent when the terminal is unassigned. */
+  readonly workspaceId?: WorkspaceId;
 }
 
 export interface KnownTerminalSession {
@@ -197,24 +196,12 @@ export function applyTerminalMetadataStreamEvent(
   current: ReadonlyArray<TerminalSummary>,
   event: TerminalMetadataStreamEvent,
 ): ReadonlyArray<TerminalSummary> {
-  const sameOwner = (
-    left: Pick<TerminalSummary, "workspaceId" | "threadId">,
-    right: Pick<TerminalSummary, "workspaceId" | "threadId">,
-  ) =>
-    left.workspaceId !== undefined || right.workspaceId !== undefined
-      ? left.workspaceId === right.workspaceId
-      : left.threadId === right.threadId;
   if (event.type === "snapshot") {
     return event.terminals;
   }
   if (event.type === "remove") {
-    return current.filter(
-      (terminal) => !sameOwner(terminal, event) || terminal.terminalId !== event.terminalId,
-    );
+    return current.filter((terminal) => terminal.terminalId !== event.terminalId);
   }
-  const next = current.filter(
-    (terminal) =>
-      !sameOwner(terminal, event.terminal) || terminal.terminalId !== event.terminal.terminalId,
-  );
+  const next = current.filter((terminal) => terminal.terminalId !== event.terminal.terminalId);
   return [...next, event.terminal];
 }

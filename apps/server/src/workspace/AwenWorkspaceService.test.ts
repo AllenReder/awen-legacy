@@ -6,6 +6,7 @@ import {
   type AwenProjectShell,
   type AwenWorkspaceShell,
   ProjectId,
+  TerminalSessionId,
   type TerminalSummary,
   ThreadId,
   WorkspaceId,
@@ -636,6 +637,8 @@ describe("AwenWorkspaceService", () => {
             {
               workspaceId: "workspace:sibling",
               terminalId: "term-1",
+              sessionId: TerminalSessionId.make("term-1"),
+              kind: "terminal" as const,
               cwd: "/tmp/sibling",
               worktreePath: "/tmp/sibling",
               status: "running",
@@ -672,6 +675,8 @@ describe("AwenWorkspaceService", () => {
             {
               workspaceId: "workspace:sibling",
               terminalId: "term-1",
+              sessionId: TerminalSessionId.make("term-1"),
+              kind: "terminal" as const,
               cwd: "/tmp/sibling",
               worktreePath: "/tmp/sibling",
               status: "exited",
