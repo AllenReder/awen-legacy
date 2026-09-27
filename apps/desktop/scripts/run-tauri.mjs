@@ -59,6 +59,7 @@ function launchTauriCli() {
       // answer nothing. The launcher fails loudly instead of drifting.
       AWEN_DAEMON_PORT: String(daemonPort),
       AWEN_PORT: String(daemonPort),
+      AWEN_PROOF_WEB_ORIGIN: `http://localhost:${String(webPort)}`,
       // The web dev server must keep the port the window loads: walking to the
       // next free number would leave it serving a URL nothing reads.
       AWEN_STRICT_DEV_PORTS: process.env.AWEN_STRICT_DEV_PORTS?.trim() || "1",

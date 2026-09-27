@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Native proof page</title>
+    <style>
+      body {
+        background: #ecf7ff;
+        color: #14202c;
+        font: 18px system-ui;
+        padding: 24px;
+      }
+      input {
+        font: inherit;
+        width: 90%;
+        padding: 6px;
+      }
+      button {
+        font: inherit;
+        padding: 8px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Native proof page</h1>
+    <label for="message">Message</label>
+    <input id="message" value="initial" />
+    <button
+      id="increment"
+      onclick="
+        document.getElementById('count').textContent = String(
+          Number(document.getElementById('count').textContent) + 1,
+        )
+      "
+    >
+      Click target
+    </button>
+    <p>Clicks: <span id="count">0</span></p>
+    <p id="result">Same-page control should update the field and count.</p>
+  </body>
+</html>
