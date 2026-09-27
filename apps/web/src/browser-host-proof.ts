@@ -43,8 +43,14 @@ async function run(): Promise<void> {
     b: await evaluate("b", "document.title"),
   });
 
-  // This is the same guest a person can see and click. The command is the
-  // proof's stand-in for a routed preview automation request from the daemon.
+  const navigatedUrl = `${page}?navigated=1`;
+  await invoke("navigate", { tab: "a", url: navigatedUrl });
+  await ready("a", navigatedUrl);
+  log("navigation", await evaluate("a", "location.href"));
+
+  // This is the same guest a person can see and click. Keep the changed field
+  // and count visible after navigation for the manual same-page check. The
+  // command stands in for a routed preview request from the daemon.
   await evaluate("a", "document.querySelector('#message').value = 'agent typed here'; true");
   await evaluate("a", "document.querySelector('#increment').click(); true");
   log(
@@ -54,11 +60,6 @@ async function run(): Promise<void> {
       "({ message: document.querySelector('#message').value, clicks: document.querySelector('#count').textContent })",
     ),
   );
-
-  const navigatedUrl = `${page}?navigated=1`;
-  await invoke("navigate", { tab: "a", url: navigatedUrl });
-  await ready("a", navigatedUrl);
-  log("navigation", await evaluate("a", "location.href"));
 
   const geometry = await invoke("geometry", {
     tab: "a",
@@ -80,7 +81,7 @@ async function run(): Promise<void> {
   await evaluate("a", "localStorage.setItem('awen-browser-proof', 'profile-a'); true");
   log("profile A", await evaluate("a", "localStorage.getItem('awen-browser-proof')"));
   log("profile B", await evaluate("b", "localStorage.getItem('awen-browser-proof')"));
-  log("close", "Use Cancel close and Confirm close to inspect both outcomes.");
+  log("close", "Cancel the confirmation dialog, check page A, then confirm closure.");
 }
 
 document.querySelector("#run")?.addEventListener("click", () => {
