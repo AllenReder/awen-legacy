@@ -74,6 +74,7 @@ export function clientPresentationMetadata(input: {
   readonly hosted: boolean;
   readonly identity: BrowserIdentity;
   readonly desktopBridge: Pick<DesktopBridge, "getClientPlatform" | "preview"> | undefined;
+  readonly previewProofHost?: boolean;
 }): AuthClientPresentationMetadata {
   if (input.desktopBridge !== undefined) {
     return {
@@ -81,7 +82,7 @@ export function clientPresentationMetadata(input: {
       deviceType: "desktop",
       os: clientOsFromElectronPlatform(input.desktopBridge.getClientPlatform?.()),
       surface: "desktop",
-      previewHost: input.desktopBridge.preview !== undefined,
+      previewHost: input.desktopBridge.preview !== undefined || input.previewProofHost === true,
       ...(input.appVersion === "0.0.0" ? {} : { appVersion: input.appVersion }),
     };
   }

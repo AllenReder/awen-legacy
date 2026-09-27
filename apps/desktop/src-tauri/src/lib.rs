@@ -554,7 +554,17 @@ fn allow_app_navigation(url: &Url) -> bool {
 
 fn navigation_guard<R: Runtime>() -> TauriPlugin<R> {
     PluginBuilder::new("awen-navigation-guard")
-        .on_navigation(|_, url| allow_app_navigation(url))
+        .on_navigation(|webview, url| {
+            #[cfg(all(debug_assertions, feature = "browser-host-proof"))]
+            if webview.label().starts_with("browser-proof-")
+                && matches!(url.scheme(), "http" | "https")
+                && url.host_str().is_some()
+            {
+                return true;
+            }
+            let _ = webview;
+            allow_app_navigation(url)
+        })
         .build()
 }
 

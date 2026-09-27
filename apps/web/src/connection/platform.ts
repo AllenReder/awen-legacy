@@ -119,6 +119,7 @@ function clientMetadata() {
       maxTouchPoints: navigator.maxTouchPoints,
     },
     desktopBridge: window.desktopBridge,
+    previewProofHost: import.meta.env.VITE_BROWSER_HOST_PROOF_AGENT === "1",
   });
 }
 

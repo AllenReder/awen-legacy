@@ -38,6 +38,13 @@ pub fn start(app: &mut tauri::App) -> tauri::Result<()> {
     if std::env::var_os("AWEN_BROWSER_HOST_PROOF").is_none() {
         return Ok(());
     }
+    if std::env::var("AWEN_BROWSER_HOST_PROOF_AGENT").as_deref() == Ok("1") {
+        tauri::window::WindowBuilder::new(app, "browser-proof")
+            .title("Awen Agent browser proof")
+            .inner_size(1280.0, 800.0)
+            .build()?;
+        return Ok(());
+    }
     if let Some(main) = app.get_webview_window("main") {
         // The controller must retain the bundled app origin so its Tauri
         // commands pass the normal capability check in a registered .app.
@@ -55,15 +62,19 @@ pub fn start(app: &mut tauri::App) -> tauri::Result<()> {
 }
 
 #[tauri::command]
-pub async fn open(app: AppHandle, tab: String) -> Result<String, String> {
+pub async fn open(app: AppHandle, tab: String, url: Option<String>) -> Result<String, String> {
     let tab_label = label(&tab)?;
     if app.get_webview(tab_label).is_some() {
         return Err(format!("Tab {tab} is already open"));
     }
     let window = app
-        .get_window("main")
-        .ok_or_else(|| "Main window is unavailable".to_string())?;
-    let url = proof_url("browser-host-proof-page.html")?;
+        .get_window("browser-proof")
+        .or_else(|| app.get_window("main"))
+        .ok_or_else(|| "Browser proof window is unavailable".to_string())?;
+    let url = match url {
+        Some(url) => checked_url(&url)?,
+        None => proof_url("browser-host-proof-page.html")?,
+    };
     let mut builder = WebviewBuilder::new(tab_label, WebviewUrl::External(url));
     #[cfg(target_os = "macos")]
     {
@@ -163,8 +174,9 @@ pub async fn geometry(
     let position = guest.position().map_err(|error| error.to_string())?;
     let size = guest.size().map_err(|error| error.to_string())?;
     let scale = app
-        .get_window("main")
-        .ok_or_else(|| "Main window is unavailable".to_string())?
+        .get_window("browser-proof")
+        .or_else(|| app.get_window("main"))
+        .ok_or_else(|| "Browser proof window is unavailable".to_string())?
         .scale_factor()
         .map_err(|error| error.to_string())?;
     Ok(GeometryResult {

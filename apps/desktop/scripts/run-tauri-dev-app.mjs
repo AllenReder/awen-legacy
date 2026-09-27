@@ -27,6 +27,8 @@ const environment = {
     ? {
         AWEN_PORT_OFFSET: String(resolvedPorts.ports.offset),
         AWEN_PROOF_WEB_ORIGIN: `http://localhost:${String(resolvedPorts.ports.webPort)}`,
+        VITE_BROWSER_HOST_PROOF_AGENT:
+          process.env.AWEN_BROWSER_HOST_PROOF_AGENT === "1" ? "1" : "0",
       }
     : {}),
 };
