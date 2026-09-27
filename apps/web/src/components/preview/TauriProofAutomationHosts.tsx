@@ -22,6 +22,7 @@ import { previewEnvironment } from "~/state/preview";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import { createPreviewAutomationClientId } from "./previewAutomationClientId";
+import { PreviewAutomationTargetUnavailableError } from "./previewAutomationErrors";
 import { createPreviewAutomationRequestConsumerAtom } from "./previewAutomationRequestConsumer";
 
 type NativeSlot = "a" | "b";
@@ -142,16 +143,28 @@ function TauriProofAutomationHost({ environmentId }: { readonly environmentId: E
   const handleRequest = useCallback(
     async (request: PreviewAutomationRequest): Promise<unknown> => {
       const existing = findPage(request);
+      const unavailableTarget = () =>
+        new PreviewAutomationTargetUnavailableError({
+          requestId: request.requestId,
+          operation: request.operation,
+          environmentId,
+          threadId: request.threadId,
+          tabId: request.tabId ?? null,
+          bridgeAvailable: true,
+        });
       switch (request.operation) {
         case "status":
           if (request.tabId && !existing) {
-            throw new Error(`Native proof page ${request.tabId} is closed or unavailable`);
+            throw unavailableTarget();
           }
           return readStatus(existing);
         case "open": {
           const input = request.input as PreviewAutomationOpenInput;
-          if (request.tabId && !existing) {
-            throw new Error(`Native proof page ${request.tabId} is closed or unavailable`);
+          // The broker may attach its last tab as an implicit target even after
+          // that page was explicitly closed. Only an Agent-specified tabId
+          // requires the old resource to still exist; otherwise open a new one.
+          if (request.tabIdExplicit && request.tabId && !existing) {
+            throw unavailableTarget();
           }
           const reused = input.reuseExistingTab !== false ? existing : null;
           const resolvedUrl = input.url
@@ -202,7 +215,7 @@ function TauriProofAutomationHost({ environmentId }: { readonly environmentId: E
           }
         }
         case "navigate": {
-          if (!existing) throw new Error("No native proof page is open for this Agent session");
+          if (!existing) throw unavailableTarget();
           const input = request.input as PreviewAutomationNavigateInput;
           const target = input.target ?? { kind: "url" as const, url: input.url! };
           const resolvedUrl = resolveBrowserNavigationTarget(environmentId, target).resolvedUrl;
@@ -215,7 +228,7 @@ function TauriProofAutomationHost({ environmentId }: { readonly environmentId: E
           return waitForPage(existing, resolvedUrl, request.timeoutMs);
         }
         case "evaluate": {
-          if (!existing) throw new Error("No native proof page is open for this Agent session");
+          if (!existing) throw unavailableTarget();
           const input = request.input as { expression: string; awaitPromise?: boolean };
           if (input.awaitPromise) {
             throw new Error("The native proof has not validated awaited JavaScript results");
