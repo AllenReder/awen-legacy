@@ -6,6 +6,7 @@ import type { EnvironmentId, WorkspaceId } from "@awen/contracts";
 import { WorkspaceFileView } from "./WorkspaceFileView";
 import { resolveViewDefinition, type ViewTarget } from "./viewRegistry";
 import { workspaceFileViewDefinition, registerCoreViewDefinitions } from "./viewDefinitions";
+import * as environmentsModule from "../state/environments";
 
 vi.mock("../state/entities", () => ({
   useAwenWorkspace: (env: string, id: string) =>
@@ -101,6 +102,46 @@ describe("WorkspaceFileView", () => {
         paneId: "pane-2",
       }),
     );
+  });
+
+  it("renders offline state when workspace is missing and environment is disconnected", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+
+    const target: Extract<ViewTarget, { kind: "workspace" }> = {
+      kind: "workspace",
+      definitionId: "fileView",
+      environmentId: "env-offline" as EnvironmentId,
+      workspaceId: "ws-missing" as WorkspaceId,
+    };
+
+    vi.spyOn(environmentsModule, "useEnvironment").mockReturnValueOnce({
+      environmentId: "env-offline" as EnvironmentId,
+      label: "WSL-Remote",
+      displayUrl: null,
+      entry: {} as any,
+      connection: {
+        phase: "reconnecting",
+        error: "Connection lost",
+        traceId: null,
+        failureCode: null,
+      },
+      serverConfig: null,
+    });
+
+    await act(() => {
+      renderer = create(
+        <WorkspaceFileView
+          target={target}
+          paneId="pane-offline"
+          focused
+          availableSize={availableSize}
+        />,
+      );
+    });
+
+    expect(
+      renderer.root.findByProps({ "data-testid": "workspace-file-offline-state" }),
+    ).toBeDefined();
   });
 
   it("renders unavailable state when workspace is missing", async () => {

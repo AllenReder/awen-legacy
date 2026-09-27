@@ -4,7 +4,7 @@ import {
   type ExecutionEnvironmentDescriptor,
 } from "@awen/contracts";
 import { environmentMismatchError, mapRemoteEnvironmentError } from "../connection/errors.ts";
-import { ConnectionBlockedError, type ConnectionAttemptError } from "../connection/model.ts";
+import type { ConnectionAttemptError } from "../connection/model.ts";
 import { fetchRemoteEnvironmentDescriptor } from "../environment/descriptor.ts";
 import { environmentEndpointUrl } from "../environment/endpoint.ts";
 import * as ClientCapabilities from "../platform/capabilities.ts";

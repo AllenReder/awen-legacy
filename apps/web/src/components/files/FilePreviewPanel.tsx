@@ -45,7 +45,11 @@ import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { buildFileReviewComment } from "~/reviewCommentContext";
 import { assetEnvironment } from "~/state/assets";
-import { useEnvironmentHttpBaseUrl, usePrimaryEnvironmentId } from "~/state/environments";
+import {
+  useEnvironment,
+  useEnvironmentHttpBaseUrl,
+  usePrimaryEnvironmentId,
+} from "~/state/environments";
 import { previewEnvironment } from "~/state/preview";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
@@ -1012,6 +1016,8 @@ export default function FilePreviewPanel({
   const { resolvedTheme } = useTheme();
   const wordWrap = useClientSettings((settings) => settings.wordWrap);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const environment = useEnvironment(environmentId);
+  const isEnvironmentOffline = environment !== null && environment.connection.phase !== "connected";
   const remoteOpenState = useRemoteOpenState(environmentId);
   const environmentHttpBaseUrl = useEnvironmentHttpBaseUrl(environmentId);
   const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
@@ -1198,6 +1204,16 @@ export default function FilePreviewPanel({
 
   const handleSave = useCallback(
     async (force = false): Promise<boolean> => {
+      if (isEnvironmentOffline) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title: "Cannot save file",
+            description: `${environment?.label ?? "Remote environment"} is offline. Remote file cannot be modified.`,
+          }),
+        );
+        return false;
+      }
       const contentsToSave = draftContentsRef.current ?? file.data?.contents;
       if (!relativePath || contentsToSave === undefined) return true;
       const result = await writeFileCommand({
@@ -1252,7 +1268,16 @@ export default function FilePreviewPanel({
       );
       return false;
     },
-    [cwd, environmentId, file, readFileCommand, relativePath, writeFileCommand],
+    [
+      cwd,
+      environment,
+      environmentId,
+      file,
+      isEnvironmentOffline,
+      readFileCommand,
+      relativePath,
+      writeFileCommand,
+    ],
   );
 
   const handleDiscardAndReload = useCallback(async () => {
@@ -1432,6 +1457,22 @@ export default function FilePreviewPanel({
           </div>
         </div>
       ) : null}
+      {isEnvironmentOffline ? (
+        <div
+          role="status"
+          data-testid="file-offline-banner"
+          className="flex shrink-0 items-center justify-between border-b border-warning/30 bg-warning/10 px-3 py-1.5 text-xs text-warning"
+        >
+          <span>
+            {environment?.label ?? "Remote environment"} is{" "}
+            {environment?.connection.phase === "reconnecting" ? "reconnecting" : "offline"}. File is
+            read-only.
+          </span>
+          <span className="opacity-70 font-mono text-[10px] uppercase">
+            {environment?.connection.phase ?? "Offline"}
+          </span>
+        </div>
+      ) : null}
       {relativePath &&
       attachment === undefined &&
       !isMedia &&
@@ -1525,7 +1566,7 @@ export default function FilePreviewPanel({
                 text={file.data.contents}
                 delimiter={tableDelimiter}
               />
-            ) : file.data.truncated || isHostFile ? (
+            ) : file.data.truncated || isHostFile || isEnvironmentOffline ? (
               <SourceFilePreview
                 name={relativePath}
                 text={file.data.contents}

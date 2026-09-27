@@ -1,7 +1,9 @@
 import { lazy, Suspense } from "react";
 import { useAwenWorkspace } from "../state/entities";
+import { useEnvironment } from "../state/environments";
 import type { ViewTarget } from "./viewRegistry";
 import { Spinner } from "~/components/ui/spinner";
+import { WifiOff } from "lucide-react";
 
 const DiffPanel = lazy(() => import("../components/DiffPanel"));
 
@@ -21,8 +23,27 @@ export function WorkspaceGitView({
   availableSize: _availableSize,
 }: WorkspaceGitViewProps) {
   const workspace = useAwenWorkspace(target.environmentId, target.workspaceId);
+  const environment = useEnvironment(target.environmentId);
 
   if (workspace === null) {
+    const isOffline = environment !== null && environment.connection.phase !== "connected";
+    if (isOffline) {
+      return (
+        <div
+          data-testid="workspace-git-offline-state"
+          className="flex h-full min-h-0 flex-col items-center justify-center p-6 text-sm text-muted-foreground gap-2"
+        >
+          <WifiOff className="size-5 text-muted-foreground/60" />
+          <span>
+            {environment.label} is{" "}
+            {environment.connection.phase === "reconnecting" ? "reconnecting" : "offline"}.
+          </span>
+          <span className="text-xs text-muted-foreground/60">
+            Git view will reconnect automatically.
+          </span>
+        </div>
+      );
+    }
     return (
       <div className="flex h-full min-h-0 items-center justify-center p-6 text-sm text-muted-foreground">
         Workspace is no longer available.

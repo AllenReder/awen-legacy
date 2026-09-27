@@ -1,7 +1,9 @@
 import { lazy, Suspense, useEffect, useState } from "react";
 import { useAwenWorkspace } from "../state/entities";
+import { useEnvironment } from "../state/environments";
 import type { ViewTarget } from "./viewRegistry";
 import { Spinner } from "~/components/ui/spinner";
+import { WifiOff } from "lucide-react";
 
 const FilePreviewPanel = lazy(() => import("../components/files/FilePreviewPanel"));
 
@@ -21,6 +23,7 @@ export function WorkspaceFileView({
   availableSize: _availableSize,
 }: WorkspaceFileViewProps) {
   const workspace = useAwenWorkspace(target.environmentId, target.workspaceId);
+  const environment = useEnvironment(target.environmentId);
   const [selectedPath, setSelectedPath] = useState<string | null>(
     "initialPath" in target && typeof target.initialPath === "string" ? target.initialPath : null,
   );
@@ -40,6 +43,24 @@ export function WorkspaceFileView({
   }, [target]);
 
   if (workspace === null) {
+    const isOffline = environment !== null && environment.connection.phase !== "connected";
+    if (isOffline) {
+      return (
+        <div
+          data-testid="workspace-file-offline-state"
+          className="flex h-full min-h-0 flex-col items-center justify-center p-6 text-sm text-muted-foreground gap-2"
+        >
+          <WifiOff className="size-5 text-muted-foreground/60" />
+          <span>
+            {environment.label} is{" "}
+            {environment.connection.phase === "reconnecting" ? "reconnecting" : "offline"}.
+          </span>
+          <span className="text-xs text-muted-foreground/60">
+            Workspace views will reconnect automatically.
+          </span>
+        </div>
+      );
+    }
     return (
       <div className="flex h-full min-h-0 items-center justify-center p-6 text-sm text-muted-foreground">
         Workspace is no longer available.

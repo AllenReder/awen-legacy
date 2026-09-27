@@ -36,6 +36,7 @@ import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
+import * as TerminalManager from "../terminal/Manager.ts";
 
 /**
  * Server-side owner of Awen Workspace identity and worktree lifecycle.
@@ -125,6 +126,7 @@ export const make = Effect.gen(function* () {
   const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
   const projectionQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
   const orchestrationEngine = yield* OrchestrationEngine.OrchestrationEngineService;
+  const terminalManagerOption = yield* Effect.serviceOption(TerminalManager.TerminalManager);
 
   const readAwenProject = (projectId: AwenProjectId) => {
     const getter = projectionQuery.getAwenProjectById;
@@ -617,6 +619,21 @@ export const make = Effect.gen(function* () {
           `Workspace '${workspace.title}' still has active Sessions. Stop them before removing it.`,
           workspace.workspaceRoot,
         );
+      }
+      if (Option.isSome(terminalManagerOption)) {
+        const terminalSummaries = yield* terminalManagerOption.value.getMetadata();
+        const hasActiveTerminal = terminalSummaries.some(
+          (t) =>
+            t.workspaceId === input.workspaceId &&
+            (t.status === "running" || t.status === "starting"),
+        );
+        if (hasActiveTerminal) {
+          return yield* workspaceError(
+            "workspace-not-empty",
+            `Workspace '${workspace.title}' still has active Sessions. Stop them before removing it.`,
+            workspace.workspaceRoot,
+          );
+        }
       }
       const shouldDeleteDirectory = input.deleteDirectory === true;
       if (shouldDeleteDirectory && workspace.role === "main") {
