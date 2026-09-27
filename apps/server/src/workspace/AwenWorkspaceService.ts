@@ -902,7 +902,7 @@ export const make = Effect.gen(function* () {
 
   const renameProject: AwenWorkspaceService["Service"]["renameProject"] = (input) =>
     Effect.gen(function* () {
-      yield* readAwenProject(input.projectId);
+      const project = yield* readAwenProject(input.projectId);
       const updateTitle = projectionQuery.updateAwenProjectTitle;
       if (updateTitle === undefined) {
         return yield* workspaceError(
@@ -925,6 +925,35 @@ export const make = Effect.gen(function* () {
           ),
         ),
       );
+      // The title is stored on the product Project. Emit an inherited project
+      // event so connected Sidebars refetch that Project after this write.
+      const workspace = yield* mainWorkspaceFor(project);
+      const uuid = yield* crypto.randomUUIDv4.pipe(
+        Effect.mapError((cause) =>
+          workspaceError(
+            "registration-failed",
+            "Could not prepare Project rename.",
+            undefined,
+            cause,
+          ),
+        ),
+      );
+      yield* orchestrationEngine
+        .dispatch({
+          type: "project.meta.update",
+          commandId: CommandId.make(`awen-project:rename:${uuid}`),
+          projectId: workspace.awenProjectId,
+        })
+        .pipe(
+          Effect.mapError((cause) =>
+            workspaceError(
+              "registration-failed",
+              `Could not publish Project rename '${input.projectId}'.`,
+              undefined,
+              cause,
+            ),
+          ),
+        );
       return { project: yield* readAwenProject(input.projectId) };
     });
 
