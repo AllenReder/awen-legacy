@@ -32,6 +32,7 @@
     "smoke:terminal": "pnpm --filter @awen/server smoke:terminal",
     "smoke:desktop-terminal": "pnpm --filter @awen/scripts smoke:desktop-terminal",
     "test:e2e:workbench": "pnpm --dir scripts test:e2e:workbench",
+    "test:e2e:branch": "pnpm --dir scripts test:e2e:branch",
     "clean": "rm -rf node_modules apps/*/node_modules packages/*/node_modules scripts/node_modules apps/*/dist packages/*/dist .vite-plus apps/*/.vite-plus packages/*/.vite-plus"
   },
   "devDependencies": {

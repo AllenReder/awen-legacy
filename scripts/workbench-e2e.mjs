@@ -281,6 +281,113 @@ async function finishTemporaryHome(directory, keepTemporary) {
   );
 }
 
+function runGit(cwd, ...args) {
+  return NodeChildProcess.execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+}
+
+async function verifyBranchSelection(page, temporaryRoot) {
+  const repo = NodePath.join(temporaryRoot, "branch-selection-repo");
+  const remote = NodePath.join(temporaryRoot, "branch-selection-remote.git");
+  const otherWorktree = NodePath.join(temporaryRoot, "branch-selection-feature-b");
+  await NodeFSP.mkdir(repo);
+  await NodeFSP.mkdir(remote);
+  runGit(remote, "init", "--bare", "-b", "main");
+  runGit(repo, "init", "-b", "main");
+  runGit(repo, "config", "user.name", "Workbench E2E");
+  runGit(repo, "config", "user.email", "workbench@example.test");
+  await NodeFSP.writeFile(NodePath.join(repo, "README.md"), "branch selection fixture\n");
+  runGit(repo, "add", "README.md");
+  runGit(repo, "commit", "-m", "initial");
+  runGit(repo, "remote", "add", "origin", remote);
+  runGit(repo, "push", "-u", "origin", "main");
+  runGit(repo, "remote", "set-head", "origin", "-a");
+  runGit(repo, "branch", "feature-a");
+  runGit(repo, "branch", "feature-b");
+  runGit(repo, "switch", "feature-a");
+  runGit(repo, "worktree", "add", otherWorktree, "feature-b");
+
+  await page.getByTestId("sidebar-add-project").click();
+  await page.getByText("Local folder", { exact: true }).click();
+  const projectPath = page.getByPlaceholder("Enter path (e.g. ~/projects/my-app)");
+  await projectPath.fill(repo);
+  await projectPath.press("Enter");
+  const projectRow = page
+    .getByTestId("sidebar-project-row")
+    .filter({ hasText: "branch-selection-repo" });
+  await projectRow.waitFor({ state: "visible", timeout: timeoutMs });
+  const mainWorkspace = projectRow.locator("..").getByTestId("sidebar-workspace-row").first();
+  await mainWorkspace.getByTestId("sidebar-workspace-branch").getByText("feature-a").waitFor({
+    state: "visible",
+    timeout: timeoutMs,
+  });
+  await chooseContextMenuItem(page, mainWorkspace, "New Agent Session");
+  const agentPane = page.locator(
+    '[data-pane-focused="true"][data-pane-target-kind="agentSession"], [data-pane-focused="true"][data-pane-target-kind="newAgentSession"]',
+  );
+  await agentPane.waitFor({ state: "visible", timeout: timeoutMs });
+  const initialAgentUrl = page.url();
+  const branchTrigger = agentPane.locator('[data-slot="combobox-trigger"]').filter({
+    has: page.locator("svg.lucide-git-branch"),
+  });
+
+  await branchTrigger.click();
+  const branchPopup = page.locator('[data-slot="combobox-popup"]:visible');
+  await branchPopup.getByPlaceholder("Search refs...").fill("main");
+  await branchPopup.getByText("main", { exact: true }).click();
+  await page.waitForFunction(() => {
+    const row = [...document.querySelectorAll('[data-testid="sidebar-workspace-row"]')].find(
+      (element) => element.textContent?.includes("branch-selection-repo"),
+    );
+    return row?.querySelector('[data-testid="sidebar-workspace-branch"]')?.textContent === "main";
+  });
+  NodeAssert.equal(runGit(repo, "branch", "--show-current"), "main");
+  NodeAssert.equal(page.url(), initialAgentUrl, "In-place checkout must keep the Agent Session.");
+  NodeAssert.equal(
+    await projectRow.locator("..").getByTestId("sidebar-workspace-row").count(),
+    1,
+    "In-place checkout must keep the Workspace identity.",
+  );
+
+  await branchTrigger.click();
+  await branchPopup.getByPlaceholder("Search refs...").fill("feature-b");
+  await branchPopup.getByText("feature-b", { exact: true }).click();
+  await page.waitForFunction(() =>
+    [...document.querySelectorAll('[data-testid="sidebar-workspace-dir"]')].some((element) =>
+      element.textContent?.includes("branch-selection-feature-b"),
+    ),
+  );
+  NodeAssert.equal(runGit(otherWorktree, "branch", "--show-current"), "feature-b");
+  NodeAssert.equal(page.url(), initialAgentUrl, "Migration must keep the Agent Session.");
+  NodeAssert.equal(
+    await projectRow.locator("..").getByTestId("sidebar-workspace-row").count(),
+    2,
+    "Selecting an unregistered worktree must register it in the same Project.",
+  );
+  const projectWorkspaces = projectRow.locator("..");
+  const worktreeRow = projectWorkspaces.getByTestId("sidebar-workspace-row").filter({
+    has: page.getByTestId("sidebar-workspace-dir").filter({
+      hasText: "branch-selection-feature-b",
+    }),
+  });
+  const worktreeContainer = worktreeRow.locator("..").locator("..");
+  const sourceContainer = mainWorkspace.locator("..").locator("..");
+  for (const container of [worktreeContainer, sourceContainer]) {
+    const disclosure = container.getByTestId("sidebar-workspace-disclosure");
+    if ((await disclosure.getAttribute("aria-label")) === "Expand Workspace") {
+      await disclosure.click();
+    }
+  }
+  await worktreeContainer.getByTestId("sidebar-session-row").waitFor({
+    state: "visible",
+    timeout: timeoutMs,
+  });
+  NodeAssert.equal(
+    await sourceContainer.getByTestId("sidebar-session-row").count(),
+    0,
+    "Migration must remove the Agent Session from its previous Workspace.",
+  );
+}
+
 async function main() {
   const temporaryRoot = await NodeFSP.mkdtemp(
     NodePath.join(NodeOS.tmpdir(), "awen-workbench-e2e-"),
@@ -363,6 +470,14 @@ async function main() {
 
     if (process.env.WORKBENCH_E2E_APPEARANCE_ONLY === "1") {
       await verifyWorkbenchAppearance(page);
+      return;
+    }
+
+    if (process.argv.includes("--branch-only")) {
+      await verifyBranchSelection(page, temporaryRoot);
+      console.log(
+        "workbench branch E2E passed: default checkout, Workspace identity, existing worktree registration and migration",
+      );
       return;
     }
 

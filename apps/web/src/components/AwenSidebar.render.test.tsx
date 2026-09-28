@@ -31,7 +31,22 @@ const mockState = {
   navigate: vi.fn(),
   threadShell: null as any,
   unassignedTerminals: [] as any[],
+  gitBranch: null as string | null,
 };
+
+vi.mock("../state/query", () => ({
+  useEnvironmentQuery: () => ({
+    data: { isRepo: true, refName: mockState.gitBranch },
+    error: null,
+    isPending: false,
+    isSuccess: true,
+    refresh: vi.fn(),
+  }),
+}));
+
+vi.mock("../state/vcs", () => ({
+  vcsEnvironment: { status: vi.fn() },
+}));
 
 const mockTerminalSessions = {
   sessions: [] as any[],
@@ -123,6 +138,8 @@ vi.mock("../hooks/useSettings", () => ({
 }));
 
 import { AwenSidebar, workspaceMenuItems } from "./AwenSidebar";
+import { SessionRow } from "./sidebar/SessionRow";
+import { SidebarRenameDialog } from "./sidebar/SidebarRenameDialog";
 import { toastManager } from "./ui/toast";
 import { useUiStateStore } from "../uiStateStore";
 
@@ -165,6 +182,7 @@ describe("AwenSidebar", () => {
     mockState.threadShell = null;
     mockState.environments = [];
     mockState.unassignedTerminals = [];
+    mockState.gitBranch = null;
     useUiStateStore.setState({ threadLastVisitedAtById: {} });
   });
 
@@ -306,6 +324,7 @@ describe("AwenSidebar", () => {
 
   it("renders branch name on the left and workspace directory name on the right without role badge", async () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    mockState.gitBranch = "feature-a";
     mockState.projects = [
       {
         id: "p1",
@@ -317,7 +336,6 @@ describe("AwenSidebar", () => {
             title: "awen",
             workspaceRoot: "/code/awen",
             role: "main",
-            branch: "main",
             sessions: [],
             historySessions: [],
           },
@@ -332,13 +350,41 @@ describe("AwenSidebar", () => {
     const workspaceRow = renderer.root.findByProps({ "data-testid": "sidebar-workspace-row" });
     expect(
       workspaceRow.findByProps({ "data-testid": "sidebar-workspace-branch" }).props.children,
-    ).toBe("main");
+    ).toBe("feature-a");
     expect(
       workspaceRow.findByProps({ "data-testid": "sidebar-workspace-dir" }).props.children,
     ).toBe("awen");
     expect(workspaceRow.findAllByProps({ "data-testid": "sidebar-workspace-role" })).toHaveLength(
       0,
     );
+  });
+
+  it("does not mistake a custom Workspace name for a detached Git branch", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    mockState.projects = [
+      {
+        id: "p1",
+        environmentId: "local",
+        title: "Repository",
+        workspaces: [
+          {
+            id: "w1",
+            title: "My checkout",
+            workspaceRoot: "/code/repo",
+            role: "main",
+            sessions: [],
+            historySessions: [],
+          },
+        ],
+      },
+    ];
+
+    await act(() => {
+      renderer = create(<AwenSidebar />);
+    });
+
+    const branch = renderer.root.findByProps({ "data-testid": "sidebar-workspace-branch" });
+    expect(branch.props.children).toBe("Detached HEAD");
   });
 
   it("exposes the full directory name when a custom Workspace name is truncated", async () => {
@@ -368,7 +414,15 @@ describe("AwenSidebar", () => {
 
     const directory = renderer.root.findByProps({ "data-testid": "sidebar-workspace-dir" });
     expect(directory.props.children).toBe("very-long-directory-name");
-    expect(directory.parent?.props.className).toContain("truncate");
+    expect(directory.props.className).toContain("right-0");
+    expect(directory.props.className).toContain("w-max");
+    expect(directory.props.className).toContain("max-w-full");
+    expect(directory.props.className).not.toContain("bg-");
+    expect(directory.parent?.props.className).toContain("text-right");
+    expect(directory.parent?.props.className).not.toContain("truncate");
+    expect(
+      renderer.root.findByProps({ "data-testid": "sidebar-workspace-branch" }).props.className,
+    ).not.toContain("group-hover/rename:opacity-0");
     expect(
       renderer.root
         .findAllByType("div")
@@ -416,6 +470,58 @@ describe("AwenSidebar", () => {
     // Both rows must render the 14px Status Gutter
     const gutters = renderer.root.findAllByProps({ "data-status-gutter": "true" });
     expect(gutters.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("opens the same app rename dialog for Agent and Terminal Sessions", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    mockState.projects = [
+      {
+        id: "p1",
+        environmentId: "local",
+        title: "awen",
+        workspaces: [
+          {
+            id: "w1",
+            title: "awen",
+            workspaceRoot: "/code/awen",
+            role: "main",
+            sessions: [
+              { kind: "agent", id: "agent-1", threadId: "thread-1", title: "Coding Agent" },
+              { kind: "terminal", id: "term-1", title: "Terminal Shell" },
+            ],
+            historySessions: [],
+          },
+        ],
+      },
+    ];
+
+    await act(() => {
+      renderer = create(<AwenSidebar />);
+    });
+    await act(() => {
+      renderer.root.findByProps({ "data-testid": "sidebar-workspace-row" }).props.onClick();
+    });
+
+    const rows = renderer.root.findAllByType(SessionRow);
+    await act(() => rows[0]?.props.onStartRename());
+    expect(renderer.root.findByType(SidebarRenameDialog).props.kind).toBe("Agent Session");
+    await act(async () => {
+      await renderer.root.findByType(SidebarRenameDialog).props.onRename("Renamed Agent");
+    });
+    expect(sidebarMocks.defaultCommand).toHaveBeenCalledWith({
+      environmentId: "local",
+      input: { threadId: "thread-1", title: "Renamed Agent" },
+    });
+    await act(() => renderer.root.findByType(SidebarRenameDialog).props.onClose());
+    await act(() => rows[1]?.props.onStartRename());
+    expect(renderer.root.findByType(SidebarRenameDialog).props.kind).toBe("Terminal Session");
+    await act(async () => {
+      await renderer.root.findByType(SidebarRenameDialog).props.onRename("Renamed Terminal");
+    });
+    expect(sidebarMocks.defaultCommand).toHaveBeenCalledWith({
+      environmentId: "local",
+      input: { terminalId: "term-1", workspaceId: "w1", title: "Renamed Terminal" },
+    });
   });
 
   it("dynamically shows agent icon and running alert for terminal running an agent CLI", async () => {

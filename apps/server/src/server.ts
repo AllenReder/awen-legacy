@@ -337,6 +337,7 @@ const GitLayerLive = Layer.empty.pipe(
 const GitWorkflowLayerLive = GitWorkflowService.layer.pipe(
   Layer.provideMerge(VcsDriverRegistryLayerLive),
   Layer.provideMerge(GitLayerLive),
+  Layer.provideMerge(SessionExecutionLock.layer),
 );
 
 const SourceControlRepositoryServiceLayerLive = SourceControlRepositoryService.layer.pipe(

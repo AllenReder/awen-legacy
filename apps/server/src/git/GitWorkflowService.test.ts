@@ -1,15 +1,20 @@
 import { assert, describe, expect, it, vi } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 
-import { VcsRepositoryDetectionError } from "@awen/contracts";
+import { VcsRepositoryDetectionError, type OrchestrationShellSnapshot } from "@awen/contracts";
 
 import * as GitManager from "./GitManager.ts";
 import * as GitWorkflowService from "./GitWorkflowService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
+import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as SessionExecutionLock from "../session/SessionExecutionLock.ts";
 
 function makeLayer(input: {
   readonly detect: VcsDriverRegistry.VcsDriverRegistry["Service"]["detect"];
@@ -22,10 +27,174 @@ function makeLayer(input: {
     ),
     Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
     Layer.provide(Layer.mock(GitManager.GitManager)({})),
+    Layer.provide(
+      Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
+        getShellSnapshot: () =>
+          Effect.succeed({
+            awenProjects: [],
+            threads: [],
+          } as unknown as OrchestrationShellSnapshot),
+      }),
+    ),
+    Layer.provide(SessionExecutionLock.layer),
+    Layer.provide(Path.layer),
+  );
+}
+
+function makeCheckoutLayer(input: {
+  readonly threads:
+    | ReadonlyArray<{ readonly projectId: string; readonly session: unknown }>
+    | (() => ReadonlyArray<{ readonly projectId: string; readonly session: unknown }>);
+  readonly switchRef: GitVcsDriver.GitVcsDriver["Service"]["switchRef"];
+  readonly createRef?: GitVcsDriver.GitVcsDriver["Service"]["createRef"];
+}) {
+  const snapshot = {
+    awenProjects: [
+      {
+        workspaces: [{ workspaceRoot: "/repo", awenProjectId: "project:repo" }],
+      },
+    ],
+  } as unknown as OrchestrationShellSnapshot;
+  return GitWorkflowService.layer.pipe(
+    Layer.provide(
+      Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({
+        resolve: () =>
+          Effect.succeed({ kind: "git", driver: {} } as VcsDriverRegistry.VcsDriverHandle),
+      }),
+    ),
+    Layer.provide(
+      Layer.mock(GitVcsDriver.GitVcsDriver)({
+        execute: () => Effect.succeed({ stdout: "/repo\n", exitCode: 0 } as never),
+        switchRef: input.switchRef,
+        ...(input.createRef ? { createRef: input.createRef } : {}),
+      }),
+    ),
+    Layer.provide(Layer.mock(GitManager.GitManager)({})),
+    Layer.provide(
+      Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
+        getShellSnapshot: () =>
+          Effect.sync(
+            () =>
+              ({
+                ...snapshot,
+                threads: typeof input.threads === "function" ? input.threads() : input.threads,
+              }) as OrchestrationShellSnapshot,
+          ),
+      }),
+    ),
+    Layer.provideMerge(SessionExecutionLock.layer),
+    Layer.provide(Path.layer),
   );
 }
 
 describe("GitWorkflowService", () => {
+  it.effect("rejects checkout while another Agent in the Workspace is executing", () => {
+    const switchRef = vi.fn(() => Effect.succeed({ refName: "main" }));
+    return Effect.gen(function* () {
+      const workflow = yield* GitWorkflowService.GitWorkflowService;
+      const error = yield* workflow.switchRef({ cwd: "/repo", refName: "main" }).pipe(Effect.flip);
+      expect(error).toMatchObject({ _tag: "GitCommandError", cwd: "/repo" });
+      expect(error.detail).toContain("Agent Session");
+      expect(switchRef).not.toHaveBeenCalled();
+    }).pipe(
+      Effect.provide(
+        makeCheckoutLayer({
+          threads: [
+            {
+              projectId: "project:repo",
+              session: { status: "running", activeTurnId: "turn:active" },
+            },
+          ],
+          switchRef,
+        }),
+      ),
+    );
+  });
+
+  it.effect("switches an idle Workspace while an Agent in another Workspace is executing", () => {
+    const switchRef = vi.fn(() => Effect.succeed({ refName: "main" }));
+    return Effect.gen(function* () {
+      const workflow = yield* GitWorkflowService.GitWorkflowService;
+      const result = yield* workflow.switchRef({ cwd: "/repo", refName: "main" });
+      expect(result.refName).toBe("main");
+      expect(switchRef).toHaveBeenCalledOnce();
+    }).pipe(
+      Effect.provide(
+        makeCheckoutLayer({
+          threads: [
+            {
+              projectId: "project:other",
+              session: { status: "running", activeTurnId: "turn:active" },
+            },
+          ],
+          switchRef,
+        }),
+      ),
+    );
+  });
+
+  it.effect("rejects create-and-switch while an Agent in the Workspace is starting", () => {
+    const switchRef = vi.fn(() => Effect.succeed({ refName: "feature" }));
+    const createRef = vi.fn(() => Effect.succeed({ refName: "feature" }));
+    return Effect.gen(function* () {
+      const workflow = yield* GitWorkflowService.GitWorkflowService;
+      const error = yield* workflow
+        .createRef({ cwd: "/repo", refName: "feature", switchRef: true })
+        .pipe(Effect.flip);
+      expect(error.detail).toContain("Agent Session");
+      expect(createRef).not.toHaveBeenCalled();
+      expect(switchRef).not.toHaveBeenCalled();
+    }).pipe(
+      Effect.provide(
+        makeCheckoutLayer({
+          threads: [
+            {
+              projectId: "project:repo",
+              session: { status: "starting", activeTurnId: null },
+            },
+          ],
+          switchRef,
+          createRef,
+        }),
+      ),
+    );
+  });
+
+  it.effect("checks fresh Agent status after waiting for another execution lock holder", () => {
+    let executing = false;
+    const switchRef = vi.fn(() => Effect.succeed({ refName: "main" }));
+    return Effect.gen(function* () {
+      const workflow = yield* GitWorkflowService.GitWorkflowService;
+      const executionLock = yield* SessionExecutionLock.SessionExecutionLock;
+      const locked = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const holder = yield* executionLock
+        .withLock(Deferred.succeed(locked, undefined).pipe(Effect.andThen(Deferred.await(release))))
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(locked);
+      const checkout = yield* workflow
+        .switchRef({ cwd: "/repo", refName: "main" })
+        .pipe(Effect.result, Effect.forkChild);
+      executing = true;
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(holder);
+      const result = yield* Fiber.join(checkout);
+      expect(result._tag).toBe("Failure");
+      expect(switchRef).not.toHaveBeenCalled();
+    }).pipe(
+      Effect.provide(
+        makeCheckoutLayer({
+          threads: () => [
+            {
+              projectId: "project:repo",
+              session: executing ? { status: "starting", activeTurnId: null } : null,
+            },
+          ],
+          switchRef,
+        }),
+      ),
+    );
+  });
   it.effect("reports a non-Git VCS repository as not a Git repository", () =>
     Effect.gen(function* () {
       const workflow = yield* GitWorkflowService.GitWorkflowService;
@@ -131,6 +300,17 @@ describe("GitWorkflowService", () => {
           status,
         }),
       ),
+      Layer.provide(
+        Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
+          getShellSnapshot: () =>
+            Effect.succeed({
+              awenProjects: [],
+              threads: [],
+            } as unknown as OrchestrationShellSnapshot),
+        }),
+      ),
+      Layer.provide(SessionExecutionLock.layer),
+      Layer.provide(Path.layer),
     );
 
     return Effect.gen(function* () {

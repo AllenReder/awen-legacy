@@ -710,6 +710,7 @@ const buildAppUnderTest = (options?: {
       Layer.provideMerge(vcsDriverRegistryLayer),
       Layer.provideMerge(gitVcsDriverLayer),
       Layer.provideMerge(gitManagerLayer),
+      Layer.provideMerge(SessionExecutionLock.layer),
     );
     const vcsProvisioningLayer = VcsProvisioningService.layer.pipe(
       Layer.provide(vcsDriverRegistryLayer),
@@ -6201,6 +6202,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               }),
           },
           gitVcsDriver: {
+            execute: () => Effect.succeed({ ...SUCCESSFUL_GIT_EXECUTION, stdout: "/tmp/repo\n" }),
             pullCurrentBranch: () =>
               Effect.succeed({
                 status: "pulled",
@@ -6408,6 +6410,50 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       );
       assert.equal(diffFileContents.oldContents, "before\n");
       assert.equal(diffFileContents.newContents, "after\n");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("rejects websocket checkout while another Agent uses the Workspace", () =>
+    Effect.gen(function* () {
+      let switchCalls = 0;
+      yield* buildAppUnderTest({
+        layers: {
+          vcsDriver: { isInsideWorkTree: () => Effect.succeed(true) },
+          gitVcsDriver: {
+            execute: () => Effect.succeed({ ...SUCCESSFUL_GIT_EXECUTION, stdout: "/tmp/repo\n" }),
+            switchRef: () =>
+              Effect.sync(() => {
+                switchCalls += 1;
+                return { refName: "main" };
+              }),
+          },
+          projectionSnapshotQuery: {
+            getShellSnapshot: () =>
+              Effect.succeed({
+                snapshotSequence: 0,
+                projects: [],
+                awenProjects: [
+                  { workspaces: [{ workspaceRoot: "/tmp/repo", awenProjectId: "project:repo" }] },
+                ],
+                threads: [
+                  {
+                    projectId: "project:repo",
+                    session: { status: "running", activeTurnId: "turn:another-agent" },
+                  },
+                ],
+                updatedAt: "1970-01-01T00:00:00.000Z",
+              } as unknown as OrchestrationShellSnapshot),
+          },
+        },
+      });
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.vcsSwitchRef]({ cwd: "/tmp/repo", refName: "main" }),
+        ).pipe(Effect.result),
+      );
+      assert.equal(result._tag, "Failure");
+      assert.equal(switchCalls, 0);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

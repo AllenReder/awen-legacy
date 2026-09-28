@@ -45,9 +45,11 @@ import { environmentServerConfigsAtom } from "../state/server";
 import { useEnvironments } from "../state/environments";
 import { useAwenProjects, useThreadShell, useUnassignedTerminals } from "../state/entities";
 import { projectEnvironment, workspaceEnvironment } from "../state/projects";
+import { useEnvironmentQuery } from "../state/query";
 import { terminalEnvironment } from "../state/terminal";
 import { threadEnvironment } from "../state/threads";
 import { useAtomCommand } from "../state/use-atom-command";
+import { vcsEnvironment } from "../state/vcs";
 import { scopeProjectRef, scopeThreadRef, scopedThreadKey } from "@awen/client-runtime/environment";
 import { useKnownTerminalSessions } from "../state/terminalSessions";
 import { SessionRow } from "./sidebar/SessionRow";
@@ -112,20 +114,58 @@ function directoryName(path: string | undefined, fallback: string): string {
   );
 }
 
+function WorkspaceBranchName({
+  environmentId,
+  workspaceRoot,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly workspaceRoot: string;
+}) {
+  // The checkout is the authority for its branch. Workspace metadata and the
+  // Session's selected branch can both differ from what Git currently has out.
+  const status = useEnvironmentQuery(
+    vcsEnvironment.status({ environmentId, input: { cwd: workspaceRoot } }),
+  );
+  const branch = status.data?.refName;
+  const label =
+    branch ??
+    (status.data?.isRepo === true
+      ? "Detached HEAD"
+      : status.data?.isRepo === false
+        ? "No Git repository"
+        : status.error !== null
+          ? "Branch unavailable"
+          : "Loading branch…");
+
+  return (
+    <span
+      data-testid="sidebar-workspace-branch"
+      className="max-w-[45%] shrink-0 truncate font-medium"
+    >
+      {label}
+    </span>
+  );
+}
+
 function SidebarHoverName({
   displayName,
   actualName,
   actualTestId,
   className,
+  align = "left",
 }: {
   readonly displayName: string;
   readonly actualName: string;
   readonly actualTestId?: string;
   readonly className: string;
+  readonly align?: "left" | "right";
 }) {
   if (displayName === actualName) {
     return (
-      <span data-testid={actualTestId} className={className}>
+      <span
+        data-testid={actualTestId}
+        className={align === "right" ? `${className} truncate` : className}
+      >
         {displayName}
       </span>
     );
@@ -141,7 +181,7 @@ function SidebarHoverName({
             <span
               data-testid={actualTestId}
               aria-hidden="true"
-              className="pointer-events-none absolute inset-0 block truncate opacity-0 blur-[3px] transition-[opacity,filter] duration-200 ease-in-out group-hover/rename:opacity-100 group-hover/rename:blur-[0px] group-focus-visible/rename:opacity-100 group-focus-visible/rename:blur-[0px] motion-reduce:transition-none"
+              className={`pointer-events-none absolute top-0 ${align === "right" ? "right-0 w-max max-w-full truncate" : "inset-x-0 truncate"} block opacity-0 blur-[3px] transition-[opacity,filter] duration-200 ease-in-out group-hover/rename:opacity-100 group-hover/rename:blur-[0px] group-focus-visible/rename:opacity-100 group-focus-visible/rename:blur-[0px] motion-reduce:transition-none`}
             >
               {actualName}
             </span>
@@ -169,6 +209,17 @@ type SidebarRenameTarget =
       readonly workspaceId: WorkspaceId;
       readonly title: string;
       readonly directoryName: string;
+    }
+  | {
+      readonly kind: "Agent Session";
+      readonly environmentId: EnvironmentId;
+      readonly threadId: ThreadId;
+      readonly title: string;
+    }
+  | {
+      readonly kind: "Terminal Session";
+      readonly target: Extract<ViewTarget, { kind: "workspaceTerminal" }>;
+      readonly title: string;
     };
 
 export function projectMenuItems(input: {
@@ -352,16 +403,32 @@ export function AwenSidebar() {
               environmentId: target.environmentId,
               input: { projectId: target.projectId, title },
             })
-          : await renameWorkspace({
-              environmentId: target.environmentId,
-              input: { workspaceId: target.workspaceId, title },
-            });
+          : target.kind === "Workspace"
+            ? await renameWorkspace({
+                environmentId: target.environmentId,
+                input: { workspaceId: target.workspaceId, title },
+              })
+            : target.kind === "Agent Session"
+              ? await updateThreadMetadata({
+                  environmentId: target.environmentId,
+                  input: { threadId: target.threadId, title },
+                })
+              : await renameTerminalSession({
+                  environmentId: target.target.environmentId,
+                  input: {
+                    terminalId: runtimeTerminalIdForTarget(target.target),
+                    ...(target.target.workspaceId !== undefined
+                      ? { workspaceId: target.target.workspaceId }
+                      : {}),
+                    title,
+                  },
+                });
       if (result._tag === "Failure") {
         const error = squashAtomCommandFailure(result);
         throw error instanceof Error ? error : new Error(`Could not rename ${target.kind}.`);
       }
     },
-    [renameProject, renameWorkspace],
+    [renameProject, renameTerminalSession, renameWorkspace, updateThreadMetadata],
   );
 
   const toggleWorkspaceExpanded = useCallback((workspaceKey: string) => {
@@ -741,40 +808,15 @@ export function AwenSidebar() {
   );
 
   const renameAgent = useCallback(
-    (environmentId: EnvironmentId, threadId: ThreadId, currentTitle: string) => {
-      const title = window.prompt("Session name", currentTitle)?.trim();
-      if (!title) return;
-      void updateThreadMetadata({ environmentId, input: { threadId, title } }).then((result) => {
-        if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-          commandFailureToast("Could not rename Agent Session", squashAtomCommandFailure(result));
-        }
-      });
-    },
-    [updateThreadMetadata],
+    (environmentId: EnvironmentId, threadId: ThreadId, title: string) =>
+      setRenameTarget({ kind: "Agent Session", environmentId, threadId, title }),
+    [],
   );
 
   const renameTerminal = useCallback(
-    (target: Extract<ViewTarget, { kind: "workspaceTerminal" }>, currentTitle: string) => {
-      const title = window.prompt("Session name", currentTitle)?.trim();
-      if (!title) return;
-      const terminalId = runtimeTerminalIdForTarget(target);
-      void renameTerminalSession({
-        environmentId: target.environmentId,
-        input: {
-          terminalId,
-          ...(target.workspaceId !== undefined ? { workspaceId: target.workspaceId } : {}),
-          title,
-        },
-      }).then((result) => {
-        if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-          commandFailureToast(
-            "Could not rename Terminal Session",
-            squashAtomCommandFailure(result),
-          );
-        }
-      });
-    },
-    [renameTerminalSession],
+    (target: Extract<ViewTarget, { kind: "workspaceTerminal" }>, title: string) =>
+      setRenameTarget({ kind: "Terminal Session", target, title }),
+    [],
   );
 
   return (
@@ -919,13 +961,10 @@ export function AwenSidebar() {
                                 })}
                               >
                                 <GitBranchIcon className="size-3 shrink-0" />
-                                <span
-                                  data-testid="sidebar-workspace-branch"
-                                  className="min-w-0 flex-1 truncate font-medium"
-                                >
-                                  {workspace.branch ||
-                                    (workspace.role === "main" ? "main" : workspace.title)}
-                                </span>
+                                <WorkspaceBranchName
+                                  environmentId={project.environmentId}
+                                  workspaceRoot={workspace.workspaceRoot}
+                                />
                                 <SidebarHoverName
                                   displayName={workspace.title}
                                   actualName={directoryName(
@@ -933,7 +972,8 @@ export function AwenSidebar() {
                                     workspace.title,
                                   )}
                                   actualTestId="sidebar-workspace-dir"
-                                  className="max-w-[52%] shrink-0 truncate text-[10px] text-sidebar-muted-foreground"
+                                  align="right"
+                                  className="min-w-0 flex-1 text-right text-[10px] text-sidebar-muted-foreground"
                                 />
                               </button>
                             </div>
@@ -1066,11 +1106,17 @@ export function AwenSidebar() {
           key={
             renameTarget.kind === "Project"
               ? `project:${renameTarget.projectId}`
-              : `workspace:${renameTarget.workspaceId}`
+              : renameTarget.kind === "Workspace"
+                ? `workspace:${renameTarget.workspaceId}`
+                : renameTarget.kind === "Agent Session"
+                  ? `agent:${renameTarget.threadId}`
+                  : `terminal:${runtimeTerminalIdForTarget(renameTarget.target)}`
           }
           kind={renameTarget.kind}
           title={renameTarget.title}
-          directoryName={renameTarget.directoryName}
+          {...("directoryName" in renameTarget
+            ? { directoryName: renameTarget.directoryName }
+            : {})}
           onClose={() => setRenameTarget(null)}
           onRename={(title) => submitSidebarRename(renameTarget, title)}
         />
