@@ -234,15 +234,17 @@ export function resolveLocalCheckoutBranchMismatch(input: {
   return { threadBranch: activeThreadBranch, currentBranch: currentGitBranch };
 }
 
+export interface BranchSelectionTarget {
+  readonly checkoutCwd: string;
+  readonly nextWorktreePath: string | null;
+  readonly reuseExistingWorktree: boolean;
+}
+
 export function resolveBranchSelectionTarget(input: {
   activeProjectCwd: string;
   activeWorktreePath: string | null;
   refName: Pick<VcsRef, "isDefault" | "worktreePath">;
-}): {
-  checkoutCwd: string;
-  nextWorktreePath: string | null;
-  reuseExistingWorktree: boolean;
-} {
+}): BranchSelectionTarget {
   const { activeProjectCwd, activeWorktreePath, refName } = input;
 
   if (refName.worktreePath) {
@@ -261,6 +263,67 @@ export function resolveBranchSelectionTarget(input: {
     nextWorktreePath,
     reuseExistingWorktree: false,
   };
+}
+
+export interface WorkspaceSwitchPlan {
+  readonly switchWorkspace: boolean;
+  readonly targetPath: string | null;
+}
+
+/** Compare directory strings the way the two inputs are produced: absolute,
+ *  server-normalized paths. */
+function comparablePath(value: string): string {
+  return value.replace(/\\/g, "/").replace(/\/+$/, "");
+}
+
+/**
+ * Picking a ref that is checked out in another worktree moves the Session to
+ * that checkout's Workspace. The parent root counts as a target too, so a
+ * secondary-worktree Session that picks a branch living in the main checkout
+ * moves back. Any other selection stays in the current directory and is an
+ * ordinary branch selection.
+ */
+export function resolveWorkspaceSwitch(input: {
+  readonly activeProjectCwd: string;
+  readonly activeWorktreePath: string | null;
+  readonly selectionTarget: Pick<
+    BranchSelectionTarget,
+    "reuseExistingWorktree" | "nextWorktreePath"
+  >;
+}): WorkspaceSwitchPlan {
+  const { reuseExistingWorktree, nextWorktreePath } = input.selectionTarget;
+  if (!reuseExistingWorktree) {
+    return { switchWorkspace: false, targetPath: null };
+  }
+  const currentDir = input.activeWorktreePath ?? input.activeProjectCwd;
+  const targetDir = nextWorktreePath ?? input.activeProjectCwd;
+  if (comparablePath(currentDir) === comparablePath(targetDir)) {
+    return { switchWorkspace: false, targetPath: null };
+  }
+  return { switchWorkspace: true, targetPath: targetDir };
+}
+
+/**
+ * Find the Awen navigation Project that owns an orchestration Project so a
+ * draft can be re-bound to a sibling Workspace before its first send.
+ */
+export function awenProjectForOrchestrationProject<
+  P extends {
+    readonly environmentId: EnvironmentId;
+    readonly workspaces: ReadonlyArray<{ readonly awenProjectId: ProjectId }>;
+  },
+>(
+  projects: ReadonlyArray<P>,
+  environmentId: EnvironmentId,
+  orchestrationProjectId: ProjectId,
+): P | null {
+  return (
+    projects.find(
+      (project) =>
+        project.environmentId === environmentId &&
+        project.workspaces.some((workspace) => workspace.awenProjectId === orchestrationProjectId),
+    ) ?? null
+  );
 }
 
 // Git rejects ASCII space and the ASCII control characters (tab, newline and

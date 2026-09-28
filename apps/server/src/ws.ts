@@ -3827,7 +3827,9 @@ export const websocketRpcRouteLayer = Layer.unwrap(
     const pullRequests = yield* PullRequestService.PullRequestService;
     const sql = yield* SqlClient.SqlClient;
     const awenWorkspaceService = yield* AwenWorkspaceService.make;
-    const awenSessionService = yield* AwenSessionService.make;
+    const awenSessionService = yield* AwenSessionService.make.pipe(
+      Effect.provideService(AwenWorkspaceService.AwenWorkspaceService, awenWorkspaceService),
+    );
     return HttpRouter.add(
       "GET",
       "/ws",

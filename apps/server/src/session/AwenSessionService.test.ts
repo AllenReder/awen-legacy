@@ -4,6 +4,10 @@ import {
   AgentSessionId,
   AwenProjectId,
   type AwenAgentSessionShell,
+  type AwenProjectShell,
+  type AwenWorkspaceAssociateInput,
+  type AwenWorkspaceAssociateResult,
+  AwenWorkspaceError,
   type AwenWorkspaceShell,
   type OrchestrationProjectShell,
   type OrchestrationThreadShell,
@@ -27,6 +31,7 @@ import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSn
 import { ProviderAdapterRequestError, type ProviderServiceError } from "../provider/Errors.ts";
 import * as ProviderService from "../provider/Services/ProviderService.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import * as AwenWorkspaceService from "../workspace/AwenWorkspaceService.ts";
 import * as AwenSessionService from "./AwenSessionService.ts";
 
 const NOW = "2026-09-19T00:00:00.000Z";
@@ -152,6 +157,10 @@ interface Harness {
   ) => Effect.Effect<ProviderSession, ProviderServiceError>;
   readonly failCommit: () => boolean;
   readonly targetDirectoryExists?: () => boolean;
+  readonly awenProjectWorkspaces?: () => ReadonlyArray<AwenWorkspaceShell>;
+  readonly associate?: (
+    input: AwenWorkspaceAssociateInput,
+  ) => Effect.Effect<AwenWorkspaceAssociateResult, AwenWorkspaceError>;
   readonly dispatched: Parameters<
     OrchestrationEngine.OrchestrationEngineService["Service"]["dispatch"]
   >[0][];
@@ -163,12 +172,26 @@ const makeLayer = (harness: Harness) => {
     getAwenAgentSessionByThreadId: () => Effect.succeed(Option.some(harness.agentSession())),
     getAwenWorkspaceById: (workspaceId) =>
       Effect.succeed(Option.fromNullishOr(harness.workspaces.get(workspaceId))),
+    getAwenProjectById: () =>
+      Effect.succeed(
+        Option.some({
+          id: AWEN_PROJECT_ID,
+          title: "main",
+          workspaces: [...(harness.awenProjectWorkspaces?.() ?? [sourceWorkspace()])],
+          createdAt: NOW,
+          updatedAt: NOW,
+        } satisfies AwenProjectShell),
+      ),
     getProjectShellById: (projectId) =>
       Effect.succeed(
         Option.some(
           projectShell(projectId, projectId === SOURCE_PROJECT ? SOURCE_ROOT : TARGET_ROOT),
         ),
       ),
+  });
+  const workspaceLayer = Layer.mock(AwenWorkspaceService.AwenWorkspaceService)({
+    associate: (input) =>
+      harness.associate?.(input) ?? Effect.die("unexpected Workspace association during migration"),
   });
   const providerLayer = Layer.mock(ProviderService.ProviderService)({
     listSessions: () => Effect.succeed(harness.providerSessions()),
@@ -200,6 +223,7 @@ const makeLayer = (harness: Harness) => {
     Layer.provide(projectionLayer),
     Layer.provide(providerLayer),
     Layer.provide(engineLayer),
+    Layer.provide(workspaceLayer),
     Layer.provide(fileSystemLayer),
     Layer.provideMerge(SqlitePersistenceMemory),
     Layer.provideMerge(NodeServices.layer),
@@ -560,6 +584,90 @@ describe("AwenSessionService.migrateToWorkspace", () => {
         agentSessionId: AgentSessionId.make(THREAD_ID),
       });
       assert.isNull(state.recovery);
+    }).pipe(Effect.provide(makeLayer(harness)));
+  });
+
+  it.effect("resolves a registered sibling Workspace from a target path", () => {
+    const harness = baseHarness({
+      awenProjectWorkspaces: () => [sourceWorkspace(), targetWorkspace()],
+    });
+    return Effect.gen(function* () {
+      const service = yield* AwenSessionService.AwenSessionService;
+      const result = yield* service.migrateToWorkspace({
+        agentSessionId: AgentSessionId.make(THREAD_ID),
+        targetPath: TARGET_ROOT,
+      });
+      assert.strictEqual(result.workspaceId, TARGET_WORKSPACE);
+      assert.isFalse(result.providerMoved);
+      const migration = harness.dispatched.find((command) => command.type === "thread.meta.update");
+      assert.strictEqual(
+        migration?.type === "thread.meta.update" ? migration.projectId : undefined,
+        TARGET_PROJECT,
+      );
+    }).pipe(Effect.provide(makeLayer(harness)));
+  });
+
+  it.effect("associates an unregistered checkout and migrates to it", () => {
+    const associatedProject = ProjectId.make("project:associated");
+    const associatedWorkspace = targetWorkspace(associatedProject);
+    const associateCalls: AwenWorkspaceAssociateInput[] = [];
+    const harness = baseHarness({
+      awenProjectWorkspaces: () => [sourceWorkspace()],
+      associate: (input) => {
+        associateCalls.push(input);
+        return Effect.succeed({ workspace: associatedWorkspace, reused: false });
+      },
+    });
+    return Effect.gen(function* () {
+      const service = yield* AwenSessionService.AwenSessionService;
+      const result = yield* service.migrateToWorkspace({
+        agentSessionId: AgentSessionId.make(THREAD_ID),
+        targetPath: TARGET_ROOT,
+      });
+      assert.deepStrictEqual(associateCalls, [{ projectId: AWEN_PROJECT_ID, path: TARGET_ROOT }]);
+      assert.strictEqual(result.workspaceId, associatedWorkspace.id);
+      const migration = harness.dispatched.find((command) => command.type === "thread.meta.update");
+      assert.strictEqual(
+        migration?.type === "thread.meta.update" ? migration.projectId : undefined,
+        associatedProject,
+      );
+    }).pipe(Effect.provide(makeLayer(harness)));
+  });
+
+  it.effect("refuses a migration with neither a target Workspace nor a path", () => {
+    const harness = baseHarness();
+    return Effect.gen(function* () {
+      const service = yield* AwenSessionService.AwenSessionService;
+      const error = yield* service
+        .migrateToWorkspace({ agentSessionId: AgentSessionId.make(THREAD_ID) })
+        .pipe(Effect.flip);
+      assert.strictEqual(error.reason, "workspace-not-found");
+      assert.strictEqual(harness.dispatched.length, 0);
+    }).pipe(Effect.provide(makeLayer(harness)));
+  });
+
+  it.effect("maps a cross-Project checkout association to different-project", () => {
+    const harness = baseHarness({
+      awenProjectWorkspaces: () => [sourceWorkspace()],
+      associate: () =>
+        Effect.fail(
+          new AwenWorkspaceError({
+            reason: "already-registered",
+            detail: "registered elsewhere",
+            path: TARGET_ROOT,
+          }),
+        ),
+    });
+    return Effect.gen(function* () {
+      const service = yield* AwenSessionService.AwenSessionService;
+      const error = yield* service
+        .migrateToWorkspace({
+          agentSessionId: AgentSessionId.make(THREAD_ID),
+          targetPath: TARGET_ROOT,
+        })
+        .pipe(Effect.flip);
+      assert.strictEqual(error.reason, "different-project");
+      assert.strictEqual(harness.dispatched.length, 0);
     }).pipe(Effect.provide(makeLayer(harness)));
   });
 });

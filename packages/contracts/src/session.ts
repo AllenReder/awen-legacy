@@ -126,7 +126,15 @@ export type AgentSessionMigrationRecovery = typeof AgentSessionMigrationRecovery
 /** Move an idle Agent Session to another Workspace of the same Project. */
 export const AgentSessionMigrateToWorkspaceInput = Schema.Struct({
   agentSessionId: AgentSessionId,
-  targetWorkspaceId: WorkspaceId,
+  /** Registered target Workspace identity. */
+  targetWorkspaceId: Schema.optional(WorkspaceId),
+  /**
+   * Candidate execution directory. The server resolves it to a sibling
+   * Workspace of the Session's Project, associating an unregistered checkout as
+   * a Workspace when needed. Exactly one of `targetWorkspaceId` / `targetPath`
+   * must be supplied; the service rejects a request that names neither.
+   */
+  targetPath: Schema.optional(TrimmedNonEmptyString),
 });
 export type AgentSessionMigrateToWorkspaceInput = typeof AgentSessionMigrateToWorkspaceInput.Type;
 

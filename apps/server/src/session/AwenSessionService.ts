@@ -6,6 +6,7 @@ import {
   type AgentSessionMigrationRecovery,
   type AgentSessionMigrationStateInput,
   type AgentSessionMigrationStateResult,
+  type AwenWorkspaceError,
   type AwenWorkspaceShell,
   type OrchestrationThreadShell,
   CommandId,
@@ -33,6 +34,7 @@ import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 import * as OrchestrationEngine from "../orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as ProviderService from "../provider/Services/ProviderService.ts";
+import * as AwenWorkspaceService from "../workspace/AwenWorkspaceService.ts";
 import { toPersistenceSqlError } from "../persistence/Errors.ts";
 
 /**
@@ -138,6 +140,38 @@ function failSession(
   return Effect.fail(sessionError(reason, detail, extra));
 }
 
+/**
+ * Translate a Workspace registration failure into the Session operation error
+ * contract. A checkout Awen cannot own (another Project or repository) is a
+ * target mismatch, not an operational failure.
+ */
+function mapAssociateError(
+  agentSessionId: AgentSessionId,
+  targetPath: string,
+  error: AwenWorkspaceError,
+): AgentSessionOperationError {
+  switch (error.reason) {
+    case "already-registered":
+    case "different-repository":
+      return sessionError(
+        "different-project",
+        `'${targetPath}' belongs to another Project or repository.`,
+        { agentSessionId, cause: error },
+      );
+    case "path-not-found":
+      return sessionError("target-directory-missing", `'${targetPath}' does not exist.`, {
+        agentSessionId,
+        cause: error,
+      });
+    default:
+      return sessionError(
+        "operation-failed",
+        `Could not prepare '${targetPath}' as a Workspace: ${error.detail}`,
+        { agentSessionId, cause: error },
+      );
+  }
+}
+
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -147,6 +181,7 @@ export const make = Effect.gen(function* () {
   const projectionQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
   const orchestrationEngine = yield* OrchestrationEngine.OrchestrationEngineService;
   const providerService = yield* ProviderService.ProviderService;
+  const workspaceService = yield* AwenWorkspaceService.AwenWorkspaceService;
 
   const recoveryByThread = SqlSchema.findOneOption({
     Request: RecoveryRequest,
@@ -318,6 +353,54 @@ export const make = Effect.gen(function* () {
     providerService
       .listSessions()
       .pipe(Effect.map((sessions) => sessions.find((session) => session.threadId === threadId)));
+
+  /**
+   * Resolve the requested migration target to a sibling Workspace.
+   *
+   * A caller may name a registered Workspace directly, or a directory/worktree
+   * path. A path is matched against the Session's Project Workspaces; an
+   * unregistered checkout is associated as a new sibling Workspace first, so a
+   * migration never publishes an assignment for a directory Awen does not own.
+   */
+  const resolveRequestedTarget = (
+    input: AgentSessionMigrateToWorkspaceInput,
+    sourceWorkspace: AwenWorkspaceShell,
+  ): Effect.Effect<Option.Option<AwenWorkspaceShell>, AgentSessionOperationError> =>
+    Effect.gen(function* () {
+      if (input.targetWorkspaceId !== undefined) {
+        return yield* readWorkspace(input.targetWorkspaceId);
+      }
+      const targetPath = input.targetPath;
+      if (targetPath === undefined) {
+        return yield* failSession(
+          "workspace-not-found",
+          "A target Workspace id or path is required.",
+          { agentSessionId: input.agentSessionId },
+        );
+      }
+      const getProject = projectionQuery.getAwenProjectById;
+      if (getProject !== undefined) {
+        const project = yield* getProject(sourceWorkspace.projectId).pipe(
+          Effect.mapError((cause) =>
+            sessionError("operation-failed", "Could not read the Session's Project.", { cause }),
+          ),
+        );
+        if (Option.isSome(project)) {
+          const sibling = project.value.workspaces.find((workspace) =>
+            sameDirectory(workspace.workspaceRoot, targetPath),
+          );
+          if (sibling !== undefined) {
+            return Option.some(sibling);
+          }
+        }
+      }
+      const associated = yield* workspaceService
+        .associate({ projectId: sourceWorkspace.projectId, path: targetPath })
+        .pipe(
+          Effect.mapError((error) => mapAssociateError(input.agentSessionId, targetPath, error)),
+        );
+      return Option.some(associated.workspace);
+    });
 
   // Serialize every migration against the others. Migrations are rare, and a
   // single lock guarantees that two migrations sharing any affected Workspace
@@ -496,27 +579,35 @@ export const make = Effect.gen(function* () {
       );
     }
     const sourceWorkspace = sourceWorkspaceOption.value;
-    if (sourceWorkspace.id === input.targetWorkspaceId) {
-      return yield* failSession(
-        "already-in-workspace",
-        `Agent Session '${threadId}' is already assigned to Workspace '${sourceWorkspace.title}'.`,
-        { agentSessionId: input.agentSessionId, workspaceId: input.targetWorkspaceId },
-      );
-    }
-    const targetWorkspaceOption = yield* readWorkspace(input.targetWorkspaceId);
+    const targetWorkspaceOption = yield* resolveRequestedTarget(input, sourceWorkspace);
     if (Option.isNone(targetWorkspaceOption)) {
       return yield* failSession(
         "workspace-not-found",
-        `Workspace '${input.targetWorkspaceId}' was not found.`,
-        { agentSessionId: input.agentSessionId, workspaceId: input.targetWorkspaceId },
+        input.targetPath !== undefined
+          ? `No Workspace was found or registered at '${input.targetPath}'.`
+          : `Workspace '${input.targetWorkspaceId ?? "unknown"}' was not found.`,
+        {
+          agentSessionId: input.agentSessionId,
+          ...(input.targetWorkspaceId !== undefined
+            ? { workspaceId: input.targetWorkspaceId }
+            : {}),
+        },
       );
     }
     const targetWorkspace = targetWorkspaceOption.value;
+    const targetWorkspaceId = targetWorkspace.id;
+    if (sourceWorkspace.id === targetWorkspaceId) {
+      return yield* failSession(
+        "already-in-workspace",
+        `Agent Session '${threadId}' is already assigned to Workspace '${sourceWorkspace.title}'.`,
+        { agentSessionId: input.agentSessionId, workspaceId: targetWorkspaceId },
+      );
+    }
     if (targetWorkspace.projectId !== sourceWorkspace.projectId) {
       return yield* failSession(
         "different-project",
         `Workspace '${targetWorkspace.title}' belongs to another Project; an Agent Session migrates only within its Project.`,
-        { agentSessionId: input.agentSessionId, workspaceId: input.targetWorkspaceId },
+        { agentSessionId: input.agentSessionId, workspaceId: targetWorkspaceId },
       );
     }
 
@@ -547,21 +638,21 @@ export const make = Effect.gen(function* () {
           return yield* failSession(
             "already-in-workspace",
             `Agent Session '${threadId}' is already assigned to this Workspace.`,
-            { agentSessionId: input.agentSessionId, workspaceId: input.targetWorkspaceId },
+            { agentSessionId: input.agentSessionId, workspaceId: targetWorkspaceId },
           );
         }
         if (thread.archivedAt !== null) {
           return yield* failSession(
             "session-archived",
             `Agent Session '${threadId}' is archived; restore it before migrating.`,
-            { agentSessionId: input.agentSessionId, workspaceId: input.targetWorkspaceId },
+            { agentSessionId: input.agentSessionId, workspaceId: targetWorkspaceId },
           );
         }
         if (isOrchestrationSessionExecuting(thread.session)) {
           return yield* failSession(
             "session-executing",
             `Agent Session '${threadId}' is executing. Stop it before migrating; migration is not queued.`,
-            { agentSessionId: input.agentSessionId, workspaceId: input.targetWorkspaceId },
+            { agentSessionId: input.agentSessionId, workspaceId: targetWorkspaceId },
           );
         }
 
@@ -573,7 +664,7 @@ export const make = Effect.gen(function* () {
           return yield* failSession(
             "target-directory-missing",
             `Workspace '${targetWorkspace.title}' has no directory at '${targetCwd}'.`,
-            { agentSessionId: input.agentSessionId, workspaceId: input.targetWorkspaceId },
+            { agentSessionId: input.agentSessionId, workspaceId: targetWorkspaceId },
           );
         }
 
@@ -589,7 +680,7 @@ export const make = Effect.gen(function* () {
         const recordMovedRecovery = (detail: string) =>
           upsertRecovery({
             threadId,
-            intendedWorkspaceId: input.targetWorkspaceId,
+            intendedWorkspaceId: targetWorkspaceId,
             intendedProjectId: targetWorkspace.awenProjectId,
             intendedCwd: targetCwd,
             committedProjectId,
@@ -612,14 +703,14 @@ export const make = Effect.gen(function* () {
             return yield* failSession(
               "provider-resume-unsupported",
               `Provider session for '${threadId}' has no resume state; migrating would lose the conversation.`,
-              { agentSessionId: input.agentSessionId, workspaceId: input.targetWorkspaceId },
+              { agentSessionId: input.agentSessionId, workspaceId: targetWorkspaceId },
             );
           }
           if (activeSession.providerInstanceId === undefined) {
             return yield* failSession(
               "provider-move-failed",
               `Provider session for '${threadId}' has no provider instance id and cannot be relocated.`,
-              { agentSessionId: input.agentSessionId, workspaceId: input.targetWorkspaceId },
+              { agentSessionId: input.agentSessionId, workspaceId: targetWorkspaceId },
             );
           }
           // The provider accepts the candidate directory directly, before any
@@ -642,7 +733,7 @@ export const make = Effect.gen(function* () {
               `Provider session for '${threadId}' could not be moved to '${targetCwd}'.`,
               {
                 agentSessionId: input.agentSessionId,
-                workspaceId: input.targetWorkspaceId,
+                workspaceId: targetWorkspaceId,
                 cause: moved.failure,
               },
             );
@@ -670,7 +761,7 @@ export const make = Effect.gen(function* () {
               yield* clearRecovery(threadId);
               return {
                 agentSessionId: input.agentSessionId,
-                workspaceId: input.targetWorkspaceId,
+                workspaceId: targetWorkspaceId,
                 providerMoved,
                 ...(providerCwd !== undefined ? { providerCwd } : {}),
               } satisfies AgentSessionMigrateToWorkspaceResult;
@@ -681,7 +772,7 @@ export const make = Effect.gen(function* () {
               `Provider session for '${threadId}' moved but the Workspace assignment could not be committed. Sends are blocked until it is recovered.`,
               {
                 agentSessionId: input.agentSessionId,
-                workspaceId: input.targetWorkspaceId,
+                workspaceId: targetWorkspaceId,
                 ...(Option.isSome(recovery) ? { recovery: toRecovery(recovery.value) } : {}),
                 cause: committed.failure,
               },
@@ -693,7 +784,7 @@ export const make = Effect.gen(function* () {
             `Workspace assignment for '${threadId}' could not be committed.`,
             {
               agentSessionId: input.agentSessionId,
-              workspaceId: input.targetWorkspaceId,
+              workspaceId: targetWorkspaceId,
               cause: committed.failure,
             },
           );
@@ -719,7 +810,7 @@ export const make = Effect.gen(function* () {
 
         return {
           agentSessionId: input.agentSessionId,
-          workspaceId: input.targetWorkspaceId,
+          workspaceId: targetWorkspaceId,
           providerMoved,
           ...(providerCwd !== undefined ? { providerCwd } : {}),
         } satisfies AgentSessionMigrateToWorkspaceResult;
