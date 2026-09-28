@@ -316,6 +316,10 @@ async function verifyBranchSelection(page, temporaryRoot) {
     .filter({ hasText: "branch-selection-repo" });
   await projectRow.waitFor({ state: "visible", timeout: timeoutMs });
   const mainWorkspace = projectRow.locator("..").getByTestId("sidebar-workspace-row").first();
+  await mainWorkspace.getByTestId("sidebar-workspace-branch").getByText("feature-a").waitFor({
+    state: "visible",
+    timeout: timeoutMs,
+  });
   await chooseContextMenuItem(page, mainWorkspace, "New Agent Session");
   const agentPane = page.locator(
     '[data-pane-focused="true"][data-pane-target-kind="agentSession"], [data-pane-focused="true"][data-pane-target-kind="newAgentSession"]',

@@ -45,9 +45,11 @@ import { environmentServerConfigsAtom } from "../state/server";
 import { useEnvironments } from "../state/environments";
 import { useAwenProjects, useThreadShell, useUnassignedTerminals } from "../state/entities";
 import { projectEnvironment, workspaceEnvironment } from "../state/projects";
+import { useEnvironmentQuery } from "../state/query";
 import { terminalEnvironment } from "../state/terminal";
 import { threadEnvironment } from "../state/threads";
 import { useAtomCommand } from "../state/use-atom-command";
+import { vcsEnvironment } from "../state/vcs";
 import { scopeProjectRef, scopeThreadRef, scopedThreadKey } from "@awen/client-runtime/environment";
 import { useKnownTerminalSessions } from "../state/terminalSessions";
 import { SessionRow } from "./sidebar/SessionRow";
@@ -109,6 +111,36 @@ function directoryName(path: string | undefined, fallback: string): string {
       ?.replace(/[\\/]+$/, "")
       .split(/[\\/]/)
       .pop() || fallback
+  );
+}
+
+function WorkspaceBranchName({
+  environmentId,
+  workspaceRoot,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly workspaceRoot: string;
+}) {
+  // The checkout is the authority for its branch. Workspace metadata and the
+  // Session's selected branch can both differ from what Git currently has out.
+  const status = useEnvironmentQuery(
+    vcsEnvironment.status({ environmentId, input: { cwd: workspaceRoot } }),
+  );
+  const branch = status.data?.refName;
+  const label =
+    branch ??
+    (status.data?.isRepo === true
+      ? "Detached HEAD"
+      : status.data?.isRepo === false
+        ? "No Git repository"
+        : status.error !== null
+          ? "Branch unavailable"
+          : "Loading branch…");
+
+  return (
+    <span data-testid="sidebar-workspace-branch" className="min-w-0 flex-1 truncate font-medium">
+      {label}
+    </span>
   );
 }
 
@@ -919,13 +951,10 @@ export function AwenSidebar() {
                                 })}
                               >
                                 <GitBranchIcon className="size-3 shrink-0" />
-                                <span
-                                  data-testid="sidebar-workspace-branch"
-                                  className="min-w-0 flex-1 truncate font-medium"
-                                >
-                                  {workspace.branch ||
-                                    (workspace.role === "main" ? "main" : workspace.title)}
-                                </span>
+                                <WorkspaceBranchName
+                                  environmentId={project.environmentId}
+                                  workspaceRoot={workspace.workspaceRoot}
+                                />
                                 <SidebarHoverName
                                   displayName={workspace.title}
                                   actualName={directoryName(

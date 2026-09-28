@@ -1,6 +1,6 @@
 # Sidebar Session Row Tab State, Workspace Branch Projection, and Terminal Agent Detection
 
-Awen projects the active Git branch directly on `AwenWorkspaceShell` to display `[Branch] [WorkspaceDir]` in the Sidebar. Session rows visually reflect four Session Row Tab States with right-edge indicators, reserve a fixed 14px Status Gutter for notification alignment, display agent provider icons, and dynamically switch terminal icons via zero-config foreground process detection rather than mandatory agent hooks.
+Awen reads the checkout's live Git status to display `[Branch] [WorkspaceDir]` in the Sidebar. Session rows visually reflect four Session Row Tab States with right-edge indicators, reserve a fixed 14px Status Gutter for notification alignment, display agent provider icons, and dynamically switch terminal icons via zero-config foreground process detection rather than mandatory agent hooks.
 
 ## Status
 
@@ -17,7 +17,7 @@ Reference project `paseo` detects terminal agent states by requiring per-agent h
 ## Decision
 
 1. **Workspace Header Layout and Projection**:
-   - The server projects the current checkout branch onto `AwenWorkspaceShell.branch`.
+   - The Sidebar subscribes to Git status for each Workspace root, using the same VCS status source as the Agent Session composer. Workspace metadata is not authoritative for the checked-out branch. An unresolved status must not be displayed as `main` or as the Workspace title.
    - The Workspace header displays the active branch name on the left (truncated with ellipsis if long) and the Workspace directory name on the right (`shrink-0` with muted styling). The previous `MAIN`/`WORKTREE` badge is removed.
 
 2. **Four Session Row Tab States**:

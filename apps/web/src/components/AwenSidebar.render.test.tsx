@@ -31,7 +31,22 @@ const mockState = {
   navigate: vi.fn(),
   threadShell: null as any,
   unassignedTerminals: [] as any[],
+  gitBranch: null as string | null,
 };
+
+vi.mock("../state/query", () => ({
+  useEnvironmentQuery: () => ({
+    data: { isRepo: true, refName: mockState.gitBranch },
+    error: null,
+    isPending: false,
+    isSuccess: true,
+    refresh: vi.fn(),
+  }),
+}));
+
+vi.mock("../state/vcs", () => ({
+  vcsEnvironment: { status: vi.fn() },
+}));
 
 const mockTerminalSessions = {
   sessions: [] as any[],
@@ -165,6 +180,7 @@ describe("AwenSidebar", () => {
     mockState.threadShell = null;
     mockState.environments = [];
     mockState.unassignedTerminals = [];
+    mockState.gitBranch = null;
     useUiStateStore.setState({ threadLastVisitedAtById: {} });
   });
 
@@ -306,6 +322,7 @@ describe("AwenSidebar", () => {
 
   it("renders branch name on the left and workspace directory name on the right without role badge", async () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    mockState.gitBranch = "feature-a";
     mockState.projects = [
       {
         id: "p1",
@@ -317,7 +334,6 @@ describe("AwenSidebar", () => {
             title: "awen",
             workspaceRoot: "/code/awen",
             role: "main",
-            branch: "main",
             sessions: [],
             historySessions: [],
           },
@@ -332,13 +348,41 @@ describe("AwenSidebar", () => {
     const workspaceRow = renderer.root.findByProps({ "data-testid": "sidebar-workspace-row" });
     expect(
       workspaceRow.findByProps({ "data-testid": "sidebar-workspace-branch" }).props.children,
-    ).toBe("main");
+    ).toBe("feature-a");
     expect(
       workspaceRow.findByProps({ "data-testid": "sidebar-workspace-dir" }).props.children,
     ).toBe("awen");
     expect(workspaceRow.findAllByProps({ "data-testid": "sidebar-workspace-role" })).toHaveLength(
       0,
     );
+  });
+
+  it("does not mistake a custom Workspace name for a detached Git branch", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    mockState.projects = [
+      {
+        id: "p1",
+        environmentId: "local",
+        title: "Repository",
+        workspaces: [
+          {
+            id: "w1",
+            title: "My checkout",
+            workspaceRoot: "/code/repo",
+            role: "main",
+            sessions: [],
+            historySessions: [],
+          },
+        ],
+      },
+    ];
+
+    await act(() => {
+      renderer = create(<AwenSidebar />);
+    });
+
+    const branch = renderer.root.findByProps({ "data-testid": "sidebar-workspace-branch" });
+    expect(branch.props.children).toBe("Detached HEAD");
   });
 
   it("exposes the full directory name when a custom Workspace name is truncated", async () => {
