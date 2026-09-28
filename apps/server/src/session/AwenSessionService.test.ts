@@ -44,6 +44,7 @@ import {
 } from "../persistence/Layers/Sqlite.ts";
 import * as AwenWorkspaceService from "../workspace/AwenWorkspaceService.ts";
 import * as AwenSessionService from "./AwenSessionService.ts";
+import * as SessionExecutionLock from "./SessionExecutionLock.ts";
 
 const NOW = "2026-09-19T00:00:00.000Z";
 const AWEN_PROJECT_ID = AwenProjectId.make("awen-project:main");
@@ -236,6 +237,8 @@ const makeLayer = (harness: Harness, databasePath?: string) => {
     Layer.provide(engineLayer),
     Layer.provide(workspaceLayer),
     Layer.provide(fileSystemLayer),
+    // Exported so a test can drive the same lock a provider start would hold.
+    Layer.provideMerge(SessionExecutionLock.layer),
     Layer.provideMerge(
       databasePath ? makeSqlitePersistenceLive(databasePath) : SqlitePersistenceMemory,
     ),
@@ -753,6 +756,53 @@ describe("AwenSessionService.migrateToWorkspace", () => {
         failCommit: () => true,
       });
       yield* runMigrationRace(harness, gate, sessionStarted);
+    }),
+  );
+
+  // Mirror of the send guard: a provider start (the reactor's start region)
+  // holds the shared execution lock, so an Agent Session migration must park
+  // until that start releases it. Fails if the two authorities stop sharing
+  // the lock.
+  it.live("parks a migration behind a provider start holding the shared lock", () =>
+    Effect.gen(function* () {
+      const gate = yield* Deferred.make<void>();
+      const lockHeld = yield* Deferred.make<void>();
+      const harness = baseHarness({
+        thread: readyThreadWithProvider,
+        providerSessions: () => [providerSession()],
+        startSession: (_threadId, input) =>
+          Effect.succeed(providerSession({ cwd: input.cwd ?? SOURCE_ROOT })),
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* AwenSessionService.AwenSessionService;
+        const executionLock = yield* SessionExecutionLock.SessionExecutionLock;
+        const holder = yield* executionLock
+          .withLock(
+            Deferred.succeed(lockHeld, undefined).pipe(Effect.andThen(Deferred.await(gate))),
+          )
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(lockHeld);
+
+        const migration = yield* service
+          .migrateToWorkspace({
+            agentSessionId: AgentSessionId.make(THREAD_ID),
+            targetWorkspaceId: TARGET_WORKSPACE,
+          })
+          .pipe(Effect.result, Effect.forkChild);
+        // While the provider start still holds the lock the migration cannot
+        // complete, let alone commit the assignment.
+        yield* Effect.sleep("150 millis");
+        assert.isUndefined(migration.pollUnsafe());
+        assert.strictEqual(harness.dispatched.length, 0);
+
+        yield* Deferred.succeed(gate, undefined);
+        yield* Fiber.join(holder);
+        const migrated = yield* Fiber.join(migration);
+        assert.isTrue(Result.isSuccess(migrated));
+        if (Result.isSuccess(migrated)) {
+          assert.strictEqual(migrated.success.workspaceId, TARGET_WORKSPACE);
+        }
+      }).pipe(Effect.provide(makeLayer(harness)));
     }),
   );
 

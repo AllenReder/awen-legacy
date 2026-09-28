@@ -73,6 +73,7 @@ import { OrchestrationReactorLive } from "./orchestration/Layers/OrchestrationRe
 import { RuntimeReceiptBusLive } from "./orchestration/Layers/RuntimeReceiptBus.ts";
 import { ProviderRuntimeIngestionLive } from "./orchestration/Layers/ProviderRuntimeIngestion.ts";
 import { ProviderCommandReactorLive } from "./orchestration/Layers/ProviderCommandReactor.ts";
+import * as SessionExecutionLock from "./session/SessionExecutionLock.ts";
 import { CheckpointReactorLive } from "./orchestration/Layers/CheckpointReactor.ts";
 import { ThreadDeletionReactorLive } from "./orchestration/Layers/ThreadDeletionReactor.ts";
 import * as ThreadSettlementReactor from "./orchestration/ThreadSettlementReactor.ts";
@@ -508,6 +509,10 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   Layer.provideMerge(ServerEnvironmentLayerLive),
   Layer.provideMerge(AuthLayerLive),
   Layer.provideMerge(ServerSecretStore.layer),
+  // One execution lock for the whole server: the provider reactor and the
+  // websocket route's `AwenSessionService` must contend on the same semaphore,
+  // so it is exported here instead of owned by either consumer.
+  Layer.provideMerge(SessionExecutionLock.layer),
   Layer.provideMerge(DesktopSshLayerLive),
 );
 

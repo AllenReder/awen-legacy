@@ -58,6 +58,7 @@ import * as ThreadPlanProgress from "../src/orchestration/ThreadPlanProgress.ts"
 import { RuntimeReceiptBusTest } from "../src/orchestration/Layers/RuntimeReceiptBus.ts";
 import { OrchestrationReactorLive } from "../src/orchestration/Layers/OrchestrationReactor.ts";
 import { ProviderCommandReactorLive } from "../src/orchestration/Layers/ProviderCommandReactor.ts";
+import * as SessionExecutionLock from "../src/session/SessionExecutionLock.ts";
 import { ProviderRuntimeIngestionLive } from "../src/orchestration/Layers/ProviderRuntimeIngestion.ts";
 import { CheckpointReactor } from "../src/orchestration/Services/CheckpointReactor.ts";
 import { ProviderRuntimeIngestionService } from "../src/orchestration/Services/ProviderRuntimeIngestion.ts";
@@ -424,6 +425,7 @@ export const makeOrchestrationIntegrationHarness = (
       Layer.provideMerge(
         options?.tracer ? Layer.succeed(Tracer.Tracer, options.tracer) : Layer.empty,
       ),
+      Layer.provide(SessionExecutionLock.layer),
     );
 
     const runtime = ManagedRuntime.make(layer);

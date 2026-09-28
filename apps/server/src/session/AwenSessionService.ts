@@ -27,7 +27,6 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
-import * as Semaphore from "effect/Semaphore";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 
@@ -36,6 +35,7 @@ import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSn
 import * as ProviderService from "../provider/Services/ProviderService.ts";
 import * as AwenWorkspaceService from "../workspace/AwenWorkspaceService.ts";
 import { toPersistenceSqlError } from "../persistence/Errors.ts";
+import * as SessionExecutionLock from "./SessionExecutionLock.ts";
 
 /**
  * Server-side owner of Agent Session execution preparation and migration.
@@ -182,6 +182,7 @@ export const make = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngine.OrchestrationEngineService;
   const providerService = yield* ProviderService.ProviderService;
   const workspaceService = yield* AwenWorkspaceService.AwenWorkspaceService;
+  const executionLock = yield* SessionExecutionLock.SessionExecutionLock;
 
   const recoveryByThread = SqlSchema.findOneOption({
     Request: RecoveryRequest,
@@ -402,12 +403,13 @@ export const make = Effect.gen(function* () {
       return Option.some(associated.workspace);
     });
 
-  // Serialize every migration against the others. Migrations are rare, and a
-  // single lock guarantees that two migrations sharing any affected Workspace
-  // (or the same Session) cannot interleave and observe a half-published move.
-  const migrationSemaphore = yield* Semaphore.make(1);
-  const withMigrationLock = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-    migrationSemaphore.withPermits(1)(effect);
+  // Serialize every migration against the others and against a provider start.
+  // Migrations are rare, and the shared lock guarantees that two migrations
+  // sharing any affected Workspace (or the same Session) cannot interleave and
+  // observe a half-published move, while the provider reactor contends on the
+  // same permit before it starts a session.
+  const withExecutionLock = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    executionLock.withLock(effect);
 
   const dispatchAssignment = (input: {
     readonly threadId: ThreadId;
@@ -611,7 +613,7 @@ export const make = Effect.gen(function* () {
       );
     }
 
-    return yield* withMigrationLock(
+    return yield* withExecutionLock(
       Effect.gen(function* () {
         const pending = yield* reconcileRecovery(threadId);
         if (Option.isSome(pending)) {
@@ -842,7 +844,7 @@ export const make = Effect.gen(function* () {
   ) {
     // Held under the same lock as a migration, so a send cannot observe the
     // window between the provider move and the assignment commit.
-    const recovery = yield* migrationSemaphore.withPermits(1)(reconcileRecovery(threadId));
+    const recovery = yield* withExecutionLock(reconcileRecovery(threadId));
     if (Option.isSome(recovery)) {
       return yield* failSession(
         "migration-recovery-required",
