@@ -1,3 +1,8 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
@@ -21,16 +26,22 @@ import {
   workspaceIdForAwenProject,
 } from "@awen/contracts";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Result from "effect/Result";
 
 import { OrchestrationCommandInvariantError } from "../orchestration/Errors.ts";
 import * as OrchestrationEngine from "../orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { ProviderAdapterRequestError, type ProviderServiceError } from "../provider/Errors.ts";
 import * as ProviderService from "../provider/Services/ProviderService.ts";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import {
+  makeSqlitePersistenceLive,
+  SqlitePersistenceMemory,
+} from "../persistence/Layers/Sqlite.ts";
 import * as AwenWorkspaceService from "../workspace/AwenWorkspaceService.ts";
 import * as AwenSessionService from "./AwenSessionService.ts";
 
@@ -166,7 +177,7 @@ interface Harness {
   >[0][];
 }
 
-const makeLayer = (harness: Harness) => {
+const makeLayer = (harness: Harness, databasePath?: string) => {
   const projectionLayer = Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
     getThreadShellById: () => Effect.succeed(Option.some(harness.thread())),
     getAwenAgentSessionByThreadId: () => Effect.succeed(Option.some(harness.agentSession())),
@@ -225,7 +236,9 @@ const makeLayer = (harness: Harness) => {
     Layer.provide(engineLayer),
     Layer.provide(workspaceLayer),
     Layer.provide(fileSystemLayer),
-    Layer.provideMerge(SqlitePersistenceMemory),
+    Layer.provideMerge(
+      databasePath ? makeSqlitePersistenceLive(databasePath) : SqlitePersistenceMemory,
+    ),
     Layer.provideMerge(NodeServices.layer),
   );
 };
@@ -248,6 +261,54 @@ const baseHarness = (overrides: Partial<Harness> = {}): Harness => {
   };
   return harness;
 };
+
+const readyThreadWithProvider = () =>
+  thread({
+    session: {
+      threadId: THREAD_ID,
+      status: "ready",
+      providerName: PROVIDER_KIND,
+      providerInstanceId: PROVIDER_INSTANCE,
+      runtimeMode: "full-access",
+      activeTurnId: null,
+      lastError: null,
+      updatedAt: NOW,
+    },
+  });
+
+/**
+ * Race a send against a migration that is parked mid provider-move. Both
+ * authorities share one lock, so the send must not decide until the migration
+ * has finished failing its assignment commit.
+ */
+const runMigrationRace = (
+  harness: Harness,
+  gate: Deferred.Deferred<void>,
+  sessionStarted: Deferred.Deferred<void>,
+) =>
+  Effect.gen(function* () {
+    const service = yield* AwenSessionService.AwenSessionService;
+    const migration = yield* service
+      .migrateToWorkspace({
+        agentSessionId: AgentSessionId.make(THREAD_ID),
+        targetWorkspaceId: TARGET_WORKSPACE,
+      })
+      .pipe(Effect.result, Effect.forkChild);
+    yield* Deferred.await(sessionStarted);
+
+    const send = yield* service.assertSendAllowed(THREAD_ID).pipe(Effect.result, Effect.forkChild);
+    // The migration still holds the shared lock, so the send cannot decide.
+    assert.isUndefined(send.pollUnsafe());
+
+    yield* Deferred.succeed(gate, undefined);
+    assert.isTrue(Result.isFailure(yield* Fiber.join(migration)));
+
+    const sendResult = yield* Fiber.join(send);
+    assert.isTrue(Result.isFailure(sendResult));
+    if (Result.isFailure(sendResult)) {
+      assert.strictEqual(sendResult.failure.reason, "migration-recovery-required");
+    }
+  }).pipe(Effect.provide(makeLayer(harness)));
 
 describe("AwenSessionService.migrateToWorkspace", () => {
   it.effect("moves an idle zero-turn Agent Session to a sibling Workspace", () => {
@@ -670,4 +731,90 @@ describe("AwenSessionService.migrateToWorkspace", () => {
       assert.strictEqual(harness.dispatched.length, 0);
     }).pipe(Effect.provide(makeLayer(harness)));
   });
+
+  it.effect("parks a send behind an in-flight migration instead of deciding early", () =>
+    Effect.gen(function* () {
+      const gate = yield* Deferred.make<void>();
+      const sessionStarted = yield* Deferred.make<void>();
+      let providerCwd = SOURCE_ROOT;
+      const harness = baseHarness({
+        thread: readyThreadWithProvider,
+        providerSessions: () => [providerSession({ cwd: providerCwd })],
+        startSession: (_threadId, input) =>
+          Deferred.succeed(sessionStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(gate)),
+            Effect.tap(() =>
+              Effect.sync(() => {
+                providerCwd = input.cwd ?? SOURCE_ROOT;
+              }),
+            ),
+            Effect.as(providerSession({ cwd: input.cwd ?? SOURCE_ROOT })),
+          ),
+        failCommit: () => true,
+      });
+      yield* runMigrationRace(harness, gate, sessionStarted);
+    }),
+  );
+
+  it.effect("reconciles an interrupted migration when the service starts", () =>
+    Effect.gen(function* () {
+      const directory = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "awen-session-recovery-")),
+      );
+      const databasePath = NodePath.join(directory, "recovery.sqlite");
+      let providerCwd = SOURCE_ROOT;
+
+      // Phase 1: a provider move whose assignment commit fails leaves the
+      // interrupted-migration row behind on disk.
+      yield* Effect.gen(function* () {
+        const service = yield* AwenSessionService.AwenSessionService;
+        yield* service
+          .migrateToWorkspace({
+            agentSessionId: AgentSessionId.make(THREAD_ID),
+            targetWorkspaceId: TARGET_WORKSPACE,
+          })
+          .pipe(Effect.flip);
+      }).pipe(
+        Effect.provide(
+          makeLayer(
+            baseHarness({
+              providerSessions: () => [providerSession({ cwd: providerCwd })],
+              startSession: (_threadId, input) => {
+                providerCwd = input.cwd ?? SOURCE_ROOT;
+                return Effect.succeed(providerSession({ cwd: providerCwd }));
+              },
+              failCommit: () => true,
+            }),
+            databasePath,
+          ),
+        ),
+      );
+
+      // Phase 2: a fresh service build reconciles the row at startup by
+      // restoring the (now dead) provider at the committed directory.
+      const starts: ProviderSessionStartInput[] = [];
+      yield* Effect.gen(function* () {
+        const service = yield* AwenSessionService.AwenSessionService;
+        const state = yield* service.getMigrationState({
+          agentSessionId: AgentSessionId.make(THREAD_ID),
+        });
+        assert.isNull(state.recovery);
+        assert.strictEqual(starts.at(-1)?.cwd, SOURCE_ROOT);
+      }).pipe(
+        Effect.provide(
+          makeLayer(
+            baseHarness({
+              thread: readyThreadWithProvider,
+              providerSessions: () => [],
+              startSession: (_threadId, input) => {
+                starts.push(input);
+                return Effect.succeed(providerSession({ cwd: input.cwd ?? SOURCE_ROOT }));
+              },
+            }),
+            databasePath,
+          ),
+        ),
+      );
+    }),
+  );
 });
