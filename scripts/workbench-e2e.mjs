@@ -359,6 +359,29 @@ async function verifyBranchSelection(page, temporaryRoot) {
     2,
     "Selecting an unregistered worktree must register it in the same Project.",
   );
+  const projectWorkspaces = projectRow.locator("..");
+  const worktreeRow = projectWorkspaces.getByTestId("sidebar-workspace-row").filter({
+    has: page.getByTestId("sidebar-workspace-dir").filter({
+      hasText: "branch-selection-feature-b",
+    }),
+  });
+  const worktreeContainer = worktreeRow.locator("..").locator("..");
+  const sourceContainer = mainWorkspace.locator("..").locator("..");
+  for (const container of [worktreeContainer, sourceContainer]) {
+    const disclosure = container.getByTestId("sidebar-workspace-disclosure");
+    if ((await disclosure.getAttribute("aria-label")) === "Expand Workspace") {
+      await disclosure.click();
+    }
+  }
+  await worktreeContainer.getByTestId("sidebar-session-row").waitFor({
+    state: "visible",
+    timeout: timeoutMs,
+  });
+  NodeAssert.equal(
+    await sourceContainer.getByTestId("sidebar-session-row").count(),
+    0,
+    "Migration must remove the Agent Session from its previous Workspace.",
+  );
 }
 
 async function main() {
