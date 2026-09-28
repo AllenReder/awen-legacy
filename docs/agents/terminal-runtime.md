@@ -149,6 +149,13 @@ directory. Unregistering a Workspace (`deleteDirectory: false`) is a different
 operation and is allowed while a terminal runs there; the terminal is released
 to the unassigned group.
 
+Deletion checks also inspect live descendants using the runtime process table.
+Their cwd evidence never changes Sidebar assignment. A descendant inside the
+Workspace blocks deletion even when the shell is elsewhere. An unreadable shell or live
+descendant, or unavailable process table blocks destructive deletion until the
+evidence becomes available or the work stops. Each check rebuilds this evidence,
+so an exited child leaves no historical directory lock.
+
 ## Validation
 
 The real-PTY validation entry point is:

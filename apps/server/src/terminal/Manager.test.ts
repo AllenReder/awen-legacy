@@ -3371,6 +3371,105 @@ it.layer(
       }),
   );
 
+  it.effect("unregistration wins over an in-flight directory observation", () =>
+    Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>();
+      const resume = yield* Deferred.make<void>();
+      let registered = true;
+      let firstObservation = true;
+      const { manager } = yield* createManager(5, {
+        directoryPollIntervalMs: 60_000,
+        listRegisteredWorkspaceDirectories: () =>
+          Effect.succeed(
+            registered ? [{ workspaceId: "workspace:a", workspaceRoot: process.cwd() }] : [],
+          ),
+        directoryObserver: {
+          capability: { supported: true, mechanism: "procfs" },
+          observe: () =>
+            Effect.gen(function* () {
+              if (!firstObservation) return { kind: "unknown", reason: "unavailable" } as const;
+              firstObservation = false;
+              yield* Deferred.succeed(entered, undefined);
+              yield* Deferred.await(resume);
+              return { kind: "known", directory: process.cwd() } as const;
+            }),
+        },
+      });
+      yield* manager.open({ terminalId: "term-release", cwd: process.cwd(), cols: 80, rows: 24 });
+      yield* Deferred.await(entered);
+      registered = false;
+      const releasing = yield* manager
+        .releaseWorkspaceAssignment("workspace:a")
+        .pipe(Effect.forkScoped);
+      yield* Effect.sleep("20 millis");
+      yield* Deferred.succeed(resume, undefined);
+      yield* Fiber.join(releasing);
+      yield* Effect.sleep("50 millis");
+      expect((yield* manager.getMetadata())[0]?.workspaceId).toBeUndefined();
+    }),
+  );
+
+  it.effect(
+    "observes child directory occupancy independently of shell assignment and releases exited children",
+    () =>
+      Effect.gen(function* () {
+        let childAlive = true;
+        let childKnown = true;
+        const { manager } = yield* createManager(5, {
+          subprocessInspector: () =>
+            Effect.succeed({
+              hasRunningSubprocess: childAlive,
+              childCommand: childAlive ? "sleep" : null,
+              processIds: childAlive ? [999] : [],
+            }),
+          directoryObserver: {
+            capability: { supported: true, mechanism: "procfs" },
+            observe: (pid) =>
+              Effect.succeed(
+                pid === 999
+                  ? childKnown
+                    ? { kind: "known", directory: "/workspace-a/nested" }
+                    : { kind: "unknown", reason: "unavailable" }
+                  : { kind: "known", directory: process.cwd() },
+              ),
+          },
+        });
+        yield* manager.open({ terminalId: "term-child", cwd: process.cwd(), cols: 80, rows: 24 });
+        let occupancy = (yield* manager.getDirectoryOccupancy())[0]!;
+        expect(occupancy.observedDirectory).toBe(process.cwd());
+        expect(occupancy.processDirectories).toEqual(["/workspace-a/nested"]);
+        expect(occupancy.hasUnobservedProcesses).toBe(false);
+        childKnown = false;
+        occupancy = (yield* manager.getDirectoryOccupancy())[0]!;
+        expect(occupancy.hasUnobservedProcesses).toBe(true);
+        childAlive = false;
+        occupancy = (yield* manager.getDirectoryOccupancy())[0]!;
+        expect(occupancy.processDirectories).toEqual([]);
+        expect(occupancy.hasUnobservedProcesses).toBe(false);
+      }),
+  );
+
+  it.effect("keeps shell uncertainty separate from its last confirmed assignment", () =>
+    Effect.gen(function* () {
+      let directory: string | null = "/workspace-b";
+      const { manager } = yield* createManager(5, {
+        subprocessInspector: idleInspect,
+        directoryObserver: fakeDirectoryObserver(() => directory),
+        listRegisteredWorkspaceDirectories: () =>
+          Effect.succeed([{ workspaceId: "workspace:b", workspaceRoot: "/workspace-b" }]),
+      });
+      yield* manager.open({ terminalId: "term-unknown", cwd: process.cwd(), cols: 80, rows: 24 });
+      expect((yield* manager.getDirectoryOccupancy())[0]?.workspaceId).toBe("workspace:b");
+      directory = null;
+      const uncertain = (yield* manager.getDirectoryOccupancy())[0]!;
+      expect(uncertain.workspaceId).toBe("workspace:b");
+      expect(uncertain.observedDirectory).toBe("/workspace-b");
+      expect(uncertain.hasUnobservedProcesses).toBe(true);
+      directory = "/workspace-b";
+      expect((yield* manager.getDirectoryOccupancy())[0]?.hasUnobservedProcesses).toBe(false);
+    }),
+  );
+
   it.effect("refreshes directory occupancy before the next background tick", () =>
     Effect.gen(function* () {
       let directory = process.cwd();

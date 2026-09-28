@@ -722,6 +722,15 @@ export const make = Effect.gen(function* () {
         const occupancy = yield* terminalManagerOption.value.getDirectoryOccupancy();
         const occupiesWorkspace = (entry: TerminalManager.TerminalDirectoryOccupancy): boolean => {
           if (entry.status !== "running" && entry.status !== "starting") return false;
+          // Descendant work can remain here after its shell moves elsewhere.
+          // If a live descendant's location is unknown, deletion cannot be proven safe.
+          if (
+            entry.hasUnobservedProcesses ||
+            entry.processDirectories.some((directory) =>
+              isPathInsideOrEqual(pathService, workspace.workspaceRoot, directory),
+            )
+          )
+            return true;
           // The last confirmed assignment is authoritative while observation is
           // unavailable; a terminal that never registered stays where it started.
           if (entry.workspaceId === input.workspaceId) return true;

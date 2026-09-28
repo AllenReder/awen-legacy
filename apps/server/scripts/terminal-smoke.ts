@@ -94,14 +94,17 @@ async function main(): Promise<void> {
             ptyAdapter,
             shellResolver: () => shell,
             processKillGraceMs: 100,
-            // The smoke is about the PTY lifecycle. Avoid making process-table
-            // discovery a second host prerequisite for the validation.
-            subprocessInspector: () =>
-              Effect.succeed({
-                hasRunningSubprocess: false,
-                childCommand: null,
-                processIds: [],
-              }),
+            // Supported hosts also validate live child directory occupancy.
+            ...(directoryObservationSupported
+              ? {}
+              : {
+                  subprocessInspector: () =>
+                    Effect.succeed({
+                      hasRunningSubprocess: false,
+                      childCommand: null,
+                      processIds: [],
+                    }),
+                }),
             // Registered Workspaces for the real-shell directory-following
             // scenario; harmless where directory observation is unsupported.
             listRegisteredWorkspaceDirectories: () =>
@@ -263,6 +266,44 @@ async function main(): Promise<void> {
             });
             const returned = yield* waitForAssignment("smoke-origin", "return");
             assert(returned.pid === firstPid, "Returning the shell directory restarted the PTY.");
+            yield* manager.write({
+              terminalId: TERMINAL_ID,
+              data: nodeCommand(
+                `process.chdir(${JSON.stringify(followSubdirectory)}); process.stdout.write("AWEN_CHILD_READY\\n"); process.stdin.resume(); process.stdin.once("data", () => process.exit(0));`,
+              ),
+            });
+            yield* Effect.promise(() =>
+              waitFor("child working in another Workspace", () =>
+                outputText(events).includes("AWEN_CHILD_READY"),
+              ),
+            );
+            const occupied = (yield* manager.getDirectoryOccupancy()).find(
+              (entry) => entry.terminalId === TERMINAL_ID,
+            )!;
+            assert(
+              occupied.processDirectories.includes(followSubdirectory),
+              "Live child directory was not included in occupancy.",
+            );
+            assert(
+              (yield* readAssignment())?.workspaceId === "smoke-origin",
+              "Child directory changed the shell's Sidebar assignment.",
+            );
+            yield* manager.write({ terminalId: TERMINAL_ID, data: "\n" });
+            let childReleased = false;
+            for (let attempt = 0; attempt < WAIT_TIMEOUT_MS / 50; attempt += 1) {
+              const occupancy = (yield* manager.getDirectoryOccupancy()).find(
+                (entry) => entry.terminalId === TERMINAL_ID,
+              )!;
+              if (
+                !occupancy.processDirectories.includes(followSubdirectory) &&
+                !occupancy.hasUnobservedProcesses
+              ) {
+                childReleased = true;
+                break;
+              }
+              yield* Effect.sleep("50 millis");
+            }
+            assert(childReleased, "Exited child kept its directory occupied.");
             followedDirectory = true;
           }
 
@@ -353,7 +394,7 @@ async function main(): Promise<void> {
     );
     console.log(
       result.followedDirectory
-        ? "Verified: a real shell `cd` reprojected the Workspace assignment without restarting the PTY or interrupting output."
+        ? "Verified: a real shell `cd` reprojected the Workspace assignment without restarting the PTY or interrupting output; live child occupancy was observed and released."
         : `Skipped: directory following is unsupported on ${NodeProcess.platform}; the assignment is retained.`,
     );
   } finally {

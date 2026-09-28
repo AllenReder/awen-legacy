@@ -26,8 +26,12 @@ Unknown retains the last confirmed assignment and never moves the terminal to
 the unassigned group. A path that resolves outside every registered Workspace
 is a _known_ unregistered directory and becomes unassigned.
 
-Nothing here reads terminal output. Output text, arbitrary descendants, tmux
-panes, and nested SSH are not authority for assignment.
+PTY activity wakes a coalesced OS query (50ms on Linux, 250ms for macOS lsof).
+A separate 1s fallback clock covers silent shells and registry changes. One
+serialized worker handles both triggers; output bursts do not queue one probe
+per chunk. Output text, arbitrary descendants, tmux panes, and nested SSH are
+not authority for assignment. Unregistration releases assignments under the
+same observation lock so an old registry snapshot cannot restore a removed ID.
 
 ## Assignment rules
 
@@ -43,18 +47,26 @@ panes, and nested SSH are not authority for assignment.
 
 Sidebar assignment is a projection, not an occupancy check. Destructive
 Workspace deletion asks `TerminalManager.getDirectoryOccupancy()` for live
-evidence: each Session's last reliably observed directory, its current
-assignment, its launch directory, and whether the host can observe directories.
+evidence: refreshed shell cwd, last confirmed assignment, launch directory, and
+fresh cwd observations for its live descendants. Descendant discovery reuses the
+runtime process-table inspector and does not change Sidebar assignment.
 A running Session blocks deletion when:
 
-- its observed directory is inside the Workspace, or
+- a live descendant's directory is inside the Workspace, or
+- the process table, shell cwd, or a live descendant's cwd is unavailable (the daemon cannot
+  prove deletion safe, so destructive deletion is refused until inspection
+  succeeds or the work stops), or
+- its observed shell directory is inside the Workspace, or
 - its last confirmed assignment is that Workspace (the conservative stand-in
   when observation is unavailable), or
 - it has no confirmed directory for the current PTY and was launched inside the
   Workspace without a confirmed assignment elsewhere.
 
-This is release-aware: once a Session exits, or observation confirms it left,
-the Workspace becomes deletable again. Historical assignments are not permanent
+This is release-aware: once a Session and its relevant descendants exit, or
+fresh observation confirms they left, the Workspace becomes deletable again.
+Child observations are read for each deletion check, not retained as history.
+Observation and deletion are not an atomic OS transaction: processes can still
+move after a check. Historical assignments are not permanent
 locks. Removing a Workspace registration stays separate from deleting its
 directory: unregistration is allowed while a terminal runs there and releases
 its assignment; only destructive deletion requires the occupancy check.

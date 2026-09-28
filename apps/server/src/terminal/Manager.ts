@@ -301,6 +301,10 @@ export interface TerminalDirectoryOccupancy {
   readonly launchCwd: string;
   readonly observedDirectory: string | null;
   readonly directoryObservationSupported: boolean;
+  /** Fresh descendant cwd evidence; never used to assign the Sidebar row. */
+  readonly processDirectories: ReadonlyArray<string>;
+  /** A live process or the process table could not be inspected safely. */
+  readonly hasUnobservedProcesses: boolean;
 }
 
 const resizePtyProcess = (
@@ -3193,7 +3197,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     const sessions = (yield* runningSessionPids).filter(
       (session) => terminalIds === undefined || terminalIds.has(session.terminalId),
     );
-    if (sessions.length === 0) return;
+    if (sessions.length === 0) return new Map<string, TerminalDirectoryObservation>();
 
     // One registry read per tick, reused by every terminal. A failure keeps the
     // last confirmed assignment instead of unassigning terminals.
@@ -3211,7 +3215,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           )
         : Option.none<ReadonlyArray<RegisteredWorkspaceDirectory>>();
 
-    yield* Effect.forEach(
+    const observations = yield* Effect.forEach(
       sessions,
       (session) =>
         Effect.gen(function* () {
@@ -3222,9 +3226,11 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             observation,
             workspaceDirectories,
           );
+          return [session.terminalId, observation] as const;
         }),
-      { concurrency: "unbounded", discard: true },
+      { concurrency: "unbounded" },
     );
+    return new Map(observations);
   });
 
   if (directoryObservationSupported) {
@@ -3934,18 +3940,54 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     directoryObservationLock.withPermit(
       Effect.gen(function* () {
         // Destructive operations must not trust a snapshot from before a recent cd.
-        if (directoryObservationSupported) yield* pollDirectoryAssignments();
-        return yield* readManagerState.pipe(
-          Effect.map((state) =>
-            [...state.sessions.values()].map((session): TerminalDirectoryOccupancy => ({
+        const shellObservations = directoryObservationSupported
+          ? yield* pollDirectoryAssignments()
+          : new Map<string, TerminalDirectoryObservation>();
+        const state = yield* readManagerState;
+        const sessions = [...state.sessions.values()];
+        const inspector = sessions.some((session) => session.status === "running")
+          ? yield* acquireSubprocessInspector.pipe(Effect.option)
+          : Option.none();
+        return yield* Effect.forEach(sessions, (session) =>
+          Effect.gen(function* () {
+            const processDirectories: string[] = [];
+            let hasUnobservedProcesses =
+              session.status === "running" &&
+              shellObservations.get(session.terminalId)?.kind !== "known";
+            if (session.status === "running" && session.pid !== null) {
+              const children = Option.isSome(inspector)
+                ? yield* inspector.value.inspector(session.pid).pipe(Effect.option)
+                : Option.none();
+              if (Option.isNone(children)) {
+                hasUnobservedProcesses = true;
+              } else {
+                const childPids = [...new Set(children.value.processIds)].filter(
+                  (pid) => pid !== session.pid,
+                );
+                hasUnobservedProcesses ||=
+                  children.value.hasRunningSubprocess && childPids.length === 0;
+                const observations = yield* Effect.forEach(
+                  childPids,
+                  (pid) => directoryObserver.observe(pid),
+                  { concurrency: 8 },
+                );
+                for (const observation of observations) {
+                  if (observation.kind === "known") processDirectories.push(observation.directory);
+                  else hasUnobservedProcesses = true;
+                }
+              }
+            }
+            return {
               terminalId: session.terminalId,
               ...(session.workspaceId !== null ? { workspaceId: session.workspaceId } : {}),
               status: session.status,
               launchCwd: session.cwd,
               observedDirectory: session.observedDirectory,
               directoryObservationSupported,
-            })),
-          ),
+              processDirectories,
+              hasUnobservedProcesses,
+            } satisfies TerminalDirectoryOccupancy;
+          }),
         );
       }),
     );
@@ -3953,27 +3995,29 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   const releaseWorkspaceAssignment: TerminalManager["Service"]["releaseWorkspaceAssignment"] = (
     workspaceId,
   ) =>
-    Effect.gen(function* () {
-      const events = yield* modifyManagerState((state) => {
-        const released: TerminalEvent[] = [];
-        for (const session of state.sessions.values()) {
-          if (session.workspaceId !== workspaceId) continue;
-          session.workspaceId = null;
-          const eventStamp = advanceEventSequence(session);
-          released.push({
-            type: "assigned",
-            terminalId: session.terminalId,
-            sequence: eventStamp.sequence,
-          });
+    directoryObservationLock.withPermit(
+      Effect.gen(function* () {
+        const events = yield* modifyManagerState((state) => {
+          const released: TerminalEvent[] = [];
+          for (const session of state.sessions.values()) {
+            if (session.workspaceId !== workspaceId) continue;
+            session.workspaceId = null;
+            const eventStamp = advanceEventSequence(session);
+            released.push({
+              type: "assigned",
+              terminalId: session.terminalId,
+              sequence: eventStamp.sequence,
+            });
+          }
+          return [released, state] as const;
+        });
+        if (events.length === 0) return;
+        yield* persistSessionIndex;
+        for (const event of events) {
+          yield* publishEvent(event);
         }
-        return [released, state] as const;
-      });
-      if (events.length === 0) return;
-      yield* persistSessionIndex;
-      for (const event of events) {
-        yield* publishEvent(event);
-      }
-    });
+      }),
+    );
 
   return TerminalManager.of({
     open,

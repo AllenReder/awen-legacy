@@ -621,6 +621,48 @@ describe("AwenWorkspaceService", () => {
     );
   });
 
+  for (const [name, processDirectories, hasUnobservedProcesses, blocked] of [
+    ["child working inside", ["/tmp/sibling/nested"], false, true],
+    ["unknown child directory", [], true, true],
+    ["child released", [], false, false],
+  ] as const) {
+    it.effect(`checks child occupancy on directory removal: ${name}`, () =>
+      Effect.gen(function* () {
+        const service = yield* AwenWorkspaceService.AwenWorkspaceService;
+        const result = yield* service
+          .remove({
+            workspaceId: siblingWorkspace("/tmp/sibling").id,
+            deleteDirectory: true,
+          })
+          .pipe(Effect.option);
+        assert.equal(Option.isNone(result), blocked);
+      }).pipe(
+        Effect.provide(
+          makeLayer({
+            root: "/tmp/main",
+            sibling: "/tmp/sibling",
+            commonDir: "/tmp/main/.git",
+            onDispatch: () => undefined,
+            readProject: () => makeProject("/tmp/main"),
+            readWorkspace: () => Option.some(siblingWorkspace("/tmp/sibling")),
+            occupancy: [
+              {
+                terminalId: "term-child",
+                workspaceId: "workspace:main",
+                status: "running",
+                launchCwd: "/tmp/main",
+                observedDirectory: "/tmp/main",
+                directoryObservationSupported: true,
+                processDirectories,
+                hasUnobservedProcesses,
+              },
+            ],
+          }),
+        ),
+      ),
+    );
+  }
+
   it.effect("blocks destructive directory deletion while a running terminal occupies it", () =>
     Effect.gen(function* () {
       const service = yield* AwenWorkspaceService.AwenWorkspaceService;
@@ -645,6 +687,8 @@ describe("AwenWorkspaceService", () => {
               status: "running",
               launchCwd: "/tmp/sibling",
               observedDirectory: "/tmp/sibling",
+              processDirectories: [],
+              hasUnobservedProcesses: false,
               directoryObservationSupported: true,
             },
           ],
@@ -680,6 +724,8 @@ describe("AwenWorkspaceService", () => {
                 launchCwd: "/tmp/sibling",
                 // Unknown observation retains the last confirmed assignment.
                 observedDirectory: null,
+                processDirectories: [],
+                hasUnobservedProcesses: false,
                 directoryObservationSupported: false,
               },
             ],
@@ -713,6 +759,8 @@ describe("AwenWorkspaceService", () => {
                 status: "running",
                 launchCwd: "/tmp/sibling/sub",
                 observedDirectory: null,
+                processDirectories: [],
+                hasUnobservedProcesses: false,
                 directoryObservationSupported: false,
               },
             ],
@@ -743,6 +791,8 @@ describe("AwenWorkspaceService", () => {
               status: "running",
               launchCwd: "/tmp/elsewhere",
               observedDirectory: null,
+              processDirectories: [],
+              hasUnobservedProcesses: false,
               directoryObservationSupported: false,
             },
           ],
@@ -777,6 +827,8 @@ describe("AwenWorkspaceService", () => {
               status: "running",
               launchCwd: "/tmp/sibling",
               observedDirectory: "/tmp/elsewhere",
+              processDirectories: [],
+              hasUnobservedProcesses: false,
               directoryObservationSupported: true,
             },
           ],
@@ -808,6 +860,8 @@ describe("AwenWorkspaceService", () => {
               status: "exited",
               launchCwd: "/tmp/sibling",
               observedDirectory: null,
+              processDirectories: [],
+              hasUnobservedProcesses: false,
               directoryObservationSupported: true,
             },
           ],
@@ -846,6 +900,8 @@ describe("AwenWorkspaceService", () => {
                 status: "running",
                 launchCwd: "/tmp/sibling",
                 observedDirectory: "/tmp/sibling",
+                processDirectories: [],
+                hasUnobservedProcesses: false,
                 directoryObservationSupported: true,
               },
             ],

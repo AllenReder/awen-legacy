@@ -1153,23 +1153,53 @@ function UnassignedTerminalRow({
   ) => void;
   readonly navigate: ReturnType<typeof useNavigate>;
 }) {
-  const TerminalOrAgentIcon = resolveTerminalIcon(summary);
-  const status = resolveTerminalSessionStatus(summary);
-  const title = (summary.title ?? summary.label).trim() || "Terminal";
-  // No Workspace assignment: the target carries only the stable Session identity.
-  const target = {
-    kind: "workspaceTerminal" as const,
-    environmentId,
-    terminalSessionId: TerminalSessionId.make(summary.terminalId),
-  };
+  return (
+    <TerminalSessionRow
+      summary={summary}
+      title={(summary.title ?? summary.label).trim() || "Terminal"}
+      target={{
+        kind: "workspaceTerminal",
+        environmentId,
+        terminalSessionId: TerminalSessionId.make(summary.terminalId),
+      }}
+      renameTerminal={renameTerminal}
+      navigate={navigate}
+    />
+  );
+}
 
+function TerminalSessionRow({
+  summary,
+  title,
+  target,
+  isClosed = false,
+  style,
+  renameTerminal,
+  navigate,
+}: {
+  readonly summary: TerminalSummary | null | undefined;
+  readonly title: string;
+  readonly target: Extract<ViewTarget, { kind: "workspaceTerminal" }>;
+  readonly isClosed?: boolean;
+  readonly style?: CSSProperties | undefined;
+  readonly renameTerminal: (
+    target: Extract<ViewTarget, { kind: "workspaceTerminal" }>,
+    title: string,
+  ) => void;
+  readonly navigate: ReturnType<typeof useNavigate>;
+}) {
+  const TerminalOrAgentIcon = resolveTerminalIcon(summary);
   return (
     <SessionRow
+      {...(target.workspaceId !== undefined ? { workspaceId: target.workspaceId } : {})}
+      style={style}
       data-testid="sidebar-session-row"
       data-session-kind="terminal"
-      data-session-unassigned="true"
+      data-session-unassigned={target.workspaceId === undefined ? "true" : undefined}
+      data-session-closed={isClosed ? "true" : undefined}
+      isClosed={isClosed}
       sessionTitle={title}
-      status={status}
+      status={isClosed ? "ready" : resolveTerminalSessionStatus(summary)}
       target={target}
       navigateTo={(route) => void navigate({ ...route, to: route.to as never } as never)}
       onStartRename={() => renameTerminal(target, title)}
@@ -1210,43 +1240,21 @@ function WorkspaceTerminalSessionRow({
       item.state.summary?.terminalId === session.id ||
       item.state.summary?.sessionId === session.id,
   );
-  const summary = terminalSession?.state.summary;
-  const TerminalOrAgentIcon = resolveTerminalIcon(summary);
-  const status = isClosed ? "ready" : resolveTerminalSessionStatus(summary);
-
   return (
-    <SessionRow
-      key={session.id}
-      workspaceId={workspace.id}
+    <TerminalSessionRow
+      summary={terminalSession?.state.summary}
+      title={session.title}
       style={style}
-      data-testid="sidebar-session-row"
-      data-session-kind="terminal"
-      data-session-closed={isClosed ? "true" : undefined}
       isClosed={isClosed}
-      sessionTitle={session.title}
-      status={status}
       target={{
         kind: "workspaceTerminal",
         environmentId: project.environmentId,
         workspaceId: workspace.id,
         terminalSessionId: session.id as TerminalSessionId,
       }}
-      navigateTo={(route) => void navigate({ ...route, to: route.to as never } as never)}
-      onStartRename={() =>
-        renameTerminal(
-          {
-            kind: "workspaceTerminal",
-            environmentId: project.environmentId,
-            workspaceId: workspace.id,
-            terminalSessionId: session.id as TerminalSessionId,
-          },
-          session.title,
-        )
-      }
-    >
-      <TerminalOrAgentIcon className="size-3.5 shrink-0" />
-      <span className="min-w-0 flex-1 truncate">{session.title}</span>
-    </SessionRow>
+      renameTerminal={renameTerminal}
+      navigate={navigate}
+    />
   );
 }
 
