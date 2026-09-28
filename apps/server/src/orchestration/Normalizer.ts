@@ -110,6 +110,22 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
           ),
         );
 
+    // Reassigning a thread's Project is the Session migration authority's job:
+    // it prepares the candidate provider context and keeps the assignment and
+    // the runtime in agreement. A client that sent the field directly would
+    // move the Sidebar without moving the provider, so refuse it at the client
+    // command boundary. The migration service dispatches to the engine directly
+    // and never passes through this normalizer.
+    if (
+      canonicalCommand.type === "thread.meta.update" &&
+      canonicalCommand.projectId !== undefined
+    ) {
+      return yield* new OrchestrationDispatchCommandError({
+        message:
+          "Reassigning an Agent Session's Workspace is a Session operation; call awenSession.migrateToWorkspace instead.",
+      });
+    }
+
     if (canonicalCommand.type === "project.create") {
       return {
         ...canonicalCommand,

@@ -1,4 +1,5 @@
 import type { EnvironmentId, EnvironmentMachineKind, VcsRef, ProjectId } from "@awen/contracts";
+import { normalizeProjectPathForComparison } from "@awen/shared/path";
 import * as Schema from "effect/Schema";
 import { toSortableTimestamp } from "../lib/threadSort";
 export {
@@ -270,12 +271,6 @@ export interface WorkspaceSwitchPlan {
   readonly targetPath: string | null;
 }
 
-/** Compare directory strings the way the two inputs are produced: absolute,
- *  server-normalized paths. */
-function comparablePath(value: string): string {
-  return value.replace(/\\/g, "/").replace(/\/+$/, "");
-}
-
 /**
  * Picking a ref that is checked out in another worktree moves the Session to
  * that checkout's Workspace. The parent root counts as a target too, so a
@@ -297,7 +292,9 @@ export function resolveWorkspaceSwitch(input: {
   }
   const currentDir = input.activeWorktreePath ?? input.activeProjectCwd;
   const targetDir = nextWorktreePath ?? input.activeProjectCwd;
-  if (comparablePath(currentDir) === comparablePath(targetDir)) {
+  if (
+    normalizeProjectPathForComparison(currentDir) === normalizeProjectPathForComparison(targetDir)
+  ) {
     return { switchWorkspace: false, targetPath: null };
   }
   return { switchWorkspace: true, targetPath: targetDir };
