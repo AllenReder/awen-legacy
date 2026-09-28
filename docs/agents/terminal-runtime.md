@@ -108,7 +108,9 @@ A running terminal follows the shell's real working directory (ADR-0028). The
 daemon observes the process cwd through `TerminalDirectoryObserver` and updates
 only the mutable `workspaceId` assignment; it never changes launch context,
 restarts the PTY, or alters Session/Pane identity. Observation failures are
-reported as `unknown` and retain the last confirmed assignment.
+reported as `unknown` and retain the last confirmed assignment. Observation
+runs on its own cadence (`directoryPollIntervalMs`, default 1s), separate from
+subprocess polling, so the resource-monitor backoff cannot delay reassignment.
 
 The supported observation matrix lives in
 `apps/server/src/terminal/DirectoryObservation.ts`:

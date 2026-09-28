@@ -215,6 +215,7 @@ interface CreateManagerOptions {
     never
   >;
   subprocessPollIntervalMs?: number;
+  directoryPollIntervalMs?: number;
   processKillGraceMs?: number;
   maxRetainedInactiveSessions?: number;
   historyByteLimit?: number;
@@ -271,6 +272,9 @@ const createManager = (
         ...(options.processTable !== undefined ? { processTable: options.processTable } : {}),
         ...(options.subprocessPollIntervalMs !== undefined
           ? { subprocessPollIntervalMs: options.subprocessPollIntervalMs }
+          : {}),
+        ...(options.directoryPollIntervalMs !== undefined
+          ? { directoryPollIntervalMs: options.directoryPollIntervalMs }
           : {}),
         processKillGraceMs: options.processKillGraceMs ?? 1,
         ...(options.maxRetainedInactiveSessions !== undefined
@@ -3218,6 +3222,7 @@ it.layer(
         const fixture = yield* createManager(5, {
           subprocessInspector: idleInspect,
           subprocessPollIntervalMs: 20,
+          directoryPollIntervalMs: 20,
           directoryObserver: fakeDirectoryObserver(() => directory),
           listRegisteredWorkspaceDirectories: () =>
             Effect.succeed([
@@ -3288,6 +3293,7 @@ it.layer(
         const fixture = yield* createManager(5, {
           subprocessInspector: idleInspect,
           subprocessPollIntervalMs: 20,
+          directoryPollIntervalMs: 20,
           directoryObserver: fakeDirectoryObserver(() => directory),
           listRegisteredWorkspaceDirectories: () =>
             Effect.succeed([{ workspaceId: "workspace:main", workspaceRoot: mainRoot }]),
@@ -3369,6 +3375,52 @@ it.layer(
       expect(ptyAdapter.processes).toHaveLength(1);
       expect(process_.killed).toBe(false);
       expect((yield* getEvents).some((event) => event.type === "assigned")).toBe(true);
+    }),
+  );
+
+  it.effect("follows the shell directory independently of the subprocess poll cadence", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { join } = yield* Path.Path;
+      const parent = yield* fs.makeTempDirectoryScoped({ prefix: "awen-term-dir-" });
+      const mainRoot = join(parent, "main");
+      const targetRoot = join(parent, "target");
+      yield* fs.makeDirectory(mainRoot);
+      yield* fs.makeDirectory(targetRoot);
+
+      let directory = mainRoot;
+      const fixture = yield* createManager(5, {
+        subprocessInspector: idleInspect,
+        // The subprocess poll backs off to a minute when its snapshot fails; the
+        // directory loop must not inherit that cadence.
+        subprocessPollIntervalMs: 60_000,
+        directoryPollIntervalMs: 20,
+        directoryObserver: fakeDirectoryObserver(() => directory),
+        listRegisteredWorkspaceDirectories: () =>
+          Effect.succeed([
+            { workspaceId: "workspace:main", workspaceRoot: mainRoot },
+            { workspaceId: "workspace:target", workspaceRoot: targetRoot },
+          ]),
+      });
+      const { manager, getEvents } = fixture;
+
+      yield* manager.open({
+        terminalId: "term-1",
+        workspaceId: "workspace:main",
+        cwd: mainRoot,
+        cols: 80,
+        rows: 24,
+      });
+
+      directory = targetRoot;
+      yield* waitFor(
+        Effect.map(getEvents, (events) =>
+          events.some(
+            (event) => event.type === "assigned" && event.workspaceId === "workspace:target",
+          ),
+        ),
+        "1200 millis",
+      );
     }),
   );
 });

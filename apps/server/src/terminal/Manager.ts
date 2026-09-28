@@ -110,6 +110,7 @@ const DEFAULT_HISTORY_BYTE_LIMIT = 8 * 1024 * 1024;
 const MAX_HISTORY_CHUNK_LENGTH = 16 * 1024;
 const DEFAULT_PERSIST_DEBOUNCE_MS = 40;
 const DEFAULT_SUBPROCESS_POLL_INTERVAL_MS = 1_000;
+const DEFAULT_DIRECTORY_POLL_INTERVAL_MS = 1_000;
 const MAX_SUBPROCESS_POLL_INTERVAL_MS = 60_000;
 const DEFAULT_PROCESS_KILL_GRACE_MS = 1_000;
 const DEFAULT_MAX_RETAINED_INACTIVE_SESSIONS = 128;
@@ -1682,6 +1683,11 @@ interface TerminalManagerOptions {
     TerminalSubprocessCheckError
   >;
   subprocessPollIntervalMs?: number;
+  /**
+   * How often to observe each running shell's working directory. Independent of
+   * subprocess polling so its backoff cannot delay Sidebar reassignment.
+   */
+  directoryPollIntervalMs?: number;
   processKillGraceMs?: number;
   maxRetainedInactiveSessions?: number;
   registerTerminalProcesses?: (input: {
@@ -2029,6 +2035,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         );
   const subprocessPollIntervalMs =
     options.subprocessPollIntervalMs ?? DEFAULT_SUBPROCESS_POLL_INTERVAL_MS;
+  const directoryPollIntervalMs =
+    options.directoryPollIntervalMs ?? DEFAULT_DIRECTORY_POLL_INTERVAL_MS;
   const processKillGraceMs = options.processKillGraceMs ?? DEFAULT_PROCESS_KILL_GRACE_MS;
   const maxRetainedInactiveSessions =
     options.maxRetainedInactiveSessions ?? DEFAULT_MAX_RETAINED_INACTIVE_SESSIONS;
@@ -3079,22 +3087,6 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
 
     const { inspector: subprocessInspector, snapshotSucceeded } = inspectorOption.value;
 
-    // One registry read per tick, reused by every terminal. A failure keeps the
-    // last confirmed assignment instead of unassigning terminals.
-    const listWorkspaceDirectories = options.listRegisteredWorkspaceDirectories;
-    const workspaceDirectories: Option.Option<ReadonlyArray<RegisteredWorkspaceDirectory>> =
-      directoryObservationSupported && listWorkspaceDirectories !== undefined
-        ? yield* listWorkspaceDirectories().pipe(
-            Effect.map(Option.some),
-            Effect.catch((reason) =>
-              Effect.logWarning(
-                "failed to list registered Workspace directories for terminal directory observation",
-                { reason },
-              ).pipe(Effect.as(Option.none<ReadonlyArray<RegisteredWorkspaceDirectory>>())),
-            ),
-          )
-        : Option.none<ReadonlyArray<RegisteredWorkspaceDirectory>>();
-
     const checkSubprocessActivity = Effect.fn("terminal.checkSubprocessActivity")(function* (
       session: TerminalSessionState & { pid: number },
     ) {
@@ -3155,16 +3147,6 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       if (Option.isSome(event)) {
         yield* publishEvent(event.value);
       }
-
-      if (directoryObservationSupported) {
-        const observation = yield* directoryObserver.observe(terminalPid);
-        yield* applyDirectoryObservation(
-          session.terminalId,
-          terminalPid,
-          observation,
-          workspaceDirectories,
-        );
-      }
     });
 
     yield* Effect.forEach(runningSessions, checkSubprocessActivity, {
@@ -3173,6 +3155,70 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     });
     return snapshotSucceeded;
   });
+
+  const runningSessionPids = readManagerState.pipe(
+    Effect.map((state) =>
+      [...state.sessions.values()].flatMap((session) =>
+        session.status === "running" && Number.isInteger(session.pid)
+          ? [{ terminalId: session.terminalId, pid: session.pid as number }]
+          : [],
+      ),
+    ),
+  );
+
+  /**
+   * Observe every running shell's directory and reproject its assignment.
+   *
+   * This runs on its own loop, separate from subprocess polling: that poll
+   * backs off to a minute when the resource-monitor snapshot is unavailable,
+   * and Sidebar reassignment must not inherit that delay.
+   */
+  const pollDirectoryAssignments = Effect.fn("terminal.pollDirectoryAssignments")(function* () {
+    const sessions = yield* runningSessionPids;
+    if (sessions.length === 0) return;
+
+    // One registry read per tick, reused by every terminal. A failure keeps the
+    // last confirmed assignment instead of unassigning terminals.
+    const listWorkspaceDirectories = options.listRegisteredWorkspaceDirectories;
+    const workspaceDirectories: Option.Option<ReadonlyArray<RegisteredWorkspaceDirectory>> =
+      listWorkspaceDirectories !== undefined
+        ? yield* listWorkspaceDirectories().pipe(
+            Effect.map(Option.some),
+            Effect.catch((reason) =>
+              Effect.logWarning(
+                "failed to list registered Workspace directories for terminal directory observation",
+                { reason },
+              ).pipe(Effect.as(Option.none<ReadonlyArray<RegisteredWorkspaceDirectory>>())),
+            ),
+          )
+        : Option.none<ReadonlyArray<RegisteredWorkspaceDirectory>>();
+
+    yield* Effect.forEach(
+      sessions,
+      (session) =>
+        Effect.gen(function* () {
+          const observation = yield* directoryObserver.observe(session.pid);
+          yield* applyDirectoryObservation(
+            session.terminalId,
+            session.pid,
+            observation,
+            workspaceDirectories,
+          );
+        }),
+      { concurrency: "unbounded", discard: true },
+    );
+  });
+
+  if (directoryObservationSupported) {
+    yield* Effect.forever(
+      pollDirectoryAssignments().pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("terminal directory observation tick failed", { cause }),
+        ),
+        Effect.flatMap(() => Effect.sleep(directoryPollIntervalMs)),
+      ),
+    ).pipe(Effect.forkIn(workerScope));
+  }
 
   const hasRunningSessions = readManagerState.pipe(
     Effect.map((state) =>
