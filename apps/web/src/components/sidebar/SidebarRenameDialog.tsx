@@ -20,9 +20,9 @@ export function SidebarRenameDialog({
   onClose,
   onRename,
 }: {
-  readonly kind: "Project" | "Workspace";
+  readonly kind: "Project" | "Workspace" | "Agent Session" | "Terminal Session";
   readonly title: string;
-  readonly directoryName: string;
+  readonly directoryName?: string;
   readonly onClose: () => void;
   readonly onRename: (title: string) => Promise<void>;
 }) {
@@ -56,7 +56,9 @@ export function SidebarRenameDialog({
         <DialogHeader>
           <DialogTitle>Rename {kind}</DialogTitle>
           <DialogDescription>
-            This changes the name in the Sidebar. The folder on disk stays named “{directoryName}”.
+            {directoryName === undefined
+              ? "This changes the Session name in the Sidebar."
+              : `This changes the name in the Sidebar. The folder on disk stays named “${directoryName}”.`}
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={(event) => void handleSubmit(event)}>
