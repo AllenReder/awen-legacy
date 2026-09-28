@@ -6,6 +6,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vp test run",
     "test:e2e:workbench": "node workbench-e2e.mjs",
+    "test:e2e:branch": "node workbench-e2e.mjs --branch-only",
     "smoke:desktop-terminal": "node desktop-terminal-smoke.mjs"
   },
   "dependencies": {
