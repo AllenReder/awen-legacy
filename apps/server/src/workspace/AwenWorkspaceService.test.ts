@@ -111,6 +111,8 @@ const makeLayer = (input: {
     readonly title: string;
   }) => void;
   readonly terminals?: ReadonlyArray<TerminalSummary>;
+  readonly occupancy?: ReadonlyArray<TerminalManager.TerminalDirectoryOccupancy>;
+  readonly onReleaseWorkspaceAssignment?: (workspaceId: string) => void;
 }) => {
   const serverConfigLayer = ServerConfig.layerTest(process.cwd(), {
     prefix: "awen-workspace-service-test-",
@@ -204,6 +206,9 @@ const makeLayer = (input: {
   });
   const terminalManagerLayer = Layer.mock(TerminalManager.TerminalManager)({
     getMetadata: () => Effect.succeed(input.terminals ?? []),
+    getDirectoryOccupancy: () => Effect.succeed(input.occupancy ?? []),
+    releaseWorkspaceAssignment: (workspaceId) =>
+      Effect.sync(() => input.onReleaseWorkspaceAssignment?.(workspaceId)),
     open: () => Effect.die("unexpected"),
     attachStream: () => Effect.die("unexpected"),
     write: () => Effect.die("unexpected"),
@@ -616,7 +621,49 @@ describe("AwenWorkspaceService", () => {
     );
   });
 
-  it.effect("blocks Workspace removal when active terminal Sessions exist", () =>
+  for (const [name, processDirectories, hasUnobservedProcesses, blocked] of [
+    ["child working inside", ["/tmp/sibling/nested"], false, true],
+    ["unknown child directory", [], true, true],
+    ["child released", [], false, false],
+  ] as const) {
+    it.effect(`checks child occupancy on directory removal: ${name}`, () =>
+      Effect.gen(function* () {
+        const service = yield* AwenWorkspaceService.AwenWorkspaceService;
+        const result = yield* service
+          .remove({
+            workspaceId: siblingWorkspace("/tmp/sibling").id,
+            deleteDirectory: true,
+          })
+          .pipe(Effect.option);
+        assert.equal(Option.isNone(result), blocked);
+      }).pipe(
+        Effect.provide(
+          makeLayer({
+            root: "/tmp/main",
+            sibling: "/tmp/sibling",
+            commonDir: "/tmp/main/.git",
+            onDispatch: () => undefined,
+            readProject: () => makeProject("/tmp/main"),
+            readWorkspace: () => Option.some(siblingWorkspace("/tmp/sibling")),
+            occupancy: [
+              {
+                terminalId: "term-child",
+                workspaceId: "workspace:main",
+                status: "running",
+                launchCwd: "/tmp/main",
+                observedDirectory: "/tmp/main",
+                directoryObservationSupported: true,
+                processDirectories,
+                hasUnobservedProcesses,
+              },
+            ],
+          }),
+        ),
+      ),
+    );
+  }
+
+  it.effect("blocks destructive directory deletion while a running terminal occupies it", () =>
     Effect.gen(function* () {
       const service = yield* AwenWorkspaceService.AwenWorkspaceService;
       const workspace = siblingWorkspace("/tmp/sibling");
@@ -633,21 +680,16 @@ describe("AwenWorkspaceService", () => {
           onDispatch: () => undefined,
           readProject: () => makeProject("/tmp/main"),
           readWorkspace: () => Option.some(siblingWorkspace("/tmp/sibling")),
-          terminals: [
+          occupancy: [
             {
-              workspaceId: "workspace:sibling",
               terminalId: "term-1",
-              sessionId: TerminalSessionId.make("term-1"),
-              kind: "terminal" as const,
-              cwd: "/tmp/sibling",
-              worktreePath: "/tmp/sibling",
+              workspaceId: "workspace:sibling",
               status: "running",
-              pid: 1234,
-              exitCode: null,
-              exitSignal: null,
-              hasRunningSubprocess: false,
-              label: "terminal",
-              updatedAt: NOW,
+              launchCwd: "/tmp/sibling",
+              observedDirectory: "/tmp/sibling",
+              processDirectories: [],
+              hasUnobservedProcesses: false,
+              directoryObservationSupported: true,
             },
           ],
         }),
@@ -655,7 +697,79 @@ describe("AwenWorkspaceService", () => {
     ),
   );
 
-  it.effect("allows Workspace removal when terminal Sessions are exited", () =>
+  it.effect(
+    "blocks destructive deletion when a terminal left the directory but stays assigned to it",
+    () =>
+      Effect.gen(function* () {
+        const service = yield* AwenWorkspaceService.AwenWorkspaceService;
+        const workspace = siblingWorkspace("/tmp/sibling");
+        const error = yield* service
+          .remove({ workspaceId: workspace.id, deleteDirectory: true })
+          .pipe(Effect.flip);
+        assert.equal(error.reason, "workspace-not-empty");
+      }).pipe(
+        Effect.provide(
+          makeLayer({
+            root: "/tmp/main",
+            sibling: "/tmp/sibling",
+            commonDir: "/tmp/main/.git",
+            onDispatch: () => undefined,
+            readProject: () => makeProject("/tmp/main"),
+            readWorkspace: () => Option.some(siblingWorkspace("/tmp/sibling")),
+            occupancy: [
+              {
+                terminalId: "term-1",
+                workspaceId: "workspace:sibling",
+                status: "running",
+                launchCwd: "/tmp/sibling",
+                // Unknown observation retains the last confirmed assignment.
+                observedDirectory: null,
+                processDirectories: [],
+                hasUnobservedProcesses: false,
+                directoryObservationSupported: false,
+              },
+            ],
+          }),
+        ),
+      ),
+  );
+
+  it.effect(
+    "blocks destructive deletion when a never-observed unassigned terminal was launched in the directory",
+    () =>
+      Effect.gen(function* () {
+        const service = yield* AwenWorkspaceService.AwenWorkspaceService;
+        const workspace = siblingWorkspace("/tmp/sibling");
+        const error = yield* service
+          .remove({ workspaceId: workspace.id, deleteDirectory: true })
+          .pipe(Effect.flip);
+        assert.equal(error.reason, "workspace-not-empty");
+      }).pipe(
+        Effect.provide(
+          makeLayer({
+            root: "/tmp/main",
+            sibling: "/tmp/sibling",
+            commonDir: "/tmp/main/.git",
+            onDispatch: () => undefined,
+            readProject: () => makeProject("/tmp/main"),
+            readWorkspace: () => Option.some(siblingWorkspace("/tmp/sibling")),
+            occupancy: [
+              {
+                terminalId: "term-1",
+                status: "running",
+                launchCwd: "/tmp/sibling/sub",
+                observedDirectory: null,
+                processDirectories: [],
+                hasUnobservedProcesses: false,
+                directoryObservationSupported: false,
+              },
+            ],
+          }),
+        ),
+      ),
+  );
+
+  it.effect("allows destructive deletion when a never-observed terminal launched elsewhere", () =>
     Effect.gen(function* () {
       const service = yield* AwenWorkspaceService.AwenWorkspaceService;
       const workspace = siblingWorkspace("/tmp/sibling");
@@ -671,26 +785,131 @@ describe("AwenWorkspaceService", () => {
           onDispatch: () => undefined,
           readProject: () => makeProject("/tmp/main"),
           readWorkspace: () => Option.some(siblingWorkspace("/tmp/sibling")),
-          terminals: [
+          occupancy: [
             {
-              workspaceId: "workspace:sibling",
               terminalId: "term-1",
-              sessionId: TerminalSessionId.make("term-1"),
-              kind: "terminal" as const,
-              cwd: "/tmp/sibling",
-              worktreePath: "/tmp/sibling",
-              status: "exited",
-              pid: null,
-              exitCode: 0,
-              exitSignal: null,
-              hasRunningSubprocess: false,
-              label: "terminal",
-              updatedAt: NOW,
+              status: "running",
+              launchCwd: "/tmp/elsewhere",
+              observedDirectory: null,
+              processDirectories: [],
+              hasUnobservedProcesses: false,
+              directoryObservationSupported: false,
             },
           ],
         }),
       ),
     ),
+  );
+
+  it.effect("allows destructive deletion for a terminal that moved out of the Workspace", () =>
+    Effect.gen(function* () {
+      const service = yield* AwenWorkspaceService.AwenWorkspaceService;
+      const workspace = siblingWorkspace("/tmp/sibling");
+      const result = yield* service.remove({
+        workspaceId: workspace.id,
+        deleteDirectory: true,
+      });
+      assert.equal(result.removed, true);
+      assert.equal(result.deletedDirectory, true);
+    }).pipe(
+      Effect.provide(
+        makeLayer({
+          root: "/tmp/main",
+          sibling: "/tmp/sibling",
+          commonDir: "/tmp/main/.git",
+          onDispatch: () => undefined,
+          readProject: () => makeProject("/tmp/main"),
+          readWorkspace: () => Option.some(siblingWorkspace("/tmp/sibling")),
+          occupancy: [
+            {
+              terminalId: "term-1",
+              workspaceId: "workspace:other",
+              status: "running",
+              launchCwd: "/tmp/sibling",
+              observedDirectory: "/tmp/elsewhere",
+              processDirectories: [],
+              hasUnobservedProcesses: false,
+              directoryObservationSupported: true,
+            },
+          ],
+        }),
+      ),
+    ),
+  );
+
+  it.effect("allows destructive deletion once the terminal has exited", () =>
+    Effect.gen(function* () {
+      const service = yield* AwenWorkspaceService.AwenWorkspaceService;
+      const workspace = siblingWorkspace("/tmp/sibling");
+      const result = yield* service.remove({ workspaceId: workspace.id, deleteDirectory: true });
+      assert.equal(result.removed, true);
+      assert.equal(result.deletedDirectory, true);
+    }).pipe(
+      Effect.provide(
+        makeLayer({
+          root: "/tmp/main",
+          sibling: "/tmp/sibling",
+          commonDir: "/tmp/main/.git",
+          onDispatch: () => undefined,
+          readProject: () => makeProject("/tmp/main"),
+          readWorkspace: () => Option.some(siblingWorkspace("/tmp/sibling")),
+          occupancy: [
+            {
+              terminalId: "term-1",
+              workspaceId: "workspace:sibling",
+              status: "exited",
+              launchCwd: "/tmp/sibling",
+              observedDirectory: null,
+              processDirectories: [],
+              hasUnobservedProcesses: false,
+              directoryObservationSupported: true,
+            },
+          ],
+        }),
+      ),
+    ),
+  );
+
+  it.effect(
+    "unregisters a Workspace while a terminal runs there and releases its assignment",
+    () => {
+      const released: string[] = [];
+      return Effect.gen(function* () {
+        const service = yield* AwenWorkspaceService.AwenWorkspaceService;
+        const workspace = siblingWorkspace("/tmp/sibling");
+        const result = yield* service.remove({
+          workspaceId: workspace.id,
+          deleteDirectory: false,
+        });
+        assert.equal(result.removed, true);
+        assert.equal(result.deletedDirectory, false);
+        assert.deepEqual(released, ["workspace:sibling"]);
+      }).pipe(
+        Effect.provide(
+          makeLayer({
+            root: "/tmp/main",
+            sibling: "/tmp/sibling",
+            commonDir: "/tmp/main/.git",
+            onDispatch: () => undefined,
+            readProject: () => makeProject("/tmp/main"),
+            readWorkspace: () => Option.some(siblingWorkspace("/tmp/sibling")),
+            occupancy: [
+              {
+                terminalId: "term-1",
+                workspaceId: "workspace:sibling",
+                status: "running",
+                launchCwd: "/tmp/sibling",
+                observedDirectory: "/tmp/sibling",
+                processDirectories: [],
+                hasUnobservedProcesses: false,
+                directoryObservationSupported: true,
+              },
+            ],
+            onReleaseWorkspaceAssignment: (workspaceId) => released.push(workspaceId),
+          }),
+        ),
+      );
+    },
   );
 
   it.effect("protects the main Workspace from directory deletion", () =>

@@ -38,6 +38,7 @@ import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
+import { isPathInsideOrEqual } from "../terminal/DirectoryObservation.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
 
 /**
@@ -89,16 +90,6 @@ function workspaceError(
     ...(path === undefined ? {} : { path }),
     ...(cause === undefined ? {} : { cause }),
   });
-}
-
-function isInsideOrEqual(pathService: Path.Path, parent: string, candidate: string): boolean {
-  const relative = pathService.relative(parent, candidate);
-  return (
-    relative === "" ||
-    (relative !== ".." &&
-      !relative.startsWith(`..${pathService.sep}`) &&
-      !pathService.isAbsolute(relative))
-  );
 }
 
 function isSamePath(pathService: Path.Path, left: string, right: string): boolean {
@@ -282,8 +273,8 @@ export const make = Effect.gen(function* () {
       if (allowWorkspaceId !== undefined && workspace.id === allowWorkspaceId) return false;
       const registered = pathService.resolve(workspace.workspaceRoot);
       return (
-        isInsideOrEqual(pathService, registered, candidate) ||
-        isInsideOrEqual(pathService, candidate, registered)
+        isPathInsideOrEqual(pathService, registered, candidate) ||
+        isPathInsideOrEqual(pathService, candidate, registered)
       );
     });
     return conflict === undefined
@@ -616,7 +607,7 @@ export const make = Effect.gen(function* () {
       // existing explicit path elsewhere must be associated explicitly, so a
       // user-owned checkout can never become an Awen-deletable directory.
       const managedRoot = pathService.resolve(serverConfig.worktreesDir);
-      if (!isInsideOrEqual(pathService, managedRoot, workspaceRoot)) {
+      if (!isPathInsideOrEqual(pathService, managedRoot, workspaceRoot)) {
         return yield* workspaceError(
           "path-conflict",
           `Destination '${workspaceRoot}' already exists outside Awen's managed worktrees directory; associate it instead.`,
@@ -697,27 +688,15 @@ export const make = Effect.gen(function* () {
         return { removed: false, deletedDirectory: false };
       }
       const workspace = workspaceOption.value;
-      if ((workspace.sessions?.length ?? 0) > 0) {
+      const activeAgentSessions = (workspace.sessions ?? []).filter(
+        (session) => session.kind === "agent",
+      );
+      if (activeAgentSessions.length > 0) {
         return yield* workspaceError(
           "workspace-not-empty",
-          `Workspace '${workspace.title}' still has active Sessions. Stop them before removing it.`,
+          `Workspace '${workspace.title}' still has active Agent Sessions. Stop or migrate them before removing it.`,
           workspace.workspaceRoot,
         );
-      }
-      if (Option.isSome(terminalManagerOption)) {
-        const terminalSummaries = yield* terminalManagerOption.value.getMetadata();
-        const hasActiveTerminal = terminalSummaries.some(
-          (t) =>
-            t.workspaceId === input.workspaceId &&
-            (t.status === "running" || t.status === "starting"),
-        );
-        if (hasActiveTerminal) {
-          return yield* workspaceError(
-            "workspace-not-empty",
-            `Workspace '${workspace.title}' still has active Sessions. Stop them before removing it.`,
-            workspace.workspaceRoot,
-          );
-        }
       }
       const shouldDeleteDirectory = input.deleteDirectory === true;
       if (shouldDeleteDirectory && workspace.role === "main") {
@@ -733,6 +712,49 @@ export const make = Effect.gen(function* () {
           "This Workspace was associated from disk; remove its registration without deleting the directory.",
           workspace.workspaceRoot,
         );
+      }
+      // Destructive deletion uses live occupancy evidence instead of the
+      // Sidebar assignment: a terminal that moved away must not keep the
+      // directory locked, and a running shell or foreground work still inside
+      // the directory must block deletion. Unregistering (deleteDirectory false)
+      // stays a separate operation and is allowed while a terminal runs.
+      if (shouldDeleteDirectory && Option.isSome(terminalManagerOption)) {
+        const occupancy = yield* terminalManagerOption.value.getDirectoryOccupancy();
+        const occupiesWorkspace = (entry: TerminalManager.TerminalDirectoryOccupancy): boolean => {
+          if (entry.status !== "running" && entry.status !== "starting") return false;
+          // Descendant work can remain here after its shell moves elsewhere.
+          // If a live descendant's location is unknown, deletion cannot be proven safe.
+          if (
+            entry.hasUnobservedProcesses ||
+            entry.processDirectories.some((directory) =>
+              isPathInsideOrEqual(pathService, workspace.workspaceRoot, directory),
+            )
+          )
+            return true;
+          // The last confirmed assignment is authoritative while observation is
+          // unavailable; a terminal that never registered stays where it started.
+          if (entry.workspaceId === input.workspaceId) return true;
+          if (entry.observedDirectory !== null) {
+            return isPathInsideOrEqual(
+              pathService,
+              workspace.workspaceRoot,
+              entry.observedDirectory,
+            );
+          }
+          // No confirmed directory for this PTY: treat its launch context as
+          // relevant occupancy unless it is confirmed assigned elsewhere.
+          return (
+            entry.workspaceId === undefined &&
+            isPathInsideOrEqual(pathService, workspace.workspaceRoot, entry.launchCwd)
+          );
+        };
+        if (occupancy.some(occupiesWorkspace)) {
+          return yield* workspaceError(
+            "workspace-not-empty",
+            `Workspace '${workspace.title}' is still occupied by a running terminal. Stop it or move it out before deleting the directory.`,
+            workspace.workspaceRoot,
+          );
+        }
       }
 
       let mainWorkspace: AwenWorkspaceShell | undefined;
@@ -797,6 +819,13 @@ export const make = Effect.gen(function* () {
             ),
           ),
         );
+
+      // The registration is gone. Any terminal still assigned here keeps its
+      // PTY but becomes unassigned instead of pointing at a Workspace that no
+      // longer exists.
+      if (Option.isSome(terminalManagerOption)) {
+        yield* terminalManagerOption.value.releaseWorkspaceAssignment(input.workspaceId);
+      }
 
       if (!shouldDeleteDirectory || mainWorkspace === undefined) {
         return { removed: true, deletedDirectory: false };

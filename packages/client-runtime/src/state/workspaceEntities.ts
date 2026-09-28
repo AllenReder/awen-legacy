@@ -13,6 +13,17 @@ import type { EnvironmentAwenProject } from "./models.ts";
 import { enabledEnvironmentIds, type EnvironmentCatalogState } from "./connections.ts";
 
 const EMPTY_PROJECTS: ReadonlyArray<EnvironmentAwenProject> = Object.freeze([]);
+const EMPTY_UNASSIGNED_TERMINALS: ReadonlyArray<EnvironmentUnassignedTerminal> = Object.freeze([]);
+
+/**
+ * A Terminal Session with no Workspace assignment, shown in its Environment's
+ * unassigned group. The assignment is mutable metadata; the identity and any
+ * open Pane are unchanged.
+ */
+export interface EnvironmentUnassignedTerminal {
+  readonly environmentId: EnvironmentId;
+  readonly summary: TerminalSummary;
+}
 
 function snapshotProjects(
   snapshot: OrchestrationShellSnapshot | null,
@@ -52,6 +63,29 @@ export function createEnvironmentWorkspaceAtoms(input: {
     return projects.length === 0 ? EMPTY_PROJECTS : projects;
   }).pipe(Atom.withLabel("environment-awen-project-list"));
 
+  const environmentUnassignedTerminalsAtom = Atom.family((environmentId: EnvironmentId) =>
+    Atom.make((get): ReadonlyArray<EnvironmentUnassignedTerminal> => {
+      const terminals = input.terminalMetadataAtom
+        ? get(input.terminalMetadataAtom(environmentId))
+        : null;
+      if (terminals === null) return EMPTY_UNASSIGNED_TERMINALS;
+      const unassigned = terminals.filter(
+        (terminal) => terminal.workspaceId === undefined && terminal.status !== "closed",
+      );
+      return unassigned.length === 0
+        ? EMPTY_UNASSIGNED_TERMINALS
+        : unassigned.map((summary) => ({ environmentId, summary }));
+    }).pipe(Atom.withLabel(`environment-unassigned-terminals:${environmentId}`)),
+  );
+
+  const unassignedTerminalsAtom = Atom.make((get): ReadonlyArray<EnvironmentUnassignedTerminal> => {
+    const terminals: EnvironmentUnassignedTerminal[] = [];
+    for (const environmentId of enabledEnvironmentIds(get(input.catalogValueAtom))) {
+      terminals.push(...get(environmentUnassignedTerminalsAtom(environmentId)));
+    }
+    return terminals.length === 0 ? EMPTY_UNASSIGNED_TERMINALS : terminals;
+  }).pipe(Atom.withLabel("environment-unassigned-terminal-list"));
+
   const awenProjectAtom = Atom.family((key: string) => {
     const [environmentId, projectId] = JSON.parse(key) as [EnvironmentId, AwenProjectId];
     return Atom.make(
@@ -76,6 +110,8 @@ export function createEnvironmentWorkspaceAtoms(input: {
   return {
     environmentAwenProjectsAtom,
     awenProjectsAtom,
+    environmentUnassignedTerminalsAtom,
+    unassignedTerminalsAtom,
     awenProjectAtom: (ref: {
       readonly environmentId: EnvironmentId;
       readonly projectId: AwenProjectId;

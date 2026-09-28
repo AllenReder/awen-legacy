@@ -40,6 +40,10 @@ import * as ServerConfig from "../config.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import type {
+  TerminalDirectoryObservation,
+  TerminalDirectoryObserver,
+} from "./DirectoryObservation.ts";
 import * as TerminalManager from "./Manager.ts";
 import * as PtyAdapter from "./PtyAdapter.ts";
 
@@ -199,16 +203,19 @@ interface CreateManagerOptions {
   logsDir?: string;
   shellResolver?: () => string;
   env?: NodeJS.ProcessEnv;
-  subprocessInspector?: (terminalPid: number) => Effect.Effect<{
-    readonly hasRunningSubprocess: boolean;
-    readonly childCommand: string | null;
-    readonly processIds: ReadonlyArray<number>;
-  }>;
+  subprocessInspector?: Parameters<
+    typeof TerminalManager.makeWithOptions
+  >[0]["subprocessInspector"];
+  directoryObserver?: Parameters<typeof TerminalManager.makeWithOptions>[0]["directoryObserver"];
+  listRegisteredWorkspaceDirectories?: Parameters<
+    typeof TerminalManager.makeWithOptions
+  >[0]["listRegisteredWorkspaceDirectories"];
   processTable?: Effect.Effect<
     ReadonlyArray<{ readonly pid: number; readonly ppid: number; readonly name: string }>,
     never
   >;
   subprocessPollIntervalMs?: number;
+  directoryPollIntervalMs?: number;
   processKillGraceMs?: number;
   maxRetainedInactiveSessions?: number;
   historyByteLimit?: number;
@@ -256,9 +263,18 @@ const createManager = (
         ...(options.subprocessInspector !== undefined
           ? { subprocessInspector: options.subprocessInspector }
           : {}),
+        ...(options.directoryObserver !== undefined
+          ? { directoryObserver: options.directoryObserver }
+          : {}),
+        ...(options.listRegisteredWorkspaceDirectories !== undefined
+          ? { listRegisteredWorkspaceDirectories: options.listRegisteredWorkspaceDirectories }
+          : {}),
         ...(options.processTable !== undefined ? { processTable: options.processTable } : {}),
         ...(options.subprocessPollIntervalMs !== undefined
           ? { subprocessPollIntervalMs: options.subprocessPollIntervalMs }
+          : {}),
+        ...(options.directoryPollIntervalMs !== undefined
+          ? { directoryPollIntervalMs: options.directoryPollIntervalMs }
           : {}),
         processKillGraceMs: options.processKillGraceMs ?? 1,
         ...(options.maxRetainedInactiveSessions !== undefined
@@ -287,6 +303,25 @@ const createManager = (
       };
     }),
   );
+
+const idleInspect = () =>
+  Effect.succeed({
+    hasRunningSubprocess: false,
+    childCommand: null,
+    processIds: [],
+  });
+
+const fakeDirectoryObserver = (read: () => string | null): TerminalDirectoryObserver => ({
+  capability: { supported: true, mechanism: "procfs" },
+  observe: (): Effect.Effect<TerminalDirectoryObservation> => {
+    const directory = read();
+    return Effect.succeed(
+      directory === null
+        ? { kind: "unknown", reason: "unavailable" }
+        : { kind: "known", directory },
+    );
+  },
+});
 
 const withHostPlatform = (platform: NodeJS.Platform) =>
   Layer.succeed(HostProcessPlatform, platform);
@@ -3167,5 +3202,369 @@ it.layer(
         const secondMetadata = yield* second.manager.getMetadata();
         expect(secondMetadata.filter((m) => m.workspaceId === "ws-evict")).toHaveLength(2);
       }),
+  );
+
+  it.effect(
+    "reassigns promptly after shell output when entering another Workspace subdirectory",
+    () =>
+      Effect.gen(function* () {
+        let directory = process.cwd();
+        const { manager, ptyAdapter, getEvents } = yield* createManager(5, {
+          directoryPollIntervalMs: 60_000,
+          directoryObserver: fakeDirectoryObserver(() => directory),
+          listRegisteredWorkspaceDirectories: () =>
+            Effect.succeed([{ workspaceId: "workspace:a", workspaceRoot: "/workspace-a" }]),
+        });
+        yield* manager.open({ terminalId: "term-prompt", cwd: process.cwd(), cols: 80, rows: 24 });
+        // Let the initial observation complete; the fallback tick is a minute away.
+        yield* Effect.sleep("50 millis");
+        directory = "/workspace-a/src/deep";
+        ptyAdapter.processes[0]!.emitData("$ ");
+        yield* waitFor(
+          Effect.map(getEvents, (events) =>
+            events.some(
+              (event) => event.type === "assigned" && event.workspaceId === "workspace:a",
+            ),
+          ),
+          "500 millis",
+        );
+        expect(ptyAdapter.processes).toHaveLength(1);
+        expect((yield* manager.getMetadata())[0]?.workspaceId).toBe("workspace:a");
+      }),
+  );
+
+  it.effect(
+    "follows a reliable shell directory into a registered Workspace without restarting",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const parent = yield* fs.makeTempDirectoryScoped({ prefix: "awen-term-dir-" });
+        const mainRoot = join(parent, "main");
+        const siblingRoot = join(parent, "sibling");
+        const subdirectory = join(mainRoot, "packages");
+        yield* fs.makeDirectory(mainRoot);
+        yield* fs.makeDirectory(siblingRoot);
+        yield* fs.makeDirectory(subdirectory);
+
+        let directory: string | null = mainRoot;
+        const fixture = yield* createManager(5, {
+          subprocessInspector: idleInspect,
+          subprocessPollIntervalMs: 20,
+          directoryPollIntervalMs: 20,
+          directoryObserver: fakeDirectoryObserver(() => directory),
+          listRegisteredWorkspaceDirectories: () =>
+            Effect.succeed([
+              { workspaceId: "workspace:main", workspaceRoot: mainRoot },
+              { workspaceId: "workspace:sibling", workspaceRoot: siblingRoot },
+            ]),
+        });
+        const { manager, ptyAdapter, getEvents } = fixture;
+
+        const opened = yield* manager.open({
+          terminalId: "term-1",
+          workspaceId: "workspace:main",
+          cwd: mainRoot,
+          cols: 80,
+          rows: 24,
+        });
+        expect(opened.workspaceId).toBe("workspace:main");
+        expect(ptyAdapter.processes).toHaveLength(1);
+        const process = ptyAdapter.processes[0]!;
+
+        // A subdirectory of the same checkout is still that Workspace.
+        directory = subdirectory;
+        yield* Effect.sleep("80 millis");
+        expect(
+          (yield* manager.getMetadata()).find((m) => m.terminalId === "term-1")?.workspaceId,
+        ).toBe("workspace:main");
+
+        // A registered sibling checkout takes over the Sidebar assignment.
+        directory = siblingRoot;
+        yield* waitFor(
+          Effect.map(getEvents, (events) =>
+            events.some(
+              (event) => event.type === "assigned" && event.workspaceId === "workspace:sibling",
+            ),
+          ),
+          "1200 millis",
+        );
+        const summary = (yield* manager.getMetadata()).find((m) => m.terminalId === "term-1")!;
+        expect(summary.workspaceId).toBe("workspace:sibling");
+
+        // Same PTY, same launch context, no restart.
+        expect(ptyAdapter.processes).toHaveLength(1);
+        expect(ptyAdapter.processes[0]!.pid).toBe(process.pid);
+        expect(process.killed).toBe(false);
+        const snapshot = yield* manager.open({
+          terminalId: "term-1",
+          cwd: mainRoot,
+          cols: 80,
+          rows: 24,
+        });
+        expect(snapshot.cwd).toBe(mainRoot);
+      }),
+  );
+
+  it.effect(
+    "retains the last assignment for an unknown observation and moves to unassigned for a known unregistered path",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const parent = yield* fs.makeTempDirectoryScoped({ prefix: "awen-term-dir-" });
+        const mainRoot = join(parent, "main");
+        const unregisteredRoot = join(parent, "elsewhere");
+        yield* fs.makeDirectory(mainRoot);
+        yield* fs.makeDirectory(unregisteredRoot);
+
+        let directory: string | null = mainRoot;
+        const fixture = yield* createManager(5, {
+          subprocessInspector: idleInspect,
+          subprocessPollIntervalMs: 20,
+          directoryPollIntervalMs: 20,
+          directoryObserver: fakeDirectoryObserver(() => directory),
+          listRegisteredWorkspaceDirectories: () =>
+            Effect.succeed([{ workspaceId: "workspace:main", workspaceRoot: mainRoot }]),
+        });
+        const { manager, getEvents } = fixture;
+        const metadataEventsRef = yield* Ref.make<ReadonlyArray<TerminalMetadataStreamEvent>>([]);
+        const unsubscribeMetadata = yield* manager.subscribeMetadata((event) =>
+          Ref.update(metadataEventsRef, (events) => [...events, event]),
+        );
+        yield* Effect.addFinalizer(() => Effect.sync(unsubscribeMetadata));
+
+        yield* manager.open({
+          terminalId: "term-1",
+          workspaceId: "workspace:main",
+          cwd: mainRoot,
+          cols: 80,
+          rows: 24,
+        });
+
+        // Unknown observation is not a known unregistered directory.
+        directory = null;
+        yield* Effect.sleep("80 millis");
+        expect(
+          (yield* manager.getMetadata()).find((m) => m.terminalId === "term-1")?.workspaceId,
+        ).toBe("workspace:main");
+        expect((yield* getEvents).some((event) => event.type === "assigned")).toBe(false);
+
+        // A known directory outside registered Workspaces becomes unassigned.
+        directory = unregisteredRoot;
+        yield* waitFor(
+          Effect.map(getEvents, (events) => events.some((event) => event.type === "assigned")),
+          "1200 millis",
+        );
+        const summary = (yield* manager.getMetadata()).find((m) => m.terminalId === "term-1")!;
+        expect(summary.workspaceId).toBeUndefined();
+
+        const metadataEvents = yield* Ref.get(metadataEventsRef);
+        expect(
+          metadataEvents.some(
+            (event) =>
+              event.type === "upsert" &&
+              event.terminal.terminalId === "term-1" &&
+              event.terminal.workspaceId === undefined,
+          ),
+        ).toBe(true);
+      }),
+  );
+
+  it.effect("unregistration wins over an in-flight directory observation", () =>
+    Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>();
+      const resume = yield* Deferred.make<void>();
+      let registered = true;
+      let firstObservation = true;
+      const { manager } = yield* createManager(5, {
+        directoryPollIntervalMs: 60_000,
+        listRegisteredWorkspaceDirectories: () =>
+          Effect.succeed(
+            registered ? [{ workspaceId: "workspace:a", workspaceRoot: process.cwd() }] : [],
+          ),
+        directoryObserver: {
+          capability: { supported: true, mechanism: "procfs" },
+          observe: () =>
+            Effect.gen(function* () {
+              if (!firstObservation) return { kind: "unknown", reason: "unavailable" } as const;
+              firstObservation = false;
+              yield* Deferred.succeed(entered, undefined);
+              yield* Deferred.await(resume);
+              return { kind: "known", directory: process.cwd() } as const;
+            }),
+        },
+      });
+      yield* manager.open({ terminalId: "term-release", cwd: process.cwd(), cols: 80, rows: 24 });
+      yield* Deferred.await(entered);
+      registered = false;
+      const releasing = yield* manager
+        .releaseWorkspaceAssignment("workspace:a")
+        .pipe(Effect.forkScoped);
+      yield* Effect.sleep("20 millis");
+      yield* Deferred.succeed(resume, undefined);
+      yield* Fiber.join(releasing);
+      yield* Effect.sleep("50 millis");
+      expect((yield* manager.getMetadata())[0]?.workspaceId).toBeUndefined();
+    }),
+  );
+
+  it.effect(
+    "observes child directory occupancy independently of shell assignment and releases exited children",
+    () =>
+      Effect.gen(function* () {
+        let childAlive = true;
+        let childKnown = true;
+        const { manager } = yield* createManager(5, {
+          subprocessInspector: () =>
+            Effect.succeed({
+              hasRunningSubprocess: childAlive,
+              childCommand: childAlive ? "sleep" : null,
+              processIds: childAlive ? [999] : [],
+            }),
+          directoryObserver: {
+            capability: { supported: true, mechanism: "procfs" },
+            observe: (pid) =>
+              Effect.succeed(
+                pid === 999
+                  ? childKnown
+                    ? { kind: "known", directory: "/workspace-a/nested" }
+                    : { kind: "unknown", reason: "unavailable" }
+                  : { kind: "known", directory: process.cwd() },
+              ),
+          },
+        });
+        yield* manager.open({ terminalId: "term-child", cwd: process.cwd(), cols: 80, rows: 24 });
+        let occupancy = (yield* manager.getDirectoryOccupancy())[0]!;
+        expect(occupancy.observedDirectory).toBe(process.cwd());
+        expect(occupancy.processDirectories).toEqual(["/workspace-a/nested"]);
+        expect(occupancy.hasUnobservedProcesses).toBe(false);
+        childKnown = false;
+        occupancy = (yield* manager.getDirectoryOccupancy())[0]!;
+        expect(occupancy.hasUnobservedProcesses).toBe(true);
+        childAlive = false;
+        occupancy = (yield* manager.getDirectoryOccupancy())[0]!;
+        expect(occupancy.processDirectories).toEqual([]);
+        expect(occupancy.hasUnobservedProcesses).toBe(false);
+      }),
+  );
+
+  it.effect("keeps shell uncertainty separate from its last confirmed assignment", () =>
+    Effect.gen(function* () {
+      let directory: string | null = "/workspace-b";
+      const { manager } = yield* createManager(5, {
+        subprocessInspector: idleInspect,
+        directoryObserver: fakeDirectoryObserver(() => directory),
+        listRegisteredWorkspaceDirectories: () =>
+          Effect.succeed([{ workspaceId: "workspace:b", workspaceRoot: "/workspace-b" }]),
+      });
+      yield* manager.open({ terminalId: "term-unknown", cwd: process.cwd(), cols: 80, rows: 24 });
+      expect((yield* manager.getDirectoryOccupancy())[0]?.workspaceId).toBe("workspace:b");
+      directory = null;
+      const uncertain = (yield* manager.getDirectoryOccupancy())[0]!;
+      expect(uncertain.workspaceId).toBe("workspace:b");
+      expect(uncertain.observedDirectory).toBe("/workspace-b");
+      expect(uncertain.hasUnobservedProcesses).toBe(true);
+      directory = "/workspace-b";
+      expect((yield* manager.getDirectoryOccupancy())[0]?.hasUnobservedProcesses).toBe(false);
+    }),
+  );
+
+  it.effect("refreshes directory occupancy before the next background tick", () =>
+    Effect.gen(function* () {
+      let directory = process.cwd();
+      const { manager } = yield* createManager(5, {
+        directoryPollIntervalMs: 60_000,
+        directoryObserver: fakeDirectoryObserver(() => directory),
+      });
+      yield* manager.open({ terminalId: "term-occupancy", cwd: process.cwd(), cols: 80, rows: 24 });
+      yield* Effect.sleep("100 millis");
+      directory = "/workspace-a/nested";
+      expect((yield* manager.getDirectoryOccupancy())[0]?.observedDirectory).toBe(directory);
+      directory = "/elsewhere";
+      expect((yield* manager.getDirectoryOccupancy())[0]?.observedDirectory).toBe(directory);
+    }),
+  );
+
+  it.effect("reports directory occupancy and releases an assignment without stopping the PTY", () =>
+    Effect.gen(function* () {
+      // No directory observer injected: on a platform without one the launch
+      // assignment stands in for occupancy, which is the conservative case.
+      const fixture = yield* createManager(5, {
+        subprocessInspector: idleInspect,
+        subprocessPollIntervalMs: 20,
+      });
+      const { manager, ptyAdapter, getEvents } = fixture;
+
+      yield* manager.open({
+        terminalId: "term-1",
+        workspaceId: "workspace:main",
+        cwd: process.cwd(),
+        cols: 80,
+        rows: 24,
+      });
+      const process_ = ptyAdapter.processes[0]!;
+
+      const occupancy = (yield* manager.getDirectoryOccupancy()).find(
+        (entry) => entry.terminalId === "term-1",
+      )!;
+      expect(occupancy.workspaceId).toBe("workspace:main");
+      expect(occupancy.status).toBe("running");
+      expect(occupancy.launchCwd).toBe(process.cwd());
+
+      yield* manager.releaseWorkspaceAssignment("workspace:main");
+      const summary = (yield* manager.getMetadata()).find((m) => m.terminalId === "term-1")!;
+      expect(summary.workspaceId).toBeUndefined();
+      expect(summary.status).toBe("running");
+      expect(ptyAdapter.processes).toHaveLength(1);
+      expect(process_.killed).toBe(false);
+      expect((yield* getEvents).some((event) => event.type === "assigned")).toBe(true);
+    }),
+  );
+
+  it.effect("follows the shell directory independently of the subprocess poll cadence", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { join } = yield* Path.Path;
+      const parent = yield* fs.makeTempDirectoryScoped({ prefix: "awen-term-dir-" });
+      const mainRoot = join(parent, "main");
+      const targetRoot = join(parent, "target");
+      yield* fs.makeDirectory(mainRoot);
+      yield* fs.makeDirectory(targetRoot);
+
+      let directory = mainRoot;
+      const fixture = yield* createManager(5, {
+        subprocessInspector: idleInspect,
+        // The subprocess poll backs off to a minute when its snapshot fails; the
+        // directory loop must not inherit that cadence.
+        subprocessPollIntervalMs: 60_000,
+        directoryPollIntervalMs: 20,
+        directoryObserver: fakeDirectoryObserver(() => directory),
+        listRegisteredWorkspaceDirectories: () =>
+          Effect.succeed([
+            { workspaceId: "workspace:main", workspaceRoot: mainRoot },
+            { workspaceId: "workspace:target", workspaceRoot: targetRoot },
+          ]),
+      });
+      const { manager, getEvents } = fixture;
+
+      yield* manager.open({
+        terminalId: "term-1",
+        workspaceId: "workspace:main",
+        cwd: mainRoot,
+        cols: 80,
+        rows: 24,
+      });
+
+      directory = targetRoot;
+      yield* waitFor(
+        Effect.map(getEvents, (events) =>
+          events.some(
+            (event) => event.type === "assigned" && event.workspaceId === "workspace:target",
+          ),
+        ),
+        "1200 millis",
+      );
+    }),
   );
 });

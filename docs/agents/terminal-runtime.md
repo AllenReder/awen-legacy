@@ -102,6 +102,60 @@ Closing a View, Pane, or Tab remains distinct from calling `close`; `close` is
 reserved for explicit terminal termination. The Sidebar can create a terminal
 directly under a Workspace, including when it has no Agent Sessions.
 
+## Following the shell directory
+
+A running terminal follows the shell's real working directory (ADR-0028). The
+daemon observes the process cwd through `TerminalDirectoryObserver` and updates
+only the mutable `workspaceId` assignment; it never changes launch context,
+restarts the PTY, or alters Session/Pane identity. Observation failures are
+reported as `unknown` and retain the last confirmed assignment. PTY output and input wake directory observation immediately, with a fixed burst
+coalescing window (50ms for procfs, 250ms for lsof to limit process spawning). Output only triggers an OS query; its contents
+(including prompt paths and OSC sequences) never supply the directory. A separate
+fallback clock (`directoryPollIntervalMs`, default 1s) covers silent shells and
+registration changes. One worker handles both triggers, so probes cannot overlap
+or accumulate per output chunk, and continuous output cannot starve silent
+terminals. Resource-monitor backoff does not affect this worker.
+
+Directory occupancy reads refresh the OS evidence before returning it, serialized
+with the background worker. This prevents a deletion check from trusting a cached
+directory from before a recent `cd`; unknown observations still retain the last
+confirmed evidence. Observation and filesystem deletion are not an atomic OS
+transaction, so a process can still move after the check.
+
+The supported observation matrix lives in
+`apps/server/src/terminal/DirectoryObservation.ts`:
+
+| Platform              | Mechanism                 | Behavior                                     |
+| --------------------- | ------------------------- | -------------------------------------------- |
+| Linux                 | `/proc/<pid>/cwd`         | supported; a removed cwd reports unavailable |
+| macOS                 | `lsof -a -p <pid> -d cwd` | supported under the same user                |
+| other (incl. Windows) | none                      | assignment retained; no directory following  |
+
+`resolveWorkspaceAssignmentForDirectory` maps an observed path to the nearest
+registered Workspace root. A subdirectory keeps the checkout's assignment, a
+registered sibling Workspace takes over, and a known path outside every
+registered Workspace becomes unassigned without registering anything. The
+Sidebar shows unassigned terminals in their Environment's group.
+
+## Directory occupancy versus assignment
+
+`TerminalManager.getDirectoryOccupancy()` is the separate destructive-deletion
+check. `AwenWorkspaceService.remove` uses it instead of trusting the Sidebar: a
+running Session blocks deleting a directory when its observed directory is
+inside it, when its last confirmed assignment still points at it, or — with no
+confirmed directory yet — when it was launched inside it without a confirmed
+assignment elsewhere. Exited Sessions and confirmed departures release the
+directory. Unregistering a Workspace (`deleteDirectory: false`) is a different
+operation and is allowed while a terminal runs there; the terminal is released
+to the unassigned group.
+
+Deletion checks also inspect live descendants using the runtime process table.
+Their cwd evidence never changes Sidebar assignment. A descendant inside the
+Workspace blocks deletion even when the shell is elsewhere. An unreadable shell or live
+descendant, or unavailable process table blocks destructive deletion until the
+evidence becomes available or the work stops. Each check rebuilds this evidence,
+so an exited child leaves no historical directory lock.
+
 ## Validation
 
 The real-PTY validation entry point is:

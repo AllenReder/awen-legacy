@@ -58,6 +58,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
@@ -79,6 +80,13 @@ import { expandHomePath } from "../pathExpansion.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as PortScanner from "../preview/PortScanner.ts";
 import * as NativeTelemetryClient from "../resourceTelemetry/NativeTelemetryClient.ts";
+import {
+  makeTerminalDirectoryObserver,
+  resolveWorkspaceAssignmentForDirectory,
+  type RegisteredWorkspaceDirectory,
+  type TerminalDirectoryObservation,
+  type TerminalDirectoryObserver,
+} from "./DirectoryObservation.ts";
 import * as PtyAdapter from "./PtyAdapter.ts";
 
 export {
@@ -103,6 +111,7 @@ const DEFAULT_HISTORY_BYTE_LIMIT = 8 * 1024 * 1024;
 const MAX_HISTORY_CHUNK_LENGTH = 16 * 1024;
 const DEFAULT_PERSIST_DEBOUNCE_MS = 40;
 const DEFAULT_SUBPROCESS_POLL_INTERVAL_MS = 1_000;
+const DEFAULT_DIRECTORY_POLL_INTERVAL_MS = 1_000;
 const MAX_SUBPROCESS_POLL_INTERVAL_MS = 60_000;
 const DEFAULT_PROCESS_KILL_GRACE_MS = 1_000;
 const DEFAULT_MAX_RETAINED_INACTIVE_SESSIONS = 128;
@@ -134,6 +143,18 @@ class TerminalSubprocessCheckError extends Schema.TaggedError<TerminalSubprocess
       .filter((detail) => detail !== null)
       .join(", ");
     return `Failed to inspect terminal subprocesses with ${this.command}${details.length > 0 ? ` (${details})` : ""}`;
+  }
+}
+
+/** The projection read that maps observed directories to Workspaces failed. */
+export class TerminalDirectoryRegistryError extends Schema.TaggedError<TerminalDirectoryRegistryError>()(
+  "TerminalDirectoryRegistryError",
+  {
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return "Failed to read registered Workspace directories for terminal assignment";
   }
 }
 
@@ -211,6 +232,25 @@ export class TerminalManager extends Context.Service<
     readonly close: (input: TerminalCloseInput) => Effect.Effect<void, TerminalError>;
 
     /**
+     * Read the live directory occupancy evidence for every Session.
+     *
+     * This is the separate check destructive Workspace deletion uses instead of
+     * trusting the Sidebar assignment. A running Session reports its last
+     * reliably observed working directory (or null when never observed), plus
+     * its current assignment, launch directory, and host observation support.
+     */
+    readonly getDirectoryOccupancy: () => Effect.Effect<ReadonlyArray<TerminalDirectoryOccupancy>>;
+
+    /**
+     * Clear the assignment of every Session currently assigned to one Workspace.
+     *
+     * Called after a Workspace registration is removed: a still-running
+     * terminal keeps its PTY and identity but becomes unassigned instead of
+     * pointing at a Workspace that no longer exists.
+     */
+    readonly releaseWorkspaceAssignment: (workspaceId: string) => Effect.Effect<void>;
+
+    /**
      * Subscribe to terminal runtime events with a direct callback.
      *
      * Returns an unsubscribe function.
@@ -243,6 +283,28 @@ interface TerminalSubprocessInspector {
   (
     terminalPid: number,
   ): Effect.Effect<TerminalSubprocessInspectResult, TerminalSubprocessCheckError>;
+}
+
+/**
+ * One Session's contribution to the destructive-deletion occupancy check.
+ *
+ * `observedDirectory` is the last reliably observed working directory, or null
+ * when the host never reported one. `workspaceId` is the last confirmed
+ * assignment, which stands in when observation is unavailable. Neither is a
+ * permanent lock: when the Session stops or observation confirms it left, the
+ * workspace becomes deletable again.
+ */
+export interface TerminalDirectoryOccupancy {
+  readonly terminalId: string;
+  readonly workspaceId?: string;
+  readonly status: TerminalSessionStatus;
+  readonly launchCwd: string;
+  readonly observedDirectory: string | null;
+  readonly directoryObservationSupported: boolean;
+  /** Fresh descendant cwd evidence; never used to assign the Sidebar row. */
+  readonly processDirectories: ReadonlyArray<string>;
+  /** A live process or the process table could not be inspected safely. */
+  readonly hasUnobservedProcesses: boolean;
 }
 
 const resizePtyProcess = (
@@ -311,6 +373,12 @@ interface TerminalSessionState {
   generation: number;
   /** Normalized child command name when `hasRunningSubprocess`; cleared when idle. */
   childCommandLabel: string | null;
+  /**
+   * Last reliably observed working directory of this Session, or null when the
+   * host never confirmed one. Observation never changes launch context; it only
+   * projects the Sidebar assignment.
+   */
+  observedDirectory: string | null;
   runtimeEnv: Record<string, string> | null;
 }
 
@@ -497,6 +565,8 @@ function shouldPublishTerminalMetadataEvent(event: TerminalEvent): boolean {
       return true;
     case "renamed":
       return true;
+    case "assigned":
+      return true;
     case "output":
     case "cleared":
       return false;
@@ -519,6 +589,8 @@ function terminalEventToAttachEvent(event: TerminalEvent): TerminalAttachStreamE
     case "activity":
       return event;
     case "renamed":
+      return null;
+    case "assigned":
       return null;
   }
 }
@@ -1594,11 +1666,33 @@ interface TerminalManagerOptions {
   shellResolver?: () => string;
   env?: NodeJS.ProcessEnv;
   subprocessInspector?: TerminalSubprocessInspector;
+  /**
+   * Resolves a PTY process's real working directory. Defaults to the current
+   * host's observer (see DirectoryObservation.ts); tests and other platforms
+   * inject a deterministic one.
+   */
+  directoryObserver?: TerminalDirectoryObserver;
+  /**
+   * Lists the Workspace directories this Environment has already registered.
+   *
+   * A reliable shell directory maps to the nearest registered ancestor without
+   * implicitly registering a Project. Absent in tests that do not exercise
+   * assignment following.
+   */
+  listRegisteredWorkspaceDirectories?: () => Effect.Effect<
+    ReadonlyArray<RegisteredWorkspaceDirectory>,
+    TerminalDirectoryRegistryError
+  >;
   processTable?: Effect.Effect<
     ReadonlyArray<ResourceMonitorProcessTableEntry>,
     TerminalSubprocessCheckError
   >;
   subprocessPollIntervalMs?: number;
+  /**
+   * How often to observe each running shell's working directory. Independent of
+   * subprocess polling so its backoff cannot delay Sidebar reassignment.
+   */
+  directoryPollIntervalMs?: number;
   processKillGraceMs?: number;
   maxRetainedInactiveSessions?: number;
   registerTerminalProcesses?: (input: {
@@ -1763,6 +1857,9 @@ export const make = Effect.fn("TerminalManager.make")(function* () {
       "TerminalManager built without workspace-root resolution: workspace-owned terminal open/attach/restart will fail with TerminalWorkspaceResolutionUnavailableError. ProjectionSnapshotQuery is absent from the layer context or lacks getAwenWorkspaceById.",
     );
   }
+  const listAwenProjects = Option.isSome(projectionQuery)
+    ? projectionQuery.value.listAwenProjects
+    : undefined;
   return yield* makeWithOptions({
     logsDir: terminalLogsDir,
     ptyAdapter,
@@ -1785,6 +1882,22 @@ export const make = Effect.fn("TerminalManager.make")(function* () {
                   onSome: (value) => Effect.succeed(value.workspaceRoot),
                 }),
               ),
+            ),
+        }
+      : {}),
+    ...(listAwenProjects
+      ? {
+          listRegisteredWorkspaceDirectories: () =>
+            listAwenProjects().pipe(
+              Effect.map((projects) =>
+                projects.flatMap((project) =>
+                  project.workspaces.map((workspace) => ({
+                    workspaceId: workspace.id,
+                    workspaceRoot: workspace.workspaceRoot,
+                  })),
+                ),
+              ),
+              Effect.mapError((cause) => new TerminalDirectoryRegistryError({ cause })),
             ),
         }
       : {}),
@@ -1927,11 +2040,30 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         );
   const subprocessPollIntervalMs =
     options.subprocessPollIntervalMs ?? DEFAULT_SUBPROCESS_POLL_INTERVAL_MS;
+  const directoryPollIntervalMs =
+    options.directoryPollIntervalMs ?? DEFAULT_DIRECTORY_POLL_INTERVAL_MS;
   const processKillGraceMs = options.processKillGraceMs ?? DEFAULT_PROCESS_KILL_GRACE_MS;
   const maxRetainedInactiveSessions =
     options.maxRetainedInactiveSessions ?? DEFAULT_MAX_RETAINED_INACTIVE_SESSIONS;
   const registerTerminalProcesses = options.registerTerminalProcesses ?? (() => Effect.void);
   const unregisterTerminal = options.unregisterTerminal ?? (() => Effect.void);
+  // One observer for the host. Unsupported platforms always report `unknown`,
+  // so assignment following is a no-op there rather than a guess.
+  const directoryObserver =
+    options.directoryObserver ??
+    makeTerminalDirectoryObserver({ platform, fileSystem, processRunner });
+  const directoryObservationSupported = directoryObserver.capability.supported;
+  // macOS spawns lsof; cap busy-terminal probes at four per second.
+  const directoryActivityWindowMs = directoryObserver.capability.mechanism === "lsof" ? 250 : 50;
+  // A single wake-up covers a burst; the set retains every affected terminal.
+  const directoryWakeups = yield* Effect.acquireRelease(Queue.sliding<void>(1), Queue.shutdown);
+  const pendingDirectorySessions = new Set<string>();
+  let refreshAllDirectories = false;
+  const requestDirectoryObservation = (terminalId: string) => {
+    if (!directoryObservationSupported) return;
+    pendingDirectorySessions.add(terminalId);
+    Queue.offerUnsafe(directoryWakeups, undefined);
+  };
 
   yield* fileSystem.makeDirectory(logsDir, { recursive: true }).pipe(Effect.orDie);
 
@@ -2295,6 +2427,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         hasRunningSubprocess: false,
         generation: record.generation,
         childCommandLabel: null,
+        observedDirectory: null,
         runtimeEnv: record.runtimeEnv,
       });
     }
@@ -2376,6 +2509,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       hasRunningSubprocess: false,
       generation: record.generation,
       childCommandLabel: null,
+      observedDirectory: null,
       runtimeEnv: record.runtimeEnv,
     };
 
@@ -2680,6 +2814,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       session.exitSignal = null;
       session.hasRunningSubprocess = false;
       session.childCommandLabel = null;
+      // A new PTY generation has no confirmed directory yet.
+      session.observedDirectory = null;
       session.pendingTitleSequence = "";
       session.generation += 1;
       session.pendingProcessEvents = [];
@@ -2705,6 +2841,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
 
             const processPid = ptyProcess.pid;
             const unsubscribeData = ptyProcess.onData((data) => {
+              requestDirectoryObservation(session.terminalId);
               const scannedTitle = parseTerminalTitleUpdates(session.pendingTitleSequence, data);
               session.pendingTitleSequence = scannedTitle.pending;
               const nextTitle =
@@ -2884,6 +3021,56 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     yield* deleteHistory(terminalId);
   });
 
+  const applyDirectoryObservation = Effect.fn("terminal.applyDirectoryObservation")(function* (
+    terminalId: string,
+    expectedPid: number,
+    observation: TerminalDirectoryObservation,
+    workspaceDirectories: Option.Option<ReadonlyArray<RegisteredWorkspaceDirectory>>,
+  ) {
+    if (observation.kind !== "known") {
+      return;
+    }
+
+    // No registry list means the caller cannot map directories; the raw
+    // observation is still recorded so destructive deletion can use it.
+    const nextWorkspaceId = Option.isSome(workspaceDirectories)
+      ? resolveWorkspaceAssignmentForDirectory(
+          workspaceDirectories.value,
+          observation.directory,
+          path,
+        )
+      : undefined;
+
+    const event = yield* modifyManagerState((state) => {
+      const liveSession = state.sessions.get(toSessionKey(terminalId));
+      if (!liveSession || liveSession.status !== "running" || liveSession.pid !== expectedPid) {
+        return [Option.none(), state] as const;
+      }
+      liveSession.observedDirectory = observation.directory;
+      if (nextWorkspaceId === undefined || liveSession.workspaceId === nextWorkspaceId) {
+        return [Option.none(), state] as const;
+      }
+      // Assignment is projection metadata: the PTY, launch cwd, history, and
+      // event stream are untouched.
+      liveSession.workspaceId = nextWorkspaceId;
+      const eventStamp = advanceEventSequence(liveSession);
+      return [
+        Option.some({
+          type: "assigned" as const,
+          ...ownerEventFields(liveSession),
+          terminalId: liveSession.terminalId,
+          sequence: eventStamp.sequence,
+        }),
+        state,
+      ] as const;
+    });
+
+    if (Option.isSome(event)) {
+      yield* persistSessionIndex;
+      yield* publishEvent(event.value);
+    }
+  });
+
   const pollSubprocessActivity = Effect.fn("terminal.pollSubprocessActivity")(function* () {
     const state = yield* readManagerState;
     const runningSessions = [...state.sessions.values()].filter(
@@ -2985,6 +3172,94 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     });
     return snapshotSucceeded;
   });
+
+  const runningSessionPids = readManagerState.pipe(
+    Effect.map((state) =>
+      [...state.sessions.values()].flatMap((session) =>
+        session.status === "running" && Number.isInteger(session.pid)
+          ? [{ terminalId: session.terminalId, pid: session.pid as number }]
+          : [],
+      ),
+    ),
+  );
+
+  /**
+   * Observe every running shell's directory and reproject its assignment.
+   *
+   * This runs on its own loop, separate from subprocess polling: that poll
+   * backs off to a minute when the resource-monitor snapshot is unavailable,
+   * and Sidebar reassignment must not inherit that delay.
+   */
+  const directoryObservationLock = yield* Semaphore.make(1);
+  const pollDirectoryAssignments = Effect.fn("terminal.pollDirectoryAssignments")(function* (
+    terminalIds?: ReadonlySet<string>,
+  ) {
+    const sessions = (yield* runningSessionPids).filter(
+      (session) => terminalIds === undefined || terminalIds.has(session.terminalId),
+    );
+    if (sessions.length === 0) return new Map<string, TerminalDirectoryObservation>();
+
+    // One registry read per tick, reused by every terminal. A failure keeps the
+    // last confirmed assignment instead of unassigning terminals.
+    const listWorkspaceDirectories = options.listRegisteredWorkspaceDirectories;
+    const workspaceDirectories: Option.Option<ReadonlyArray<RegisteredWorkspaceDirectory>> =
+      listWorkspaceDirectories !== undefined
+        ? yield* listWorkspaceDirectories().pipe(
+            Effect.map(Option.some),
+            Effect.catch((reason) =>
+              Effect.logWarning(
+                "failed to list registered Workspace directories for terminal directory observation",
+                { reason },
+              ).pipe(Effect.as(Option.none<ReadonlyArray<RegisteredWorkspaceDirectory>>())),
+            ),
+          )
+        : Option.none<ReadonlyArray<RegisteredWorkspaceDirectory>>();
+
+    const observations = yield* Effect.forEach(
+      sessions,
+      (session) =>
+        Effect.gen(function* () {
+          const observation = yield* directoryObserver.observe(session.pid);
+          yield* applyDirectoryObservation(
+            session.terminalId,
+            session.pid,
+            observation,
+            workspaceDirectories,
+          );
+          return [session.terminalId, observation] as const;
+        }),
+      { concurrency: "unbounded" },
+    );
+    return new Map(observations);
+  });
+
+  if (directoryObservationSupported) {
+    // The fallback has its own clock, so continuous output from one terminal
+    // cannot starve silent terminals. Both triggers feed the same serial worker.
+    yield* Effect.forever(
+      Effect.sync(() => {
+        refreshAllDirectories = true;
+        Queue.offerUnsafe(directoryWakeups, undefined);
+      }).pipe(Effect.andThen(Effect.sleep(directoryPollIntervalMs))),
+    ).pipe(Effect.forkIn(workerScope));
+
+    yield* Effect.forever(
+      Queue.take(directoryWakeups).pipe(
+        // Fixed coalescing window, not trailing debounce: continuous output
+        // cannot postpone observation indefinitely or spawn a probe per chunk.
+        Effect.andThen(Effect.sleep(directoryActivityWindowMs)),
+        Effect.flatMap(() => {
+          const terminalIds = refreshAllDirectories ? undefined : new Set(pendingDirectorySessions);
+          refreshAllDirectories = false;
+          pendingDirectorySessions.clear();
+          return directoryObservationLock.withPermit(pollDirectoryAssignments(terminalIds));
+        }),
+        Effect.catchCause((cause) =>
+          Effect.logWarning("terminal directory observation tick failed", { cause }),
+        ),
+      ),
+    ).pipe(Effect.forkIn(workerScope));
+  }
 
   const hasRunningSessions = readManagerState.pipe(
     Effect.map((state) =>
@@ -3112,6 +3387,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         hasRunningSubprocess: false,
         generation: 0,
         childCommandLabel: null,
+        observedDirectory: null,
         runtimeEnv: normalizedRuntimeEnv(input.env),
       };
 
@@ -3488,6 +3764,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           cause,
         }),
     });
+    requestDirectoryObservation(terminalId);
   });
 
   const resizeLocked = Effect.fn("terminal.resize")(function* (input: TerminalResizeInput) {
@@ -3604,6 +3881,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           hasRunningSubprocess: false,
           generation: 0,
           childCommandLabel: null,
+          observedDirectory: null,
           runtimeEnv: normalizedRuntimeEnv(input.env),
         };
         const createdSession = session;
@@ -3658,6 +3936,89 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       closeSession(input.terminalId, input.deleteHistory === true),
     );
 
+  const getDirectoryOccupancy: TerminalManager["Service"]["getDirectoryOccupancy"] = () =>
+    directoryObservationLock.withPermit(
+      Effect.gen(function* () {
+        // Destructive operations must not trust a snapshot from before a recent cd.
+        const shellObservations = directoryObservationSupported
+          ? yield* pollDirectoryAssignments()
+          : new Map<string, TerminalDirectoryObservation>();
+        const state = yield* readManagerState;
+        const sessions = [...state.sessions.values()];
+        const inspector = sessions.some((session) => session.status === "running")
+          ? yield* acquireSubprocessInspector.pipe(Effect.option)
+          : Option.none();
+        return yield* Effect.forEach(sessions, (session) =>
+          Effect.gen(function* () {
+            const processDirectories: string[] = [];
+            let hasUnobservedProcesses =
+              session.status === "running" &&
+              shellObservations.get(session.terminalId)?.kind !== "known";
+            if (session.status === "running" && session.pid !== null) {
+              const children = Option.isSome(inspector)
+                ? yield* inspector.value.inspector(session.pid).pipe(Effect.option)
+                : Option.none();
+              if (Option.isNone(children)) {
+                hasUnobservedProcesses = true;
+              } else {
+                const childPids = [...new Set(children.value.processIds)].filter(
+                  (pid) => pid !== session.pid,
+                );
+                hasUnobservedProcesses ||=
+                  children.value.hasRunningSubprocess && childPids.length === 0;
+                const observations = yield* Effect.forEach(
+                  childPids,
+                  (pid) => directoryObserver.observe(pid),
+                  { concurrency: 8 },
+                );
+                for (const observation of observations) {
+                  if (observation.kind === "known") processDirectories.push(observation.directory);
+                  else hasUnobservedProcesses = true;
+                }
+              }
+            }
+            return {
+              terminalId: session.terminalId,
+              ...(session.workspaceId !== null ? { workspaceId: session.workspaceId } : {}),
+              status: session.status,
+              launchCwd: session.cwd,
+              observedDirectory: session.observedDirectory,
+              directoryObservationSupported,
+              processDirectories,
+              hasUnobservedProcesses,
+            } satisfies TerminalDirectoryOccupancy;
+          }),
+        );
+      }),
+    );
+
+  const releaseWorkspaceAssignment: TerminalManager["Service"]["releaseWorkspaceAssignment"] = (
+    workspaceId,
+  ) =>
+    directoryObservationLock.withPermit(
+      Effect.gen(function* () {
+        const events = yield* modifyManagerState((state) => {
+          const released: TerminalEvent[] = [];
+          for (const session of state.sessions.values()) {
+            if (session.workspaceId !== workspaceId) continue;
+            session.workspaceId = null;
+            const eventStamp = advanceEventSequence(session);
+            released.push({
+              type: "assigned",
+              terminalId: session.terminalId,
+              sequence: eventStamp.sequence,
+            });
+          }
+          return [released, state] as const;
+        });
+        if (events.length === 0) return;
+        yield* persistSessionIndex;
+        for (const event of events) {
+          yield* publishEvent(event);
+        }
+      }),
+    );
+
   return TerminalManager.of({
     open,
     attachStream,
@@ -3667,6 +4028,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     rename,
     restart,
     close,
+    getDirectoryOccupancy,
+    releaseWorkspaceAssignment,
     subscribe,
     subscribeMetadata,
     getMetadata: readAllTerminalMetadata,
