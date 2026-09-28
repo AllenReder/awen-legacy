@@ -197,12 +197,10 @@ pub async fn capture(app: AppHandle, tab: String) -> Result<CaptureResult, Strin
                 unsafe { view.takeSnapshotWithConfiguration_completionHandler(None, &completion) };
             })
             .map_err(|error| error.to_string())?;
-        return tauri::async_runtime::spawn_blocking(move || {
-            receiver.recv_timeout(Duration::from_secs(10))
-        })
-        .await
-        .map_err(|error| error.to_string())?
-        .map_err(|error| error.to_string())?;
+        tauri::async_runtime::spawn_blocking(move || receiver.recv_timeout(Duration::from_secs(10)))
+            .await
+            .map_err(|error| error.to_string())?
+            .map_err(|error| error.to_string())?
     }
     #[cfg(not(target_os = "macos"))]
     {
