@@ -1,31 +1,10 @@
-import type { ContextMenuItem, WorkspaceId } from "@awen/contracts";
-
-/**
- * The other Workspaces of the same Project that an Agent Session assigned to
- * `workspaceId` can move to. Returns an empty list when the Project or the
- * current Workspace is not in the projection.
- */
-export function siblingWorkspacesForAgent<
-  P extends {
-    readonly environmentId: string;
-    readonly workspaces: ReadonlyArray<{ readonly id: WorkspaceId }>;
-  },
->(projects: ReadonlyArray<P>, environmentId: string, workspaceId: WorkspaceId): P["workspaces"] {
-  const project = projects.find(
-    (candidate) =>
-      candidate.environmentId === environmentId &&
-      candidate.workspaces.some((workspace) => workspace.id === workspaceId),
-  );
-  if (project === undefined) return [];
-  return project.workspaces.filter((workspace) => workspace.id !== workspaceId);
-}
+import type { ContextMenuItem } from "@awen/contracts";
 
 export type SessionActionMenuId =
   | "open"
   | "focus"
   | "split:right"
   | "split:down"
-  | "move-workspace"
   | "rename"
   | "close-session"
   | "delete-session";
@@ -43,10 +22,6 @@ export interface SessionActionMenuState {
   readonly canRename: boolean;
   readonly canClose: boolean;
   readonly canDelete: boolean;
-  /** Agent-only: the Session can move to another Workspace of its Project. */
-  readonly canMigrate: boolean;
-  /** Migration is refused while the Agent is executing. */
-  readonly canMigrateNow: boolean;
 }
 
 /**
@@ -93,22 +68,12 @@ export function buildSessionActionMenuItems(
     },
   );
 
-  if (state.canMigrate) {
-    items.push({
-      id: "move-workspace",
-      label: "Move to Workspace…",
-      icon: "folder",
-      separatorBefore: true,
-      disabled: !state.canMigrateNow,
-    });
-  }
-
   if (state.canRename) {
     items.push({
       id: "rename",
       label: "Rename",
       icon: "pencil",
-      separatorBefore: !state.canMigrate,
+      separatorBefore: true,
     });
   }
 
