@@ -710,6 +710,7 @@ const buildAppUnderTest = (options?: {
       Layer.provideMerge(vcsDriverRegistryLayer),
       Layer.provideMerge(gitVcsDriverLayer),
       Layer.provideMerge(gitManagerLayer),
+      Layer.provideMerge(SessionExecutionLock.layer),
     );
     const vcsProvisioningLayer = VcsProvisioningService.layer.pipe(
       Layer.provide(vcsDriverRegistryLayer),
@@ -6201,6 +6202,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               }),
           },
           gitVcsDriver: {
+            execute: () => Effect.succeed({ ...SUCCESSFUL_GIT_EXECUTION, stdout: "/tmp/repo\n" }),
             pullCurrentBranch: () =>
               Effect.succeed({
                 status: "pulled",

@@ -680,7 +680,7 @@ describe("resolveBranchSelectionTarget", () => {
     });
   });
 
-  it("checks out the default ref in the main repo when leaving a secondary worktree", () => {
+  it("checks out an available default ref in the current worktree", () => {
     expect(
       resolveBranchSelectionTarget({
         activeProjectCwd: "/repo",
@@ -691,8 +691,8 @@ describe("resolveBranchSelectionTarget", () => {
         },
       }),
     ).toEqual({
-      checkoutCwd: "/repo",
-      nextWorktreePath: null,
+      checkoutCwd: "/repo/.awen/worktrees/feature-a",
+      nextWorktreePath: "/repo/.awen/worktrees/feature-a",
       reuseExistingWorktree: false,
     });
   });

@@ -1,10 +1,12 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 
 import {
   GitManagerError,
   GitCommandError,
+  isOrchestrationSessionExecuting,
   type VcsSwitchRefInput,
   type VcsSwitchRefResult,
   type VcsCreateRefInput,
@@ -31,6 +33,8 @@ import {
 import * as GitManager from "./GitManager.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
+import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as SessionExecutionLock from "../session/SessionExecutionLock.ts";
 
 export class GitWorkflowService extends Context.Service<
   GitWorkflowService,
@@ -154,6 +158,54 @@ export const make = Effect.gen(function* () {
   const registry = yield* VcsDriverRegistry.VcsDriverRegistry;
   const git = yield* GitVcsDriver.GitVcsDriver;
   const gitManager = yield* GitManager.GitManager;
+  const projectionQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+  const executionLock = yield* SessionExecutionLock.SessionExecutionLock;
+  const pathService = yield* Path.Path;
+
+  const assertWorkspaceIdle = Effect.fn("GitWorkflowService.assertWorkspaceIdle")(function* (
+    cwd: string,
+  ) {
+    const root = yield* git.execute({
+      operation: "GitWorkflowService.checkoutRoot",
+      cwd,
+      args: ["rev-parse", "--show-toplevel"],
+    });
+    const checkoutRoot = pathService.resolve(root.stdout.trim());
+    const snapshot = yield* projectionQuery.getShellSnapshot().pipe(
+      Effect.mapError(
+        (cause) =>
+          new GitCommandError({
+            operation: "GitWorkflowService.assertWorkspaceIdle",
+            command: "checkout",
+            cwd,
+            detail: "Could not verify Agent Session execution before checkout.",
+            cause,
+          }),
+      ),
+    );
+    const workspace = snapshot.awenProjects
+      ?.flatMap((project) => project.workspaces)
+      .find((candidate) => pathService.resolve(candidate.workspaceRoot) === checkoutRoot);
+    if (
+      workspace &&
+      snapshot.threads.some(
+        (thread) =>
+          thread.projectId === workspace.awenProjectId &&
+          isOrchestrationSessionExecuting(thread.session),
+      )
+    ) {
+      return yield* new GitCommandError({
+        operation: "GitWorkflowService.assertWorkspaceIdle",
+        command: "checkout",
+        cwd,
+        detail:
+          "An Agent Session is executing in this Workspace. Stop it before switching branches.",
+      });
+    }
+  });
+
+  const withCheckoutGuard = <A, E, R>(cwd: string, action: Effect.Effect<A, E, R>) =>
+    executionLock.withLock(assertWorkspaceIdle(cwd).pipe(Effect.andThen(action)));
 
   const ensureGit = Effect.fn("GitWorkflowService.ensureGit")(function* (
     operation: string,
@@ -370,11 +422,23 @@ export const make = Effect.gen(function* () {
       ),
     createRef: (input) =>
       ensureGitCommand("GitWorkflowService.createRef", input.cwd).pipe(
-        Effect.andThen(git.createRef(input)),
+        Effect.andThen(
+          input.switchRef
+            ? withCheckoutGuard(
+                input.cwd,
+                Effect.suspend(() => git.createRef(input)),
+              )
+            : git.createRef(input),
+        ),
       ),
     switchRef: (input) =>
       ensureGitCommand("GitWorkflowService.switchRef", input.cwd).pipe(
-        Effect.andThen(Effect.scoped(git.switchRef(input))),
+        Effect.andThen(
+          withCheckoutGuard(
+            input.cwd,
+            Effect.suspend(() => Effect.scoped(git.switchRef(input))),
+          ),
+        ),
       ),
     renameBranch: (input) =>
       ensureGit("GitWorkflowService.renameBranch", input.cwd).pipe(

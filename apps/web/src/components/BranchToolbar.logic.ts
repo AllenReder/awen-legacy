@@ -256,12 +256,9 @@ export function resolveBranchSelectionTarget(input: {
     };
   }
 
-  const nextWorktreePath =
-    activeWorktreePath !== null && refName.isDefault ? null : activeWorktreePath;
-
   return {
-    checkoutCwd: nextWorktreePath ?? activeProjectCwd,
-    nextWorktreePath,
+    checkoutCwd: activeWorktreePath ?? activeProjectCwd,
+    nextWorktreePath: activeWorktreePath,
     reuseExistingWorktree: false,
   };
 }
