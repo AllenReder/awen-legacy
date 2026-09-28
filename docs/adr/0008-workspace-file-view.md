@@ -1,5 +1,7 @@
 # Self-contained Workspace File View with safe save and dirty guards
 
+View identity and reuse decisions are superseded by [ADR-0028](0028-pane-view-catalog.md) and #156/#168.
+
 The File View is an integrated Workspace View that occupies a single Pane, combining directory tree navigation with active file preview and editing. Opening files from the tree switches the active file in-place within the Pane rather than creating new Panes. File mutations use explicit save with content-hash optimistic concurrency control, and unsaved changes are protected by modal confirmation guards on file switch and Pane close.
 
 ## Status

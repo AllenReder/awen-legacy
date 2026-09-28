@@ -8,7 +8,6 @@ import {
   applyActivateTab,
   applyCloseTab,
   applyClosePane,
-  applyDedupeSessionViews,
   applyRenameTab,
   applyRemoveSessionViews,
   applyOpenTarget,
@@ -17,7 +16,6 @@ import {
   applySetSplitRatio,
   applySetLayoutMode,
   applySplitFocused,
-  applyReplacePaneTarget,
   applyViewDrop,
   initialPaneDropTarget,
   applyPruneWorkspaceViews,
@@ -26,7 +24,7 @@ import {
   tabDisplayTitle,
   type WorkbenchSnapshot,
   type WorkbenchTab,
-  type ViewInstance,
+  type PaneView,
 } from "./workbenchState";
 import { leafIds, newTab } from "./layout";
 import { terminalTargetForRuntime } from "./sessionTarget";
@@ -115,7 +113,7 @@ function withMirroredTab(
   paneId: string,
 ): WorkbenchSnapshot {
   const source = snapshot.tabs.find((tab) => tab.id === sourceTabId);
-  const view: ViewInstance | undefined = source?.panes.get(sourcePaneId);
+  const view: PaneView | undefined = source?.panes.get(sourcePaneId);
   if (source === undefined || view === undefined) throw new Error("mirror source is missing");
   const tab: WorkbenchTab = {
     ...newTab(paneId),
@@ -475,7 +473,7 @@ describe("isolation between panes", () => {
     expect(tab.panes.size).toBe(2);
     expect([...tab.panes.values()].filter((candidate) => candidate === view)).toHaveLength(1);
     expect(tab.panes.get(tab.focusedPaneId)).toBe(view);
-    expect(tab.panes.has(agentPaneId)).toBe(false);
+    expect(tab.focusedPaneId).toBe(agentPaneId);
   });
 
   it("keeps each pane's target intact across focus changes", () => {
@@ -512,9 +510,7 @@ it("keeps each Tab's Views and closes a Tab when closeView empties it", () => {
   snap = applyOpenTarget(snap, terminal("term-1"), ids);
   const secondTab = getActiveTab(snap);
   expect(snap.tabs).toHaveLength(2);
-  expect(secondTab.panes.get(secondTab.focusedPaneId)?.id).not.toBe(
-    firstTab.panes.get(firstTab.focusedPaneId)?.id,
-  );
+  expect(secondTab.focusedPaneId).not.toBe(firstTab.focusedPaneId);
   snap = applyClosePane(snap, secondTab.focusedPaneId, ids)!;
   // Closing the second Tab's final Pane closes that Tab and focuses the first.
   expect(snap.tabs.map((tab) => tab.id)).toEqual([firstTab.id]);
@@ -525,17 +521,17 @@ it("keeps each Tab's Views and closes a Tab when closeView empties it", () => {
   expect(applyActivateTab(snap, "unknown")).toBe(snap);
 });
 
-it("opens Project and Workspace independently even with the same definition and local id", () => {
+it("opens Project and Workspace independently with the same local id", () => {
   const ids = makeIds();
   const project: ViewTarget = {
     kind: "project",
-    definitionId: "overview",
+    definitionId: "project",
     environmentId: ENV_A,
     projectId: "shared" as AwenProjectId,
   };
   const workspace: ViewTarget = {
     kind: "workspace",
-    definitionId: "overview",
+    definitionId: "fileView",
     environmentId: ENV_A,
     workspaceId: "shared" as WorkspaceId,
   };
@@ -649,11 +645,11 @@ describe("applyRemoveSessionViews", () => {
     expect([...getActiveTab(after).panes.values()][0]?.target).toEqual(envBTarget);
   });
 
-  it("matches session even when custom definitionId is present on target", () => {
+  it("matches session even when explicit definitionId is present on target", () => {
     const ids = makeIds();
     const customTarget: ViewTarget = {
       ...agent(AGENT_X),
-      definitionId: "custom-agent-def",
+      definitionId: "agentSession",
     };
     let snap = applyOpenTarget(emptyWorkbenchSnapshot(ids), customTarget, ids);
     const after = applyRemoveSessionViews(snap, agent(AGENT_X), ids);
@@ -668,22 +664,6 @@ describe("applyRemoveSessionViews", () => {
     snap = applyRemoveSessionViews(snap, agent(AGENT_X), ids);
     const repeat = applyRemoveSessionViews(snap, agent(AGENT_X), ids);
     expect(repeat).toBe(snap);
-  });
-});
-
-describe("applyReplacePaneTarget", () => {
-  it("focuses an existing Session instead of creating a duplicate during promotion", () => {
-    const ids = makeIds();
-    let snap = applyOpenTarget(emptyWorkbenchSnapshot(ids), agent(AGENT_X), ids);
-    const agentPaneId = getActiveTab(snap).focusedPaneId;
-    snap = applySplitFocused(snap, terminal("term-1"), "right", ids);
-    const terminalPaneId = getActiveTab(snap).focusedPaneId;
-
-    snap = applyReplacePaneTarget(snap, terminalPaneId, agent(AGENT_X), ids);
-
-    expect(getActiveTab(snap).panes.size).toBe(1);
-    expect(getActiveTab(snap).focusedPaneId).toBe(agentPaneId);
-    expect(getActiveTab(snap).panes.get(agentPaneId)?.target).toEqual(agent(AGENT_X));
   });
 });
 
@@ -706,7 +686,7 @@ describe("applyViewDrop", () => {
     const dropped = getActiveTab(result!.snapshot);
     expect(dropped.id).toBe(tab.id);
     expect(dropped.panes.get(targetPaneId)?.target).toEqual(terminal("term-1"));
-    expect(dropped.panes.get(targetPaneId)?.id).not.toBe(previousView.id);
+    expect(dropped.panes.get(targetPaneId)).not.toBe(previousView);
     expect(result!.paneId).toBe(targetPaneId);
   });
 
@@ -749,9 +729,9 @@ describe("applyViewDrop", () => {
     expect(result).not.toBeNull();
     const tabAfter = result!.snapshot.tabs.find((candidate) => candidate.id === tab.id)!;
     expect(tabAfter.panes.size).toBe(1);
-    expect(tabAfter.panes.get(terminalPaneId)?.target).toEqual(agent(AGENT_X));
+    expect(tabAfter.panes.get(tab.focusedPaneId)?.target).toEqual(agent(AGENT_X));
     expect(countSessionViews(result!.snapshot, agent(AGENT_X))).toBe(1);
-    expect(result).toMatchObject({ tabId: tab.id, paneId: terminalPaneId });
+    expect(result).toMatchObject({ tabId: tab.id, paneId: tab.focusedPaneId });
   });
 
   it("opens Sidebar content into an existing Tab and focuses it there", () => {
@@ -1316,7 +1296,7 @@ describe("Session View uniqueness across the Workbench", () => {
     expect(after).toBe(snap);
   });
 
-  it("still allows one Workspace File View per Tab so two Tabs can show it", () => {
+  it("moves the single Workspace File Pane across Tabs on explicit split", () => {
     const ids = makeIds();
     let snap = applyOpenTarget(emptyWorkbenchSnapshot(ids), workspaceFile(), ids);
     const firstTabId = snap.activeTabId;
@@ -1325,7 +1305,7 @@ describe("Session View uniqueness across the Workbench", () => {
 
     snap = applySplitFocused(snap, workspaceFile(), "right", ids);
 
-    expect(countTargetViews(snap, workspaceFile())).toBe(2);
+    expect(countTargetViews(snap, workspaceFile())).toBe(1);
     expect(snap.tabs.find((tab) => tab.id === firstTabId)?.panes.size).toBe(1);
     expect(getActiveTab(snap).panes.size).toBe(2);
   });
@@ -1461,7 +1441,7 @@ describe("Session View uniqueness across the Workbench", () => {
 describe("session identity", () => {
   it("treats Session targetKey and Session identity alike so dedupe keys cannot drift", () => {
     const plain = agent(AGENT_X);
-    const customDefinition = { ...agent(AGENT_X), definitionId: "custom-agent-def" };
+    const customDefinition = { ...agent(AGENT_X), definitionId: "agentSession" as const };
 
     expect(isSameSessionTarget(plain, customDefinition)).toBe(true);
     expect(targetKey(plain)).toBe(targetKey(customDefinition));
@@ -1474,67 +1454,5 @@ describe("session identity", () => {
       expect(isSameSessionTarget(plain, other)).toBe(false);
       expect(targetKey(plain)).not.toBe(targetKey(other));
     }
-  });
-});
-
-describe("applyDedupeSessionViews", () => {
-  it("keeps the active Tab's focused Session View and closes the other copies", () => {
-    const ids = makeIds();
-    const opened = applyOpenTarget(emptyWorkbenchSnapshot(ids), agent(AGENT_X), ids);
-    const tabId = opened.activeTabId;
-    const paneId = getActiveTab(opened).focusedPaneId;
-    const mirrored = withMirroredTab(opened, tabId, paneId, "restored-tab", "restored-pane");
-
-    const after = applyDedupeSessionViews(mirrored, ids);
-
-    expect(countSessionViews(after, agent(AGENT_X))).toBe(1);
-    expect(after.tabs).toHaveLength(2);
-    expect(paneTargetsOf(after, tabId)).toEqual([agent(AGENT_X)]);
-    expect(paneTargetsOf(after, "restored-tab")).toEqual([{ kind: "welcome" }]);
-  });
-
-  it("keeps the leftmost copy when the active Tab holds no copy", () => {
-    const ids = makeIds();
-    let snap = applyOpenTarget(emptyWorkbenchSnapshot(ids), agent(AGENT_X), ids);
-    const firstTabId = snap.activeTabId;
-    const firstPaneId = getActiveTab(snap).focusedPaneId;
-    snap = applyCreateTab(snap, ids);
-    const activeTabId = snap.activeTabId;
-    const mirrored = withMirroredTab(
-      snap,
-      firstTabId,
-      firstPaneId,
-      "restored-tab",
-      "restored-pane",
-    );
-
-    const after = applyDedupeSessionViews(mirrored, ids);
-
-    expect(countSessionViews(after, agent(AGENT_X))).toBe(1);
-    expect(paneTargetsOf(after, firstTabId)).toEqual([agent(AGENT_X)]);
-    expect(paneTargetsOf(after, "restored-tab")).toEqual([{ kind: "welcome" }]);
-    expect(after.activeTabId).toBe(activeTabId);
-  });
-
-  it("restores Welcome in a Tab that loses its only View", () => {
-    const ids = makeIds();
-    const opened = applyOpenTarget(emptyWorkbenchSnapshot(ids), agent(AGENT_X), ids);
-    const tabId = opened.activeTabId;
-    const paneId = getActiveTab(opened).focusedPaneId;
-    const mirrored = withMirroredTab(opened, tabId, paneId, "restored-tab", "restored-pane");
-
-    const after = applyDedupeSessionViews(mirrored, ids);
-
-    const restoredTab = after.tabs.find((tab) => tab.id === "restored-tab")!;
-    expect(restoredTab.panes.size).toBe(1);
-    expect(restoredTab.panes.get(restoredTab.focusedPaneId)?.target.kind).toBe("welcome");
-  });
-
-  it("leaves a Workbench whose Session Views are already unique untouched", () => {
-    const ids = makeIds();
-    let snap = applyOpenTarget(emptyWorkbenchSnapshot(ids), agent(AGENT_X), ids);
-    snap = applySplitFocused(snap, terminal("term-1"), "right", ids);
-
-    expect(applyDedupeSessionViews(snap, ids)).toBe(snap);
   });
 });

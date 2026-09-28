@@ -2,7 +2,6 @@ import { afterEach, expect, it, vi } from "vite-plus/test";
 import type { AgentSessionId, EnvironmentId, WorkspaceId } from "@awen/contracts";
 
 import { targetKey, type ViewTarget } from "./viewRegistry";
-import { newTab } from "./layout";
 import {
   applyCreateTab,
   applyOpenTarget,
@@ -15,7 +14,6 @@ import { createWorkbenchStore } from "./workbenchStore";
 const ENV_A: EnvironmentId = "env-a" as EnvironmentId;
 const WS_A: WorkspaceId = "ws-a" as WorkspaceId;
 const AGENT_A: AgentSessionId = "agent-a" as AgentSessionId;
-const WORKSPACE_A: WorkspaceId = "workspace-a" as WorkspaceId;
 
 function agent(): Extract<ViewTarget, { kind: "agentSession" }> {
   return {
@@ -77,37 +75,6 @@ it("opens a deep link without replacing restored layout", () => {
   expect(store.getState().activeTabId).toBe(store.getState().tabs[0]?.id);
 });
 
-it("repairs a restored layout that mirrored one Session into two Tabs", () => {
-  const ids = makeIds();
-  const opened = applyOpenTarget(emptyWorkbenchSnapshot(ids), agent(), ids);
-  const sourceTab = getActiveTab(opened);
-  const sourcePaneId = sourceTab.focusedPaneId;
-  const sourceView = sourceTab.panes.get(sourcePaneId)!;
-  // The pre-ADR-0010 model could persist this mirror; the store must repair
-  // it on load instead of rejecting the whole snapshot.
-  const mirrored: WorkbenchSnapshot = {
-    tabs: [
-      sourceTab,
-      {
-        ...newTab("restored-pane"),
-        id: "restored-tab",
-        panes: new Map([["restored-pane", sourceView]]),
-        titleMode: "auto",
-        titleOverride: null,
-      },
-    ],
-    activeTabId: sourceTab.id,
-  };
-
-  const store = createWorkbenchStore({ initialSnapshot: mirrored, generateId: ids });
-
-  expect(store.getState().tabs).toHaveLength(2);
-  expect(store.getState().tabs[0]?.panes.get(sourcePaneId)).toBe(sourceView);
-  const restored = store.getState().tabs[1]!;
-  expect(restored.panes.size).toBe(1);
-  expect([...restored.panes.values()][0]?.target).toEqual({ kind: "welcome" });
-});
-
 it("keeps drag preview out of persisted Workbench state until the exact result is committed", () => {
   const ids = makeIds();
   const initial = applyOpenTarget(emptyWorkbenchSnapshot(ids), agent(), ids);
@@ -135,22 +102,6 @@ it("keeps drag preview out of persisted Workbench state until the exact result i
 
   expect(store.getState().tabs).toEqual(preview!.snapshot.tabs);
   expect(writes).toHaveLength(1);
-});
-
-it("drops legacy Workspace Views when restoring a Workbench layout", () => {
-  const ids = makeIds();
-  const legacyWorkspace = {
-    kind: "workspace",
-    environmentId: ENV_A,
-    workspaceId: WORKSPACE_A,
-  } as const;
-  const restored = applyOpenTarget(emptyWorkbenchSnapshot(ids), legacyWorkspace, ids);
-
-  const store = createWorkbenchStore({ initialSnapshot: restored, generateId: ids });
-  const tab = getActiveTab(store.getState());
-
-  expect(tab.panes.size).toBe(1);
-  expect(tab.panes.get(tab.focusedPaneId)?.target).toEqual({ kind: "welcome" });
 });
 
 it("intercepts pane closure with registered close guard when dirty", async () => {

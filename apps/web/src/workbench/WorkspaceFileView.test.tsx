@@ -79,7 +79,7 @@ describe("WorkspaceFileView", () => {
 
     const target: Extract<ViewTarget, { kind: "workspace" }> = {
       kind: "workspace",
-      definitionId: "fileView",
+      definitionId: "fileEditor",
       environmentId,
       workspaceId,
       initialPath: "src/main.ts",
@@ -178,3 +178,84 @@ describe("WorkspaceFileView", () => {
     expect(definition?.label).toBe("Files");
   });
 });
+
+it.each(["original-hash", undefined])(
+  "opens tree selections and restores moved editor drafts with hash %s",
+  async (contentHash) => {
+    const { useWorkbenchStore, resetWorkbenchStore } = await import("./workbenchStore");
+    resetWorkbenchStore();
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const files: Extract<ViewTarget, { kind: "workspace" }> = {
+      kind: "workspace",
+      definitionId: "fileView",
+      environmentId,
+      workspaceId,
+    };
+    useWorkbenchStore.getState().openTarget(files);
+    const sourceId = useWorkbenchStore.getState().tabs[0]!.focusedPaneId;
+    await act(() => {
+      renderer = create(
+        <WorkspaceFileView
+          target={files}
+          paneId={sourceId}
+          focused
+          availableSize={availableSize}
+        />,
+      );
+    });
+    await act(() => mockPanelProps.mock.lastCall![0].onOpenFile("src/main.ts"));
+    const tab = useWorkbenchStore.getState().tabs[0]!;
+    expect(tab.panes.size).toBe(2);
+    const editorId = tab.focusedPaneId;
+    const editorTarget = tab.panes.get(editorId)!.target as Extract<
+      ViewTarget,
+      { kind: "workspace" }
+    >;
+    expect(editorTarget).toEqual({
+      ...files,
+      definitionId: "fileEditor",
+      initialPath: "src/main.ts",
+    });
+    await act(() => {
+      renderer.update(
+        <WorkspaceFileView
+          key={editorId}
+          target={editorTarget}
+          paneId={editorId}
+          focused
+          availableSize={availableSize}
+        />,
+      );
+    });
+    const draft = { path: "src/main.ts", contents: "unsaved changes", contentHash };
+    await act(() => mockPanelProps.mock.lastCall![0].onDraftChange(draft));
+    const closures: ViewTarget[] = [];
+    const unsubscribe = useWorkbenchStore
+      .getState()
+      .subscribeViewClosures((targets) => closures.push(...targets));
+    await act(() => renderer.unmount());
+    const { serializeWorkbenchSnapshot, deserializeWorkbenchSnapshot } =
+      await import("./workbenchPersistence");
+    const restored = deserializeWorkbenchSnapshot(
+      serializeWorkbenchSnapshot(useWorkbenchStore.getState()),
+    );
+    expect(restored).not.toBeNull();
+    useWorkbenchStore.setState(restored!);
+    useWorkbenchStore.getState().createTab();
+    const destination = useWorkbenchStore.getState().tabs.at(-1)!;
+    useWorkbenchStore.getState().splitPane(destination.focusedPaneId, editorTarget, "right");
+    await act(() => {
+      renderer = create(
+        <WorkspaceFileView
+          target={editorTarget}
+          paneId={editorId}
+          focused
+          availableSize={availableSize}
+        />,
+      );
+    });
+    expect(mockPanelProps.mock.lastCall![0].initialDraft).toEqual(draft);
+    expect(closures).toEqual([]);
+    unsubscribe();
+  },
+);

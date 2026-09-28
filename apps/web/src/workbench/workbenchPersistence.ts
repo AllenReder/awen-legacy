@@ -8,13 +8,12 @@ import {
   type LayoutMemory,
 } from "./scrollingLayout";
 import { leafIds, type LayoutNode } from "./layout";
-import { targetKey, type ViewTarget } from "./viewRegistry";
-import type { ViewInstance, WorkbenchSnapshot, WorkbenchTab } from "./workbenchState";
-import { isSessionViewTarget } from "./workbenchState";
+import { targetKey, isViewTarget, definitionIdForTarget } from "./viewCatalog";
+import type { PaneView, WorkbenchSnapshot, WorkbenchTab } from "./workbenchState";
 
-export const WORKBENCH_PERSISTENCE_KEY = "awen:workbench:v1";
-export const WORKBENCH_PERSISTENCE_BACKUP_KEY = "awen:workbench:v1.backup";
-const WORKBENCH_PERSISTENCE_VERSION = 1;
+export const WORKBENCH_PERSISTENCE_KEY = "awen:workbench:v2";
+export const WORKBENCH_PERSISTENCE_BACKUP_KEY = "awen:workbench:v2.backup";
+const WORKBENCH_PERSISTENCE_VERSION = 2;
 
 export interface WorkbenchStorage {
   readonly getItem: (key: string) => string | null;
@@ -72,38 +71,15 @@ function isColumns(value: unknown): value is Column[] {
   });
 }
 
-function isViewTarget(value: unknown): value is ViewTarget {
-  if (!isRecord(value) || typeof value.kind !== "string") return false;
-  const definitionId = value.definitionId;
-  if (definitionId !== undefined && typeof definitionId !== "string") return false;
-  switch (value.kind) {
-    case "welcome":
-      return true;
-    case "project":
-      return typeof value.environmentId === "string" && typeof value.projectId === "string";
-    case "workspace":
-      return typeof value.environmentId === "string" && typeof value.workspaceId === "string";
-    case "agentSession":
-      return typeof value.environmentId === "string" && typeof value.agentSessionId === "string";
-    case "workspaceTerminal":
-      return (
-        typeof value.environmentId === "string" &&
-        typeof value.terminalSessionId === "string" &&
-        (value.workspaceId === undefined || typeof value.workspaceId === "string")
-      );
-    default:
-      return false;
-  }
-}
-
-function isViewInstance(value: unknown): value is ViewInstance {
+function isPaneView(value: unknown): value is PaneView {
   return (
     isRecord(value) &&
-    typeof value.id === "string" &&
-    value.id.length > 0 &&
+    value.id === undefined &&
+    isRecord(value.presentation) &&
     typeof value.definitionId === "string" &&
     value.definitionId.length > 0 &&
-    isViewTarget(value.target)
+    isViewTarget(value.target) &&
+    value.definitionId === definitionIdForTarget(value.target)
   );
 }
 
@@ -120,25 +96,13 @@ function decodeWorkbenchTab(value: unknown): WorkbenchTab | null {
   ) {
     return null;
   }
-  const panes = new Map<string, ViewInstance>();
+  const panes = new Map<string, PaneView>();
   const perTabTargetKeys = new Set<string>();
   for (const entry of value.panes) {
     if (!Array.isArray(entry) || entry.length !== 2 || typeof entry[0] !== "string") return null;
-    if (!isViewInstance(entry[1]) || panes.has(entry[0])) return null;
-    const savedTarget = entry[1].target;
-    const target: ViewTarget =
-      savedTarget.kind === "agentSession"
-        ? {
-            kind: "agentSession",
-            environmentId: savedTarget.environmentId,
-            agentSessionId: savedTarget.agentSessionId,
-            ...(savedTarget.definitionId ? { definitionId: savedTarget.definitionId } : {}),
-          }
-        : savedTarget;
-    // A Session View is repaired to one View after decoding (ADR-0010), so a
-    // legacy snapshot may legitimately list the same Session twice. Other
-    // targets must still be unique inside one Tab.
-    if (target.kind !== "welcome" && target.kind !== "project" && !isSessionViewTarget(target)) {
+    if (!isPaneView(entry[1]) || panes.has(entry[0])) return null;
+    const target = entry[1].target;
+    if (target.kind !== "welcome") {
       const key = targetKey(target);
       if (perTabTargetKeys.has(key)) return null;
       perTabTargetKeys.add(key);
@@ -199,9 +163,20 @@ function decodeWorkbenchSnapshot(value: unknown): WorkbenchSnapshot | null {
   }
   const tabs: WorkbenchTab[] = [];
   const tabIds = new Set<string>();
+  const paneIds = new Set<string>();
+  const resources = new Set<string>();
   for (const candidate of value.tabs) {
     const tab = decodeWorkbenchTab(candidate);
     if (tab === null || tabIds.has(tab.id)) return null;
+    for (const [paneId, pane] of tab.panes) {
+      if (paneIds.has(paneId)) return null;
+      paneIds.add(paneId);
+      if (pane.target.kind !== "welcome") {
+        const key = targetKey(pane.target);
+        if (resources.has(key)) return null;
+        resources.add(key);
+      }
+    }
     tabIds.add(tab.id);
     tabs.push(tab);
   }

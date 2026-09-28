@@ -90,6 +90,10 @@ export function useProjects(): ReadonlyArray<EnvironmentProject> {
   return useAtomValue(environmentProjects.projectsAtom);
 }
 
+export function readAwenProjects() {
+  return appAtomRegistry.get(environmentWorkspace.awenProjectsAtom);
+}
+
 export function useAwenProjects() {
   return useAtomValue(environmentWorkspace.awenProjectsAtom);
 }

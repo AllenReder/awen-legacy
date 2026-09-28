@@ -8,11 +8,11 @@ import {
 } from "./workbenchDrag";
 import { resetWorkbenchStore, useWorkbenchStore } from "./workbenchStore";
 import { leaf, splitPane } from "./layout";
-import type { WorkbenchTab, ViewInstance, ViewDragSource } from "./workbenchState";
+import type { WorkbenchTab, PaneView, ViewDragSource } from "./workbenchState";
 import type { EnvironmentId, WorkspaceId, AgentSessionId } from "@awen/contracts";
 
-const dummyView = (id: string): ViewInstance => ({
-  id: `view-${id}`,
+const dummyView = (_id: string): PaneView => ({
+  presentation: {},
   definitionId: "agent",
   target: { kind: "welcome" },
 });
@@ -651,7 +651,7 @@ describe("WorkbenchDrag lifecycle and overlay animations", () => {
           [
             "pane-active",
             {
-              id: "v-active",
+              presentation: {},
               definitionId: "agent",
               target: agentTarget,
             },
@@ -668,7 +668,7 @@ describe("WorkbenchDrag lifecycle and overlay animations", () => {
           [
             "pane-inactive",
             {
-              id: "v-inactive",
+              presentation: {},
               definitionId: "terminal",
               target: terminalTarget,
             },

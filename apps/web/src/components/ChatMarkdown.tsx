@@ -1,3 +1,4 @@
+import { openSessionFile } from "~/workbench/openSessionFile";
 import { usePullRequestLinking } from "~/hooks/usePullRequestLinking";
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -159,7 +160,6 @@ import { readLocalApi } from "../localApi";
 import { useAssetUrlRefresh, useAssetUrlState } from "../assets/assetUrls";
 import { cn } from "../lib/utils";
 import { useRemoteOpenResolution, type RemoteOpenMode } from "../remoteOpen";
-import { useRightPanelStore } from "../rightPanelStore";
 import { readThreadShell, useProjects } from "../state/entities";
 import { serverEnvironment } from "../state/server";
 import { shellEnvironment } from "../state/shell";
@@ -1620,12 +1620,10 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
     ...(relativePath && resource._tag !== "attachment"
       ? {
           onOpenFile: () =>
-            useRightPanelStore
-              .getState()
-              .openFile(
-                { environmentId: props.environmentId, threadId: resource.threadId },
-                relativePath,
-              ),
+            openSessionFile(
+              { environmentId: props.environmentId, threadId: resource.threadId },
+              relativePath,
+            ),
         }
       : {}),
   };
@@ -2268,9 +2266,7 @@ function useChatMarkdownState({
         httpBaseUrl:
           preparedConnection._tag === "Some" ? preparedConnection.value.httpBaseUrl : undefined,
         createAssetUrl,
-        onOpenFile: threadRef
-          ? (path) => useRightPanelStore.getState().openFile(threadRef, path)
-          : undefined,
+        onOpenFile: threadRef ? (path) => openSessionFile(threadRef, path) : undefined,
       }).then(
         (preview) => {
           if (preview && mediaRequestId.current === requestId) {
@@ -2509,8 +2505,7 @@ function useChatMarkdownState({
       // Claimed on every open so a synchronous one supersedes a lookup already
       // in flight.
       const isLatestLookup = claimWorkspaceBasenameLookup();
-      const openAt = (path: string) =>
-        useRightPanelStore.getState().openFile(threadRef, path, line);
+      const openAt = (path: string) => openSessionFile(threadRef, path, line);
       if (!cwd || !needsWorkspaceBasenameLookup(panelPath)) {
         openAt(panelPath);
         return;

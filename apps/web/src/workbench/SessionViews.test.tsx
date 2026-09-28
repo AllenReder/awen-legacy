@@ -158,7 +158,7 @@ it("detaches only the current View on closeView and closes the emptied Tab on re
   expect(getActiveTab(useWorkbenchStore.getState()).panes.size).toBe(2);
   expect(useWorkbenchStore.getState().tabs).toHaveLength(2);
 
-  // 1. closeView on Tab 2 detaches only that ViewInstance; the Tab keeps its Terminal
+  // 1. closeView on Tab 2 detaches only that PaneView; the Tab keeps its Terminal
   const tab2PaneId = [...getActiveTab(useWorkbenchStore.getState()).panes.entries()].find(
     ([, view]) => view.target.kind === "agentSession",
   )![0];

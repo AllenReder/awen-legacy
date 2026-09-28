@@ -1,83 +1,14 @@
 import { createElement, useMemo, useSyncExternalStore, type ComponentType } from "react";
 
-import type {
-  AgentSessionId,
-  AwenProjectId,
-  EnvironmentId,
-  TerminalSessionId,
-  WorkspaceId,
-} from "@awen/contracts";
-
-/** Product identities only. Runtime identities belong to trusted adapters. */
-export type ViewTarget = (
-  | { readonly kind: "welcome" }
-  | {
-      readonly kind: "project";
-      readonly environmentId: EnvironmentId;
-      readonly projectId: AwenProjectId;
-    }
-  | {
-      readonly kind: "workspace";
-      readonly environmentId: EnvironmentId;
-      readonly workspaceId: WorkspaceId;
-      readonly initialPath?: string | undefined;
-      readonly revealLine?: number | undefined;
-    }
-  | {
-      readonly kind: "agentSession";
-      readonly environmentId: EnvironmentId;
-      readonly agentSessionId: AgentSessionId;
-    }
-  | {
-      readonly kind: "workspaceTerminal";
-      readonly environmentId: EnvironmentId;
-      /**
-       * Stable Awen Terminal Session identity. The Workspace is a nullable,
-       * mutable assignment, so it is not part of the target identity.
-       */
-      readonly terminalSessionId: TerminalSessionId;
-      /** Current assignment, absent when the terminal is unassigned. */
-      readonly workspaceId?: WorkspaceId;
-    }
-) & { readonly definitionId?: string };
-
-/** All known target kinds. The registry resolves a definition per kind. */
-export type ViewKind = ViewTarget["kind"];
-
-/**
- * Stable identity used by the workbench store to detect "the user is opening
- * this target again" — same `targetKey` means the workbench may surface an
- * existing View instance instead of creating a new one.
- */
-export function targetKey(target: ViewTarget): string {
-  switch (target.kind) {
-    case "welcome":
-      return "welcome";
-    case "project":
-      return JSON.stringify([
-        target.kind,
-        definitionIdForTarget(target),
-        target.environmentId,
-        target.projectId,
-      ]);
-    case "workspace":
-      return JSON.stringify([
-        target.kind,
-        definitionIdForTarget(target),
-        target.environmentId,
-        target.workspaceId,
-      ]);
-    case "agentSession":
-      return JSON.stringify(["agentSession", target.environmentId, target.agentSessionId]);
-    case "workspaceTerminal":
-      return `workspaceTerminal:${target.environmentId}:${target.terminalSessionId}`;
-  }
-}
-
-/** Structural equality over `ViewTarget`. Used to compare the focus of two panes. */
-export function targetsEqual(a: ViewTarget, b: ViewTarget): boolean {
-  return targetKey(a) === targetKey(b);
-}
+import { isViewTarget, definitionIdForTarget, type ViewTarget } from "./viewCatalog";
+export {
+  definitionIdForTarget,
+  targetKey,
+  targetsEqual,
+  isViewTarget,
+  type ViewTarget,
+  type ViewKind,
+} from "./viewCatalog";
 
 /** Cached immutable snapshots; subscribe releases all resources on unsubscribe. */
 export interface ViewDataSource<Data> {
@@ -139,10 +70,6 @@ export const emptyViewBinding = () => ({
 
 const REGISTRY = new Map<string, RegisteredViewDefinition>();
 
-export function definitionIdForTarget(target: ViewTarget): string {
-  return target.definitionId ?? target.kind;
-}
-
 /** Close over generic types so registry dispatch needs no unsafe renderer casts. */
 export function registerViewDefinition<
   T extends ViewTarget,
@@ -175,7 +102,7 @@ export function registerViewDefinition<
 
 export function resolveViewDefinition(target: ViewTarget): RegisteredViewDefinition | null {
   const definition = REGISTRY.get(definitionIdForTarget(target));
-  return definition?.accepts(target) ? definition : null;
+  return isViewTarget(target) && definition?.accepts(target) ? definition : null;
 }
 
 export function clearViewRegistry(): void {

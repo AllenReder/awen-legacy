@@ -62,7 +62,7 @@ not create or terminate the underlying Session or Workspace work.
 _Avoid_: Panel, Surface, Tool, Widget
 
 **Workbench**:
-The client-owned organizer of Tabs and their View instances. It accepts
+The client-owned organizer of Tabs and their Panes. It accepts
 navigation requests from the Sidebar and manages presentation focus and
 layout, but it does not own the lifecycle of Projects, Workspaces, or Sessions.
 _Avoid_: Shell, Session manager, Navigator
@@ -81,9 +81,9 @@ does not require the daemon to hold a long-lived Session.
 _Avoid_: Session, Workspace panel
 
 **File View**:
-A Workspace View for browsing, previewing, and editing files relative to its
-Workspace. Its content is addressed by Workspace path and does not require an
-Agent Session or Thread.
+A Workspace View for previewing and editing one file addressed by Workspace
+and path. A Files View browses the Workspace and opens File Views beside it;
+each resource has one presenting Pane across the Workbench.
 _Avoid_: File panel, File browser
 
 **Git View**:
@@ -104,12 +104,6 @@ The registered kind of a View, with its identity and renderer. A definition
 describes what can be opened and may be supplied by Awen or a plugin; it is
 not one opened occurrence.
 _Avoid_: Panel registration, View instance
-
-**View instance**:
-One client-owned occurrence of a View definition bound to its target and
-referenced by a Pane. Moving an instance changes its presentation position,
-never Session or Workspace work, and a Session View instance is never copied.
-_Avoid_: Session, process, daemon entity
 
 **Workspace path**:
 A normalized path relative to a Workspace root, used by file and Git Views as
@@ -177,7 +171,8 @@ Tab order.
 _Avoid_: Tab highlight, underline, selection bar
 
 **Pane**:
-The smallest functional window in a Tab, holding exactly one View instance.
+The smallest functional window in a Tab, holding a View definition, its target,
+and local presentation state. Its identity follows it when moved between Tabs.
 Panes and Tabs are layout concepts; a Pane is never an empty or standalone
 Session state.
 _Avoid_: Panel, Widget, Window, Split

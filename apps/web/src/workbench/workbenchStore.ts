@@ -14,14 +14,12 @@ import {
   applyActivateTab,
   activeTabIdAfterClose,
   applyClosePane,
-  applyDedupeSessionViews,
   applyRemoveSessionViews,
-  applyReplacePaneTarget,
   applyRenameTab,
   applyOpenDeepLinkTarget,
   applyOpenTarget,
+  applyOpenFromPane,
   applyPruneWorkspaceViews,
-  applyRemoveWorkspaceViews,
   applySetFocused,
   applySetSplitRatio,
   applySplitPane,
@@ -64,10 +62,11 @@ export interface WorkbenchStore extends WorkbenchSnapshot {
   renameTab: (tabId: string, title: string | null) => void;
   closeView: (paneId: string) => void;
   removeSessionViews: (target: ViewTarget) => void;
-  replaceTarget: (paneId: string, target: ViewTarget) => void;
   previewDrop: (source: ViewDragSource, target: ViewDropTarget) => ViewDropResult | null;
   commitDrop: (result: ViewDropResult) => void;
   openTarget: (target: ViewTarget) => void;
+  openFromPane: (paneId: string, target: ViewTarget) => void;
+  setPanePresentation: (paneId: string, presentation: Readonly<Record<string, unknown>>) => void;
   openDeepLinkTarget: (target: ViewTarget) => void;
   pruneWorkspaceViews: (
     workspaces: ReadonlyArray<{ readonly environmentId: string; readonly workspaceId: string }>,
@@ -112,13 +111,8 @@ export function createWorkbenchStore(options: WorkbenchStoreOptions = {}) {
   const generateId = options.generateId ?? defaultGenerateId;
   const persist = options.persist ?? ((snapshot) => writeWorkbenchSnapshot(snapshot));
   const tabCloseDelayMs = () => scaledMotionDuration(FLUID_MOTION_DURATION_MS);
-  const initialSnapshot = applyDedupeSessionViews(
-    applyRemoveWorkspaceViews(
-      options.initialSnapshot ?? readWorkbenchSnapshot() ?? emptyWorkbenchSnapshot(generateId),
-      generateId,
-    ),
-    generateId,
-  );
+  const initialSnapshot =
+    options.initialSnapshot ?? readWorkbenchSnapshot() ?? emptyWorkbenchSnapshot(generateId);
   const previews = new WeakMap<ViewDropResult, WorkbenchSnapshot>();
   const closeGuards = new Map<string, PaneCloseGuard>();
   const closureListeners = new Set<ViewClosureListener>();
@@ -131,13 +125,11 @@ export function createWorkbenchStore(options: WorkbenchStoreOptions = {}) {
     closeTimers.add(timer);
   };
   const notifyClosedViews = (before: WorkbenchSnapshot, after: WorkbenchSnapshot) => {
-    const remaining = new Set(
-      after.tabs.flatMap((tab) => [...tab.panes.values()].map((view) => view.id)),
-    );
+    const remaining = new Set(after.tabs.flatMap((tab) => [...tab.panes.keys()]));
     const removed = before.tabs
-      .flatMap((tab) => [...tab.panes.values()])
-      .filter((view) => !remaining.has(view.id))
-      .map((view) => view.target);
+      .flatMap((tab) => [...tab.panes.entries()])
+      .filter(([paneId]) => !remaining.has(paneId))
+      .map(([, view]) => view.target);
     if (removed.length > 0) for (const listener of closureListeners) listener(removed);
   };
   const store = create<WorkbenchStore>((set, get) => {
@@ -347,8 +339,21 @@ export function createWorkbenchStore(options: WorkbenchStoreOptions = {}) {
           false,
         );
       },
-      replaceTarget: (paneId, target) =>
-        set((snapshot) => applyReplacePaneTarget(snapshot, paneId, target, generateId)),
+      openFromPane: (paneId, target) =>
+        set((snapshot) => ({
+          ...applyOpenFromPane(snapshot, paneId, target, generateId),
+          focusRequestId: snapshot.focusRequestId + 1,
+        })),
+      setPanePresentation: (paneId, presentation) =>
+        set((snapshot) => ({
+          tabs: snapshot.tabs.map((tab) => {
+            const pane = tab.panes.get(paneId);
+            if (!pane) return tab;
+            const panes = new Map(tab.panes);
+            panes.set(paneId, { ...pane, presentation: { ...pane.presentation, ...presentation } });
+            return { ...tab, panes };
+          }),
+        })),
       previewDrop: (source, target) => {
         const base = get();
         const result = applyViewDrop(base, source, target, generateId);

@@ -8,10 +8,10 @@ import {
   computeEdgeAutoScrollVelocity,
 } from "./workbenchDrag";
 import { leaf, splitPane } from "./layout";
-import { computeBaseTab, type WorkbenchTab, type ViewInstance } from "./workbenchState";
+import { computeBaseTab, type WorkbenchTab, type PaneView } from "./workbenchState";
 
-const dummyView = (id: string): ViewInstance => ({
-  id: `view-${id}`,
+const dummyView = (_id: string): PaneView => ({
+  presentation: {},
   definitionId: "agent",
   target: { kind: "welcome" },
 });

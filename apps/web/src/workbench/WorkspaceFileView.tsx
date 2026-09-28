@@ -1,6 +1,10 @@
-import { lazy, Suspense, useEffect, useState } from "react";
+import type { FileEditorDraft } from "../components/files/FilePreviewPanel";
+import { lazy, Suspense } from "react";
 import { useAwenWorkspace } from "../state/entities";
 import { useEnvironment } from "../state/environments";
+import { useWorkspaceViewActions } from "./useWorkspaceViewActions";
+import { getPanePresentation } from "./workbenchState";
+import { useWorkbenchStore } from "./workbenchStore";
 import type { ViewTarget } from "./viewRegistry";
 import { Spinner } from "~/components/ui/spinner";
 import { WifiOff } from "lucide-react";
@@ -24,23 +28,38 @@ export function WorkspaceFileView({
 }: WorkspaceFileViewProps) {
   const workspace = useAwenWorkspace(target.environmentId, target.workspaceId);
   const environment = useEnvironment(target.environmentId);
-  const [selectedPath, setSelectedPath] = useState<string | null>(
-    "initialPath" in target && typeof target.initialPath === "string" ? target.initialPath : null,
-  );
-  const [revealLine, setRevealLine] = useState<number | null>(
-    "revealLine" in target && typeof target.revealLine === "number" ? target.revealLine : null,
-  );
-  const [revealRequestId, setRevealRequestId] = useState(1);
+  const { onOpenFile } = useWorkspaceViewActions({
+    environmentId: target.environmentId,
+    workspaceId: target.workspaceId,
+    paneId,
+  });
+  const presentation = useWorkbenchStore((state) => getPanePresentation(state, paneId));
+  const selectedPath = target.initialPath ?? null;
+  const revealLine =
+    typeof presentation?.revealLine === "number"
+      ? presentation.revealLine
+      : (target.revealLine ?? null);
 
-  useEffect(() => {
-    if ("initialPath" in target && typeof target.initialPath === "string") {
-      setSelectedPath(target.initialPath);
-      setRevealLine(
-        "revealLine" in target && typeof target.revealLine === "number" ? target.revealLine : null,
-      );
-      setRevealRequestId((r) => r + 1);
-    }
-  }, [target]);
+  const savedDraft = presentation?.fileDraft;
+  const initialDraft: FileEditorDraft | undefined =
+    savedDraft &&
+    typeof savedDraft === "object" &&
+    "path" in savedDraft &&
+    typeof savedDraft.path === "string" &&
+    "contents" in savedDraft &&
+    typeof savedDraft.contents === "string" &&
+    (!("contentHash" in savedDraft) ||
+      savedDraft.contentHash === undefined ||
+      typeof savedDraft.contentHash === "string")
+      ? {
+          path: savedDraft.path,
+          contents: savedDraft.contents,
+          contentHash:
+            "contentHash" in savedDraft
+              ? (savedDraft.contentHash as string | undefined)
+              : undefined,
+        }
+      : undefined;
 
   if (workspace === null) {
     const isOffline = environment !== null && environment.connection.phase !== "connected";
@@ -86,12 +105,13 @@ export function WorkspaceFileView({
           projectName={workspace.title}
           relativePath={selectedPath}
           revealLine={revealLine}
-          revealRequestId={revealRequestId}
-          onOpenFile={(relativePath) => {
-            setSelectedPath(relativePath);
-            setRevealLine(null);
-            setRevealRequestId((r) => r + 1);
-          }}
+          revealRequestId={_focusRequestId}
+          onOpenFile={onOpenFile}
+          initialDraft={initialDraft}
+          onDraftChange={(fileDraft) =>
+            useWorkbenchStore.getState().setPanePresentation(paneId, { fileDraft })
+          }
+          navigationOpensPane
           paneId={paneId}
           explicitSave
           workspaceMutationId={null}

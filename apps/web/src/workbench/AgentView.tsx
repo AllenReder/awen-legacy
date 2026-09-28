@@ -15,7 +15,7 @@ interface AgentViewProps {
 /**
  * View definition rendering one Awen Agent Session inside a Pane.
  *
- * Adapter from the workbench's `View instance` to the existing `<ChatView>`
+ * Adapter from the workbench's Pane View specification to the existing `<ChatView>`
  * component (which already hosts the Awen timeline, composer, tool activity,
  * approvals and error surface). The View resolves the current Workspace from
  * the durable Session shell, so its navigation address remains stable.
@@ -61,11 +61,12 @@ function LoadedAgentView({
   availableSize,
   session,
 }: AgentViewProps & { readonly session: AwenAgentSessionShell }) {
-  const { onBrowseFiles, onReviewChanges, onNewTerminalSession } = useWorkspaceViewActions({
-    environmentId: target.environmentId,
-    workspaceId: session.workspaceId,
-    paneId,
-  });
+  const { onBrowseFiles, onReviewChanges, onNewTerminalSession, onOpenFile } =
+    useWorkspaceViewActions({
+      environmentId: target.environmentId,
+      workspaceId: session.workspaceId,
+      paneId,
+    });
 
   return (
     <div className="relative flex h-full min-h-0 flex-col">
@@ -87,6 +88,7 @@ function LoadedAgentView({
           focused={focused}
           focusRequestId={focusRequestId}
           availableSize={availableSize}
+          onOpenWorkspaceFile={onOpenFile}
           onBrowseFiles={onBrowseFiles}
           onReviewChanges={onReviewChanges}
           onNewTerminalSession={onNewTerminalSession}
