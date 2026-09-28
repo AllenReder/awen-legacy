@@ -58,6 +58,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
@@ -2048,6 +2049,17 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     options.directoryObserver ??
     makeTerminalDirectoryObserver({ platform, fileSystem, processRunner });
   const directoryObservationSupported = directoryObserver.capability.supported;
+  // macOS spawns lsof; cap busy-terminal probes at four per second.
+  const directoryActivityWindowMs = directoryObserver.capability.mechanism === "lsof" ? 250 : 50;
+  // A single wake-up covers a burst; the set retains every affected terminal.
+  const directoryWakeups = yield* Effect.acquireRelease(Queue.sliding<void>(1), Queue.shutdown);
+  const pendingDirectorySessions = new Set<string>();
+  let refreshAllDirectories = false;
+  const requestDirectoryObservation = (terminalId: string) => {
+    if (!directoryObservationSupported) return;
+    pendingDirectorySessions.add(terminalId);
+    Queue.offerUnsafe(directoryWakeups, undefined);
+  };
 
   yield* fileSystem.makeDirectory(logsDir, { recursive: true }).pipe(Effect.orDie);
 
@@ -2825,6 +2837,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
 
             const processPid = ptyProcess.pid;
             const unsubscribeData = ptyProcess.onData((data) => {
+              requestDirectoryObservation(session.terminalId);
               const scannedTitle = parseTerminalTitleUpdates(session.pendingTitleSequence, data);
               session.pendingTitleSequence = scannedTitle.pending;
               const nextTitle =
@@ -3173,8 +3186,13 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
    * backs off to a minute when the resource-monitor snapshot is unavailable,
    * and Sidebar reassignment must not inherit that delay.
    */
-  const pollDirectoryAssignments = Effect.fn("terminal.pollDirectoryAssignments")(function* () {
-    const sessions = yield* runningSessionPids;
+  const directoryObservationLock = yield* Semaphore.make(1);
+  const pollDirectoryAssignments = Effect.fn("terminal.pollDirectoryAssignments")(function* (
+    terminalIds?: ReadonlySet<string>,
+  ) {
+    const sessions = (yield* runningSessionPids).filter(
+      (session) => terminalIds === undefined || terminalIds.has(session.terminalId),
+    );
     if (sessions.length === 0) return;
 
     // One registry read per tick, reused by every terminal. A failure keeps the
@@ -3210,12 +3228,29 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   });
 
   if (directoryObservationSupported) {
+    // The fallback has its own clock, so continuous output from one terminal
+    // cannot starve silent terminals. Both triggers feed the same serial worker.
     yield* Effect.forever(
-      pollDirectoryAssignments().pipe(
+      Effect.sync(() => {
+        refreshAllDirectories = true;
+        Queue.offerUnsafe(directoryWakeups, undefined);
+      }).pipe(Effect.andThen(Effect.sleep(directoryPollIntervalMs))),
+    ).pipe(Effect.forkIn(workerScope));
+
+    yield* Effect.forever(
+      Queue.take(directoryWakeups).pipe(
+        // Fixed coalescing window, not trailing debounce: continuous output
+        // cannot postpone observation indefinitely or spawn a probe per chunk.
+        Effect.andThen(Effect.sleep(directoryActivityWindowMs)),
+        Effect.flatMap(() => {
+          const terminalIds = refreshAllDirectories ? undefined : new Set(pendingDirectorySessions);
+          refreshAllDirectories = false;
+          pendingDirectorySessions.clear();
+          return directoryObservationLock.withPermit(pollDirectoryAssignments(terminalIds));
+        }),
         Effect.catchCause((cause) =>
           Effect.logWarning("terminal directory observation tick failed", { cause }),
         ),
-        Effect.flatMap(() => Effect.sleep(directoryPollIntervalMs)),
       ),
     ).pipe(Effect.forkIn(workerScope));
   }
@@ -3723,6 +3758,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           cause,
         }),
     });
+    requestDirectoryObservation(terminalId);
   });
 
   const resizeLocked = Effect.fn("terminal.resize")(function* (input: TerminalResizeInput) {
@@ -3895,17 +3931,23 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     );
 
   const getDirectoryOccupancy: TerminalManager["Service"]["getDirectoryOccupancy"] = () =>
-    readManagerState.pipe(
-      Effect.map((state) =>
-        [...state.sessions.values()].map((session): TerminalDirectoryOccupancy => ({
-          terminalId: session.terminalId,
-          ...(session.workspaceId !== null ? { workspaceId: session.workspaceId } : {}),
-          status: session.status,
-          launchCwd: session.cwd,
-          observedDirectory: session.observedDirectory,
-          directoryObservationSupported,
-        })),
-      ),
+    directoryObservationLock.withPermit(
+      Effect.gen(function* () {
+        // Destructive operations must not trust a snapshot from before a recent cd.
+        if (directoryObservationSupported) yield* pollDirectoryAssignments();
+        return yield* readManagerState.pipe(
+          Effect.map((state) =>
+            [...state.sessions.values()].map((session): TerminalDirectoryOccupancy => ({
+              terminalId: session.terminalId,
+              ...(session.workspaceId !== null ? { workspaceId: session.workspaceId } : {}),
+              status: session.status,
+              launchCwd: session.cwd,
+              observedDirectory: session.observedDirectory,
+              directoryObservationSupported,
+            })),
+          ),
+        );
+      }),
     );
 
   const releaseWorkspaceAssignment: TerminalManager["Service"]["releaseWorkspaceAssignment"] = (

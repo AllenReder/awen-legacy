@@ -108,9 +108,19 @@ A running terminal follows the shell's real working directory (ADR-0028). The
 daemon observes the process cwd through `TerminalDirectoryObserver` and updates
 only the mutable `workspaceId` assignment; it never changes launch context,
 restarts the PTY, or alters Session/Pane identity. Observation failures are
-reported as `unknown` and retain the last confirmed assignment. Observation
-runs on its own cadence (`directoryPollIntervalMs`, default 1s), separate from
-subprocess polling, so the resource-monitor backoff cannot delay reassignment.
+reported as `unknown` and retain the last confirmed assignment. PTY output and input wake directory observation immediately, with a fixed burst
+coalescing window (50ms for procfs, 250ms for lsof to limit process spawning). Output only triggers an OS query; its contents
+(including prompt paths and OSC sequences) never supply the directory. A separate
+fallback clock (`directoryPollIntervalMs`, default 1s) covers silent shells and
+registration changes. One worker handles both triggers, so probes cannot overlap
+or accumulate per output chunk, and continuous output cannot starve silent
+terminals. Resource-monitor backoff does not affect this worker.
+
+Directory occupancy reads refresh the OS evidence before returning it, serialized
+with the background worker. This prevents a deletion check from trusting a cached
+directory from before a recent `cd`; unknown observations still retain the last
+confirmed evidence. Observation and filesystem deletion are not an atomic OS
+transaction, so a process can still move after the check.
 
 The supported observation matrix lives in
 `apps/server/src/terminal/DirectoryObservation.ts`:

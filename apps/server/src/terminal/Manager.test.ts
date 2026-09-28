@@ -3205,6 +3205,35 @@ it.layer(
   );
 
   it.effect(
+    "reassigns promptly after shell output when entering another Workspace subdirectory",
+    () =>
+      Effect.gen(function* () {
+        let directory = process.cwd();
+        const { manager, ptyAdapter, getEvents } = yield* createManager(5, {
+          directoryPollIntervalMs: 60_000,
+          directoryObserver: fakeDirectoryObserver(() => directory),
+          listRegisteredWorkspaceDirectories: () =>
+            Effect.succeed([{ workspaceId: "workspace:a", workspaceRoot: "/workspace-a" }]),
+        });
+        yield* manager.open({ terminalId: "term-prompt", cwd: process.cwd(), cols: 80, rows: 24 });
+        // Let the initial observation complete; the fallback tick is a minute away.
+        yield* Effect.sleep("50 millis");
+        directory = "/workspace-a/src/deep";
+        ptyAdapter.processes[0]!.emitData("$ ");
+        yield* waitFor(
+          Effect.map(getEvents, (events) =>
+            events.some(
+              (event) => event.type === "assigned" && event.workspaceId === "workspace:a",
+            ),
+          ),
+          "500 millis",
+        );
+        expect(ptyAdapter.processes).toHaveLength(1);
+        expect((yield* manager.getMetadata())[0]?.workspaceId).toBe("workspace:a");
+      }),
+  );
+
+  it.effect(
     "follows a reliable shell directory into a registered Workspace without restarting",
     () =>
       Effect.gen(function* () {
@@ -3340,6 +3369,22 @@ it.layer(
           ),
         ).toBe(true);
       }),
+  );
+
+  it.effect("refreshes directory occupancy before the next background tick", () =>
+    Effect.gen(function* () {
+      let directory = process.cwd();
+      const { manager } = yield* createManager(5, {
+        directoryPollIntervalMs: 60_000,
+        directoryObserver: fakeDirectoryObserver(() => directory),
+      });
+      yield* manager.open({ terminalId: "term-occupancy", cwd: process.cwd(), cols: 80, rows: 24 });
+      yield* Effect.sleep("100 millis");
+      directory = "/workspace-a/nested";
+      expect((yield* manager.getDirectoryOccupancy())[0]?.observedDirectory).toBe(directory);
+      directory = "/elsewhere";
+      expect((yield* manager.getDirectoryOccupancy())[0]?.observedDirectory).toBe(directory);
+    }),
   );
 
   it.effect("reports directory occupancy and releases an assignment without stopping the PTY", () =>

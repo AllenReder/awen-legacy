@@ -75,7 +75,8 @@ async function main(): Promise<void> {
   const baseDir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "awen-c04-terminal-"));
   const logsDir = NodePath.join(baseDir, "userdata", "logs", "terminals");
   const followDir = NodePath.join(baseDir, "follow-target");
-  await NodeFSP.mkdir(followDir, { recursive: true });
+  const followSubdirectory = NodePath.join(followDir, "src", "nested");
+  await NodeFSP.mkdir(followSubdirectory, { recursive: true });
   const shell = currentShell();
   const directoryObservationSupported = terminalDirectoryObservationCapability(
     NodeProcess.platform,
@@ -217,7 +218,6 @@ async function main(): Promise<void> {
             ),
           );
 
-          unsubscribe();
           const detachedMarker = "AWEN_DETACHED_OUTPUT";
 
           // Real-shell directory following: `cd` reprojects the assignment while
@@ -242,7 +242,7 @@ async function main(): Promise<void> {
 
             yield* manager.write({
               terminalId: TERMINAL_ID,
-              data: `cd ${JSON.stringify(followDir)}\n`,
+              data: `cd ${JSON.stringify(followSubdirectory)}\n`,
             });
             const moved = yield* waitForAssignment("smoke-target", "move");
             assert(moved.pid === firstPid, "Following the shell directory restarted the PTY.");
@@ -266,6 +266,7 @@ async function main(): Promise<void> {
             followedDirectory = true;
           }
 
+          unsubscribe();
           yield* manager.write({
             terminalId: TERMINAL_ID,
             data: nodeCommand(`process.stdout.write(${JSON.stringify(`${detachedMarker}\n`)})`),
