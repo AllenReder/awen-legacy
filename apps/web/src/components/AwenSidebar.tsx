@@ -117,11 +117,9 @@ function directoryName(path: string | undefined, fallback: string): string {
 function WorkspaceBranchName({
   environmentId,
   workspaceRoot,
-  fadeOnHover,
 }: {
   readonly environmentId: EnvironmentId;
   readonly workspaceRoot: string;
-  readonly fadeOnHover: boolean;
 }) {
   // The checkout is the authority for its branch. Workspace metadata and the
   // Session's selected branch can both differ from what Git currently has out.
@@ -142,7 +140,7 @@ function WorkspaceBranchName({
   return (
     <span
       data-testid="sidebar-workspace-branch"
-      className={`min-w-0 flex-1 truncate font-medium ${fadeOnHover ? "transition-opacity group-hover/rename:opacity-0 group-focus-visible/rename:opacity-0" : ""}`}
+      className="max-w-[45%] shrink-0 truncate font-medium"
     >
       {label}
     </span>
@@ -183,7 +181,7 @@ function SidebarHoverName({
             <span
               data-testid={actualTestId}
               aria-hidden="true"
-              className={`pointer-events-none absolute top-0 ${align === "right" ? "right-0 z-10 w-max whitespace-nowrap" : "inset-x-0 truncate"} block opacity-0 blur-[3px] transition-[opacity,filter] duration-200 ease-in-out group-hover/rename:opacity-100 group-hover/rename:blur-[0px] group-focus-visible/rename:opacity-100 group-focus-visible/rename:blur-[0px] motion-reduce:transition-none`}
+              className={`pointer-events-none absolute top-0 ${align === "right" ? "right-0 w-max max-w-full truncate" : "inset-x-0 truncate"} block opacity-0 blur-[3px] transition-[opacity,filter] duration-200 ease-in-out group-hover/rename:opacity-100 group-hover/rename:blur-[0px] group-focus-visible/rename:opacity-100 group-focus-visible/rename:blur-[0px] motion-reduce:transition-none`}
             >
               {actualName}
             </span>
@@ -966,10 +964,6 @@ export function AwenSidebar() {
                                 <WorkspaceBranchName
                                   environmentId={project.environmentId}
                                   workspaceRoot={workspace.workspaceRoot}
-                                  fadeOnHover={
-                                    workspace.title !==
-                                    directoryName(workspace.workspaceRoot, workspace.title)
-                                  }
                                 />
                                 <SidebarHoverName
                                   displayName={workspace.title}
@@ -979,7 +973,7 @@ export function AwenSidebar() {
                                   )}
                                   actualTestId="sidebar-workspace-dir"
                                   align="right"
-                                  className="max-w-[52%] shrink-0 text-right text-[10px] text-sidebar-muted-foreground"
+                                  className="min-w-0 flex-1 text-right text-[10px] text-sidebar-muted-foreground"
                                 />
                               </button>
                             </div>

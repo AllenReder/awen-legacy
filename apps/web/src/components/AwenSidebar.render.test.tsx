@@ -416,14 +416,13 @@ describe("AwenSidebar", () => {
     expect(directory.props.children).toBe("very-long-directory-name");
     expect(directory.props.className).toContain("right-0");
     expect(directory.props.className).toContain("w-max");
-    expect(directory.props.className).toContain("whitespace-nowrap");
-    expect(directory.props.className).not.toContain("truncate");
+    expect(directory.props.className).toContain("max-w-full");
     expect(directory.props.className).not.toContain("bg-");
     expect(directory.parent?.props.className).toContain("text-right");
     expect(directory.parent?.props.className).not.toContain("truncate");
     expect(
       renderer.root.findByProps({ "data-testid": "sidebar-workspace-branch" }).props.className,
-    ).toContain("group-hover/rename:opacity-0");
+    ).not.toContain("group-hover/rename:opacity-0");
     expect(
       renderer.root
         .findAllByType("div")
