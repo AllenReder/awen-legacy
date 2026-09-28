@@ -30,47 +30,6 @@ docs: record the token split
 - A breaking change takes `!` before the colon, plus a `BREAKING CHANGE:`
   footer naming what callers must do.
 
-## Computer Use （Only for MacOS)
-
-Use Computer Use when correctness depends on the real desktop UI: inspect or
-operate the running app, reproduce a GUI-only bug, or verify menus, window
-controls, focus, and visual behavior. Use shell and structured tools for code,
-files, tests, logs, and terminal commands.
-
-Use the desktop development command, runner, application path, and bundle
-identity defined by the current v1 implementation. Do not assume legacy
-commands such as `scripts/dev-app.sh`, legacy Tauri configuration, or a
-particular bundle id exist unless they are present in the current tree.
-
-### Native app identity
-
-Before binding a native window, use `cua.getState()` plus `ps` to confirm the
-current worktree executable, PID, data root, window title, and dev bundle id.
-`cua.getState()` inventories; `cua.getApp(...)` may launch a registered app, so
-use it only after the exact running dev app is present. The release bundle id
-is never a dev selector. A raw or unregistered debug binary needs a registered
-dev `.app`; otherwise stop UI verification and report the missing identity.
-
-When a registered `.app` runner is available on macOS, its path must be
-absolute. In the prompt, mention `@Computer` or the exact `awen` app and name
-the window, flow, and expected visible result. After every UI action, read a
-fresh accessibility tree before choosing the next element.
-
-For lifecycle verification, record the daemon PID and handshake before closing
-the window; completion requires the desktop process to exit while that daemon
-identity and endpoint remain healthy.
-
-Frontend-only changes should use the current development server's hot reload
-when available. Native shell or runtime changes should rebuild the relevant
-native process. On macOS, grant Computer Use Screen Recording and
-Accessibility permissions when prompted.
-
-## Real Agent tests
-
-For any real Agent test, Codex may use only `gpt-5.6-luna` or the legacy
-`MiniMax-M3` model. Do not substitute another model to work around availability
-or cost.
-
 ## Agent skills
 
 ### Issue tracker
