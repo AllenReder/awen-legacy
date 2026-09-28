@@ -76,6 +76,7 @@ import {
   WS_METHODS,
   WsRpcGroup,
   WsAwenWorkspaceRpcGroup,
+  WsAwenSessionRpcGroup,
   WsRpcGroupAll,
   WORKTREE_SETUP_ACTIVITY_KIND,
   worktreeSetupActivityId,
@@ -132,6 +133,7 @@ import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import { readWorkflowScript } from "./orchestration/workflowScriptQuery.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as AwenWorkspaceService from "./workspace/AwenWorkspaceService.ts";
+import * as AwenSessionService from "./session/AwenSessionService.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
@@ -512,8 +514,9 @@ const makeWsRpcLayer = (
   clientAnalyticsProps: Readonly<Record<string, unknown>>,
   previewAutomationBroker: PreviewAutomationBroker.PreviewAutomationBroker["Service"],
   workspaceService: AwenWorkspaceService.AwenWorkspaceService["Service"],
+  sessionService: AwenSessionService.AwenSessionService["Service"],
 ) => {
-  const observeAwenWorkspaceRpcEffect = <A, E, R>(
+  const observeAwenManagementRpcEffect = <A, E, R>(
     method: string,
     effect: Effect.Effect<A, E, R>,
   ) => {
@@ -533,32 +536,32 @@ const makeWsRpcLayer = (
     Effect.gen(function* () {
       return WsAwenWorkspaceRpcGroup.of({
         [WS_METHODS.awenWorkspaceRegister]: (input) =>
-          observeAwenWorkspaceRpcEffect(
+          observeAwenManagementRpcEffect(
             WS_METHODS.awenWorkspaceRegister,
             workspaceService.register(input),
           ),
         [WS_METHODS.awenWorkspaceAssociate]: (input) =>
-          observeAwenWorkspaceRpcEffect(
+          observeAwenManagementRpcEffect(
             WS_METHODS.awenWorkspaceAssociate,
             workspaceService.associate(input),
           ),
         [WS_METHODS.awenWorkspaceCreateWorktree]: (input) =>
-          observeAwenWorkspaceRpcEffect(
+          observeAwenManagementRpcEffect(
             WS_METHODS.awenWorkspaceCreateWorktree,
             workspaceService.createWorktree(input),
           ),
         [WS_METHODS.awenWorkspaceRemove]: (input) =>
-          observeAwenWorkspaceRpcEffect(
+          observeAwenManagementRpcEffect(
             WS_METHODS.awenWorkspaceRemove,
             workspaceService.remove(input),
           ),
         [WS_METHODS.awenWorkspaceRename]: (input) =>
-          observeAwenWorkspaceRpcEffect(
+          observeAwenManagementRpcEffect(
             WS_METHODS.awenWorkspaceRename,
             workspaceService.rename(input),
           ),
         [WS_METHODS.awenProjectRename]: (input) =>
-          observeAwenWorkspaceRpcEffect(
+          observeAwenManagementRpcEffect(
             WS_METHODS.awenProjectRename,
             workspaceService.renameProject(input),
           ),
@@ -566,7 +569,24 @@ const makeWsRpcLayer = (
     }),
   );
 
-  return Layer.merge(
+  const awenSessionRpcLayer = WsAwenSessionRpcGroup.toLayer(
+    Effect.gen(function* () {
+      return WsAwenSessionRpcGroup.of({
+        [WS_METHODS.awenSessionMigrateToWorkspace]: (input) =>
+          observeAwenManagementRpcEffect(
+            WS_METHODS.awenSessionMigrateToWorkspace,
+            sessionService.migrateToWorkspace(input),
+          ),
+        [WS_METHODS.awenSessionGetMigrationState]: (input) =>
+          observeAwenManagementRpcEffect(
+            WS_METHODS.awenSessionGetMigrationState,
+            sessionService.getMigrationState(input),
+          ),
+      });
+    }),
+  );
+
+  return Layer.mergeAll(
     WsRpcGroup.toLayer(
       Effect.gen(function* () {
         const currentSessionId = currentSession.sessionId;
@@ -1847,14 +1867,33 @@ const makeWsRpcLayer = (
         const dispatchNormalizedCommand = (
           normalizedCommand: OrchestrationCommand,
         ): Effect.Effect<{ readonly sequence: number }, OrchestrationDispatchCommandError> => {
+          // A partial Agent Session migration leaves the provider and the
+          // committed Workspace assignment disagreeing. Refuse any command that
+          // would continue provider execution (a send, or a reply that resumes
+          // a turn) at this authority rather than relying only on disabled UI.
+          const continuesExecution =
+            normalizedCommand.type === "thread.turn.start" ||
+            normalizedCommand.type === "thread.approval.respond" ||
+            normalizedCommand.type === "thread.user-input.respond";
+          const sendGuard = continuesExecution
+            ? sessionService.assertSendAllowed(normalizedCommand.threadId).pipe(
+                Effect.mapError(
+                  (error) =>
+                    new OrchestrationDispatchCommandError({
+                      message: error.message,
+                      cause: error,
+                    }),
+                ),
+              )
+            : Effect.void;
           const dispatchEffect =
             normalizedCommand.type === "thread.turn.start" && normalizedCommand.bootstrap
               ? dispatchBootstrapTurnStart(normalizedCommand)
               : dispatchFromClient(normalizedCommand).pipe(
+                  // Returning from thread.create is the handoff point at which
+                  // clients may start resources for the new incarnation. Use
+                  // its event sequence as the exact deletion-cleanup fence.
                   Effect.tap(({ sequence }) =>
-                    // Returning from thread.create is the handoff point at which
-                    // clients may start resources for the new incarnation. Use
-                    // its event sequence as the exact deletion-cleanup fence.
                     normalizedCommand.type === "thread.create"
                       ? threadDeletionReactor.drainThrough(sequence)
                       : Effect.void,
@@ -1864,13 +1903,17 @@ const makeWsRpcLayer = (
                   ),
                 );
 
-          return startup
-            .enqueueCommand(dispatchEffect)
-            .pipe(
-              Effect.mapError((cause) =>
-                toDispatchCommandError(cause, "Failed to dispatch orchestration command"),
-              ),
-            );
+          return sendGuard.pipe(
+            Effect.andThen(
+              startup
+                .enqueueCommand(dispatchEffect)
+                .pipe(
+                  Effect.mapError((cause) =>
+                    toDispatchCommandError(cause, "Failed to dispatch orchestration command"),
+                  ),
+                ),
+            ),
+          );
         };
 
         // Only clients that answer /usage-limits themselves see it in the catalogs;
@@ -3748,6 +3791,7 @@ const makeWsRpcLayer = (
       }),
     ),
     awenWorkspaceRpcLayer,
+    awenSessionRpcLayer,
   );
 };
 
@@ -3783,6 +3827,9 @@ export const websocketRpcRouteLayer = Layer.unwrap(
     const pullRequests = yield* PullRequestService.PullRequestService;
     const sql = yield* SqlClient.SqlClient;
     const awenWorkspaceService = yield* AwenWorkspaceService.make;
+    const awenSessionService = yield* AwenSessionService.make.pipe(
+      Effect.provideService(AwenWorkspaceService.AwenWorkspaceService, awenWorkspaceService),
+    );
     return HttpRouter.add(
       "GET",
       "/ws",
@@ -3819,6 +3866,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
               clientAnalyticsProps,
               previewAutomationBroker,
               awenWorkspaceService,
+              awenSessionService,
             ).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
               Layer.provide(Layer.succeed(SqlClient.SqlClient, sql)),

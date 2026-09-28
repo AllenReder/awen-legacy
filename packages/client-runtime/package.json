@@ -147,6 +147,10 @@
       "types": "./src/state/workspaceCommands.ts",
       "default": "./src/state/workspaceCommands.ts"
     },
+    "./state/sessionCommands": {
+      "types": "./src/state/sessionCommands.ts",
+      "default": "./src/state/sessionCommands.ts"
+    },
     "./state/provider-instance-display": {
       "types": "./src/state/providerInstanceDisplay.ts",
       "default": "./src/state/providerInstanceDisplay.ts"

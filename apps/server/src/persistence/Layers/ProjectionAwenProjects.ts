@@ -151,6 +151,8 @@ const makeRepository = Effect.gen(function* () {
       UPDATE projection_awen_agent_sessions
       SET
         title = COALESCE(${input.title ?? null}, title),
+        project_id = COALESCE(${input.projectId ?? null}, project_id),
+        workspace_id = COALESCE(${input.workspaceId ?? null}, workspace_id),
         updated_at = ${input.updatedAt}
       WHERE thread_id = ${input.threadId}
     `.pipe(

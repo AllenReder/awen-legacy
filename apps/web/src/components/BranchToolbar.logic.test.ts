@@ -1,6 +1,7 @@
-import { EnvironmentId, type VcsRef } from "@awen/contracts";
+import { AwenProjectId, EnvironmentId, ProjectId, type VcsRef } from "@awen/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import {
+  awenProjectForOrchestrationProject,
   dedupeRemoteBranchesWithLocalMatches,
   deriveLocalBranchNameFromRemoteRef,
   resolveEnvironmentOptionLabel,
@@ -16,6 +17,7 @@ import {
   resolveLocalCheckoutBranchMismatch,
   resolvePreviousWorktreeLabel,
   resolvePreviousWorktreeSeed,
+  resolveWorkspaceSwitch,
   sanitizeNewRefName,
   shouldIncludeBranchPickerItem,
   shouldShowComposerContextStrip,
@@ -710,6 +712,96 @@ describe("resolveBranchSelectionTarget", () => {
       nextWorktreePath: "/repo/.awen/worktrees/feature-a",
       reuseExistingWorktree: false,
     });
+  });
+});
+
+describe("resolveWorkspaceSwitch", () => {
+  it("moves to the other worktree when the ref lives there", () => {
+    expect(
+      resolveWorkspaceSwitch({
+        activeProjectCwd: "/repo",
+        activeWorktreePath: "/repo/.awen/worktrees/feature-a",
+        selectionTarget: {
+          reuseExistingWorktree: true,
+          nextWorktreePath: "/repo/.awen/worktrees/feature-b",
+        },
+      }),
+    ).toEqual({
+      switchWorkspace: true,
+      targetPath: "/repo/.awen/worktrees/feature-b",
+    });
+  });
+
+  it("moves back to the parent checkout when the ref lives in the main repo", () => {
+    expect(
+      resolveWorkspaceSwitch({
+        activeProjectCwd: "/repo",
+        activeWorktreePath: "/repo/.awen/worktrees/feature-a",
+        selectionTarget: { reuseExistingWorktree: true, nextWorktreePath: null },
+      }),
+    ).toEqual({ switchWorkspace: true, targetPath: "/repo" });
+  });
+
+  it("stays put when the ref lives in the current checkout", () => {
+    expect(
+      resolveWorkspaceSwitch({
+        activeProjectCwd: "/repo",
+        activeWorktreePath: null,
+        selectionTarget: { reuseExistingWorktree: true, nextWorktreePath: null },
+      }),
+    ).toEqual({ switchWorkspace: false, targetPath: null });
+  });
+
+  it("stays put for an ordinary branch selection", () => {
+    expect(
+      resolveWorkspaceSwitch({
+        activeProjectCwd: "/repo",
+        activeWorktreePath: "/repo/.awen/worktrees/feature-a",
+        selectionTarget: {
+          reuseExistingWorktree: false,
+          nextWorktreePath: "/repo/.awen/worktrees/feature-a",
+        },
+      }),
+    ).toEqual({ switchWorkspace: false, targetPath: null });
+  });
+
+  it("normalizes separators and trailing slashes before comparing", () => {
+    expect(
+      resolveWorkspaceSwitch({
+        activeProjectCwd: "C:\\repo",
+        activeWorktreePath: "C:\\repo\\wt\\feature-a\\",
+        selectionTarget: { reuseExistingWorktree: true, nextWorktreePath: null },
+      }),
+    ).toEqual({ switchWorkspace: true, targetPath: "C:\\repo" });
+  });
+});
+
+describe("awenProjectForOrchestrationProject", () => {
+  const mainProject = ProjectId.make("project:main");
+  const worktreeProject = ProjectId.make("project:worktree");
+  const projects = [
+    {
+      id: AwenProjectId.make("awen-project:main"),
+      environmentId: localEnvironmentId,
+      workspaces: [{ awenProjectId: mainProject }, { awenProjectId: worktreeProject }],
+    },
+    {
+      id: AwenProjectId.make("awen-project:other"),
+      environmentId: remoteEnvironmentId,
+      workspaces: [{ awenProjectId: ProjectId.make("project:other") }],
+    },
+  ];
+
+  it("finds the Awen Project owning an orchestration Project", () => {
+    expect(
+      awenProjectForOrchestrationProject(projects, localEnvironmentId, worktreeProject)?.id,
+    ).toBe("awen-project:main");
+  });
+
+  it("does not cross environments", () => {
+    expect(
+      awenProjectForOrchestrationProject(projects, remoteEnvironmentId, worktreeProject),
+    ).toBeNull();
   });
 });
 

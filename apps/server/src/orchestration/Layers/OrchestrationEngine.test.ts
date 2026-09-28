@@ -2617,4 +2617,84 @@ describe("OrchestrationEngine", () => {
 
     await system.dispose();
   });
+
+  it("reassigns a thread's project round-trip without a stale expected assignment", async () => {
+    const createdAt = now();
+    const system = await createOrchestrationSystem();
+    const { engine } = system;
+    const projectA = asProjectId("project-move-a");
+    const projectB = asProjectId("project-move-b");
+    const threadId = ThreadId.make("thread-move-round-trip");
+
+    await system.run(
+      engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.make("cmd-move-project-a"),
+        projectId: projectA,
+        title: "Workspace A",
+        workspaceRoot: "/tmp/project-move-a",
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.make("cmd-move-project-b"),
+        projectId: projectB,
+        title: "Workspace B",
+        workspaceRoot: "/tmp/project-move-b",
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("cmd-move-thread-create"),
+        threadId,
+        projectId: projectA,
+        title: "Conversation",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "full-access",
+        branch: null,
+        worktreePath: null,
+        createdAt,
+      }),
+    );
+
+    // The first move must be visible to the in-memory command read model, or the
+    // second move's expectedProjectId would look stale and be rejected.
+    await system.run(
+      engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-move-a-to-b"),
+        threadId,
+        projectId: projectB,
+        expectedProjectId: projectA,
+        worktreePath: "/tmp/project-move-b",
+        branch: "feature",
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-move-b-to-a"),
+        threadId,
+        projectId: projectA,
+        expectedProjectId: projectB,
+        worktreePath: null,
+        branch: null,
+      }),
+    );
+
+    const readModel = await system.readModel();
+    const thread = readModel.threads.find((candidate) => candidate.id === threadId);
+    expect(thread?.projectId).toBe("project-move-a");
+    expect(thread?.worktreePath).toBeNull();
+
+    await system.dispose();
+  });
 });

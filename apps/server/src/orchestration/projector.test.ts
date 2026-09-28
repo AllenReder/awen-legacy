@@ -108,6 +108,62 @@ describe("orchestration projector", () => {
     ]);
   });
 
+  it("applies a thread meta update that reassigns the owning project", async () => {
+    const now = "2026-01-01T00:00:00.000Z";
+    const eventFields = {
+      aggregateKind: "thread" as const,
+      aggregateId: "thread-1",
+      occurredAt: now,
+      commandId: "cmd-meta",
+    };
+    let model = await Effect.runPromise(
+      projectEvent(
+        createEmptyReadModel(now),
+        makeEvent({
+          ...eventFields,
+          sequence: 1,
+          type: "thread.created",
+          payload: {
+            threadId: "thread-1",
+            projectId: "project-1",
+            title: "demo",
+            modelSelection: {
+              provider: ProviderDriverKind.make("codex"),
+              model: "gpt-5-codex",
+            },
+            runtimeMode: "full-access",
+            branch: null,
+            worktreePath: null,
+            createdAt: now,
+            updatedAt: now,
+          },
+        }),
+      ),
+    );
+
+    // The decider's expected-assignment guard reads this in-memory model, so a
+    // second move back must observe the project from the first move.
+    const moves = [
+      { projectId: "project-2", worktreePath: "/repo-wt" },
+      { projectId: "project-1", worktreePath: null },
+    ];
+    for (const [index, move] of moves.entries()) {
+      model = await Effect.runPromise(
+        projectEvent(
+          model,
+          makeEvent({
+            ...eventFields,
+            sequence: index + 2,
+            type: "thread.meta-updated",
+            payload: { threadId: "thread-1", updatedAt: now, ...move },
+          }),
+        ),
+      );
+      expect(model.threads[0]?.projectId).toBe(move.projectId);
+      expect(model.threads[0]?.worktreePath).toBe(move.worktreePath);
+    }
+  });
+
   effectIt.effect("sets and clears branch pull requests without changing manual links", () =>
     Effect.gen(function* () {
       const now = "2026-01-01T00:00:00.000Z";

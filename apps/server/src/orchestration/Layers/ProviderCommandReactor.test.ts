@@ -28,6 +28,7 @@ import { serializeAssistantCitation } from "@awen/shared/assistantCitations";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Option from "effect/Option";
@@ -74,6 +75,7 @@ import { ServerSettingsService } from "../../serverSettings.ts";
 import { ServerActivation } from "../../serverActivation.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import * as GitWorkflowService from "../../git/GitWorkflowService.ts";
+import * as SessionExecutionLock from "../../session/SessionExecutionLock.ts";
 
 const asProjectId = (value: string): ProjectId => ProjectId.make(value);
 const asApprovalRequestId = (value: string): ApprovalRequestId => ApprovalRequestId.make(value);
@@ -120,7 +122,8 @@ describe("ProviderCommandReactor", () => {
     | OrchestrationEngineService
     | ProviderCommandReactor
     | ProjectionSnapshotQuery
-    | SqlClient.SqlClient,
+    | SqlClient.SqlClient
+    | SessionExecutionLock.SessionExecutionLock,
     unknown
   > | null = null;
   let scope: Scope.Closeable | null = null;
@@ -461,6 +464,7 @@ describe("ProviderCommandReactor", () => {
       }),
     ).pipe(Layer.provide(orchestrationLayer));
     const layer = ProviderCommandReactorLive.pipe(
+      Layer.provideMerge(SessionExecutionLock.layer),
       Layer.provideMerge(reactorOrchestrationLayer),
       Layer.provideMerge(projectionSnapshotLayer),
       Layer.provideMerge(Layer.succeed(ProviderService, service)),
@@ -500,6 +504,9 @@ describe("ProviderCommandReactor", () => {
     const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
     const snapshotQuery = await runtime.runPromise(Effect.service(ProjectionSnapshotQuery));
     const reactor = await runtime.runPromise(Effect.service(ProviderCommandReactor));
+    const executionLock = await runtime.runPromise(
+      Effect.service(SessionExecutionLock.SessionExecutionLock),
+    );
     const runEffect = <A, E>(effect: Effect.Effect<A, E>) => runtime!.runPromise(effect);
 
     await Effect.runPromise(
@@ -629,6 +636,7 @@ describe("ProviderCommandReactor", () => {
       drain,
       startReactor,
       runEffect,
+      executionLock,
       get titleRegenerationCompletionDispatchAttempts() {
         return titleRegenerationCompletionDispatchAttempts;
       },
@@ -1463,6 +1471,59 @@ describe("ProviderCommandReactor", () => {
 
       yield* Deferred.succeed(releaseStart, undefined);
       yield* Effect.promise(() => waitFor(() => harness.sendTurn.mock.calls.length === 1));
+    }),
+  );
+
+  effectIt.live("serializes the provider start behind an in-flight migration lock", () =>
+    Effect.gen(function* () {
+      const releaseLock = yield* Deferred.make<void>();
+      const lockHeld = yield* Deferred.make<void>();
+      let released = false;
+      let startedBeforeRelease = false;
+      const harness = yield* Effect.promise(() => createHarness({}));
+      const originalStart = harness.startSession.getMockImplementation();
+      harness.startSession.mockImplementation((...args) => {
+        if (!released) startedBeforeRelease = true;
+        if (originalStart === undefined) {
+          return Effect.die(new Error("ProviderCommandReactor.test: startSession mock is missing"));
+        }
+        return originalStart(...args);
+      });
+
+      // A migration holds the shared execution lock; the reactor must wait.
+      const holder = yield* harness.executionLock
+        .withLock(
+          Deferred.succeed(lockHeld, undefined).pipe(Effect.andThen(Deferred.await(releaseLock))),
+        )
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(lockHeld);
+
+      yield* harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-behind-migration-lock"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-behind-migration-lock"),
+          role: "user",
+          text: "start after the migration",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      });
+
+      // The lock is held, so the provider start must not run yet. A no-op lock
+      // would have started the provider inside this window.
+      yield* Effect.sleep("1500 millis");
+      expect(harness.startSession).not.toHaveBeenCalled();
+
+      released = true;
+      yield* Deferred.succeed(releaseLock, undefined);
+      yield* Fiber.join(holder);
+      yield* Effect.promise(() => waitFor(() => harness.startSession.mock.calls.length === 1));
+      // And it must only have started after the migration released the lock.
+      expect(startedBeforeRelease).toBe(false);
     }),
   );
 

@@ -43,6 +43,7 @@ import { TextGeneration } from "../../textGeneration/TextGeneration.ts";
 import { ProviderAuthService } from "../../provider/Services/ProviderAuthService.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
+import * as SessionExecutionLock from "../../session/SessionExecutionLock.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import {
@@ -217,6 +218,9 @@ const make = Effect.gen(function* () {
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
   const textGeneration = yield* TextGeneration;
   const serverSettingsService = yield* ServerSettingsService;
+  // Shared with `AwenSessionService`, so an Agent Session migration and the
+  // provider start it could race take the same permit.
+  const executionLock = yield* SessionExecutionLock.SessionExecutionLock;
   /** Environment settings with the thread's project overrides applied. */
   const projectSettingsForThread = Effect.fnUntraced(function* (threadId: ThreadId) {
     const settings = yield* serverSettingsService.getSettings;
@@ -598,6 +602,11 @@ const make = Effect.gen(function* () {
     });
   });
 
+  // The ordering this lock makes safe: if a migration completes first, this
+  // reads the committed target assignment and starts the provider there; if
+  // this start wins, it marks the Session `starting` and the migration's
+  // executing guard refuses. Provider-start callers go through
+  // `startSessionForThread`, which takes the shared lock.
   const ensureSessionForThread = Effect.fn("ensureSessionForThread")(function* (
     threadId: ThreadId,
     createdAt: string,
@@ -866,6 +875,23 @@ const make = Effect.gen(function* () {
     return startedSession.threadId;
   });
 
+  // Provider starts contend with Agent Session migrations on the shared
+  // `SessionExecutionLock`. Provider-start paths call this seam instead of
+  // `ensureSessionForThread` directly, so a new path cannot silently skip the
+  // lock; the `thread.meta-updated` / `thread.session-set` handlers must never
+  // take this lock because they can re-enter the reactor.
+  const startSessionForThread = Effect.fn("startSessionForThread")(function* (
+    threadId: ThreadId,
+    createdAt: string,
+    options?: {
+      readonly modelSelection?: ModelSelection;
+      readonly pendingTurnStart?: boolean;
+      readonly previewHost?: boolean;
+    },
+  ) {
+    return yield* executionLock.withLock(ensureSessionForThread(threadId, createdAt, options));
+  });
+
   const buildSendTurnRequestForThread = Effect.fnUntraced(function* (input: {
     readonly threadId: ThreadId;
     readonly messageText: string;
@@ -881,7 +907,7 @@ const make = Effect.gen(function* () {
         new Error(`Thread '${input.threadId}' was not found in read model.`),
       );
     }
-    yield* ensureSessionForThread(input.threadId, input.createdAt, {
+    yield* startSessionForThread(input.threadId, input.createdAt, {
       ...(input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {}),
       ...(input.previewHost !== undefined ? { previewHost: input.previewHost } : {}),
       pendingTurnStart: true,
@@ -1476,7 +1502,7 @@ const make = Effect.gen(function* () {
         () => void compactingThreadIds.delete(event.payload.threadId),
       );
       yield* Effect.gen(function* () {
-        yield* ensureSessionForThread(event.payload.threadId, event.payload.createdAt, {
+        yield* startSessionForThread(event.payload.threadId, event.payload.createdAt, {
           ...(event.payload.modelSelection !== undefined
             ? { modelSelection: event.payload.modelSelection }
             : {}),
@@ -1871,7 +1897,7 @@ const make = Effect.gen(function* () {
           return;
         }
         const cachedModelSelection = threadModelSelections.get(event.payload.threadId);
-        yield* ensureSessionForThread(event.payload.threadId, event.occurredAt, {
+        yield* startSessionForThread(event.payload.threadId, event.occurredAt, {
           ...(cachedModelSelection !== undefined ? { modelSelection: cachedModelSelection } : {}),
           ...(event.metadata.origin?.previewHost !== undefined
             ? { previewHost: event.metadata.origin.previewHost }

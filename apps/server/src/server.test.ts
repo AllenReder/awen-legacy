@@ -100,6 +100,7 @@ const encodeTestJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unk
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as ServerConfig from "./config.ts";
 import { HTTP_ROUTER_CONFIG, makeRoutesLayer } from "./server.ts";
+import * as SessionExecutionLock from "./session/SessionExecutionLock.ts";
 import {
   isThreadDetailEvent,
   resolveAvailableEditorsForConfig,
@@ -740,7 +741,10 @@ const buildAppUnderTest = (options?: {
     );
 
     const servedRoutesLayer = HttpRouter.serve(
-      makeRoutesLayer.pipe(Layer.provide(serviceLauncherClientLayer)),
+      makeRoutesLayer.pipe(
+        Layer.provide(serviceLauncherClientLayer),
+        Layer.provide(SessionExecutionLock.layer),
+      ),
       {
         disableListenLog: true,
         disableLogger: true,

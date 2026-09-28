@@ -8,6 +8,7 @@ import {
   squashAtomCommandFailure,
 } from "@awen/client-runtime/state/runtime";
 import type { ContextMenuItem, EnvironmentId, VcsRef, ThreadId } from "@awen/contracts";
+import { AgentSessionId, isOrchestrationSessionExecuting } from "@awen/contracts";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { ChevronDownIcon, GitBranchIcon, SearchIcon } from "lucide-react";
 import {
@@ -32,8 +33,9 @@ import { readLocalApi } from "../localApi";
 import { useOpenPrLink } from "../lib/openPullRequestLink";
 import { shouldLoadNextBranchPageAfterScroll } from "../state/paginatedBranches";
 import { usePaginatedBranches } from "../state/queries";
-import { useProject, useThreadShell } from "../state/entities";
+import { useProject, useAwenProjects, useThreadShell } from "../state/entities";
 import { useEnvironmentQuery } from "../state/query";
+import { sessionEnvironment, workspaceEnvironment } from "../state/projects";
 import { threadEnvironment } from "../state/threads";
 import { useAtomCommand } from "../state/use-atom-command";
 import { vcsEnvironment } from "../state/vcs";
@@ -42,6 +44,7 @@ import { parsePullRequestReference } from "../pullRequestReference";
 import { getSourceControlPresentation } from "../sourceControlPresentation";
 import { useComposerMenuProps } from "./chat/composerEventScope";
 import {
+  awenProjectForOrchestrationProject,
   deriveLocalBranchNameFromRemoteRef,
   resolveBranchTriggerLabel,
   resolveBranchToolbarPrBranch,
@@ -49,6 +52,7 @@ import {
   resolveBranchToolbarValue,
   resolveDraftEnvModeAfterBranchChange,
   resolveEffectiveEnvMode,
+  resolveWorkspaceSwitch,
   sanitizeNewRefName,
   shouldIncludeBranchPickerItem,
 } from "./BranchToolbar.logic";
@@ -126,6 +130,12 @@ export function BranchToolbarBranchSelector({
   const createRefMutation = useAtomCommand(vcsEnvironment.createRef, {
     reportFailure: false,
   });
+  const migrateToWorkspace = useAtomCommand(sessionEnvironment.migrateToWorkspace, {
+    reportFailure: false,
+  });
+  const associateWorkspace = useAtomCommand(workspaceEnvironment.associate, {
+    reportFailure: false,
+  });
   // ---------------------------------------------------------------------------
   // Thread / project state (pushed down from parent to colocate with mutation)
   // ---------------------------------------------------------------------------
@@ -146,6 +156,7 @@ export function BranchToolbarBranchSelector({
       ? scopeProjectRef(draftThread.environmentId, draftThread.projectId)
       : null;
   const activeProject = useProject(activeProjectRef);
+  const awenProjects = useAwenProjects();
 
   const activeThreadId = serverThread?.id ?? (draftThread ? threadId : undefined);
   const activeThreadBranch =
@@ -406,6 +417,95 @@ export function BranchToolbarBranchSelector({
     });
   };
 
+  /**
+   * A ref checked out in another worktree belongs to that checkout's Workspace.
+   * A started thread moves through the Session migration authority so the
+   * provider, the committed assignment, and the Sidebar all follow. A draft is
+   * re-bound to the target Workspace before its first send.
+   */
+  const switchToWorkspace = (branchName: string, targetPath: string) => {
+    if (hasServerThread && activeThreadId !== undefined) {
+      if (isOrchestrationSessionExecuting(serverSession)) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Agent is working",
+            description: "Stop the Agent before moving it to another Workspace.",
+          }),
+        );
+        return;
+      }
+      runBranchAction(async () => {
+        const previousBranch = resolvedActiveBranch;
+        setOptimisticBranch(branchName);
+        onActiveThreadBranchOverrideChange?.(branchName);
+        const migrated = await migrateToWorkspace({
+          environmentId,
+          input: { agentSessionId: AgentSessionId.make(activeThreadId), targetPath },
+        });
+        if (migrated._tag === "Success") {
+          setOptimisticBranch(branchName);
+          return;
+        }
+        setOptimisticBranch(previousBranch);
+        onActiveThreadBranchOverrideChange?.(previousBranch);
+        if (!isAtomCommandInterrupted(migrated)) {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Failed to move Agent Session",
+              description: toBranchActionErrorMessage(squashAtomCommandFailure(migrated)),
+            }),
+          );
+        }
+      });
+      return;
+    }
+
+    // Draft: register the checkout (idempotent) so the created thread lands in
+    // the target Workspace, then point the draft context at it.
+    const awenProject = activeProject
+      ? awenProjectForOrchestrationProject(awenProjects, environmentId, activeProject.id)
+      : null;
+    if (awenProject === null) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Failed to switch Workspace",
+          description: "The Project for this draft could not be resolved.",
+        }),
+      );
+      return;
+    }
+    runBranchAction(async () => {
+      const associated = await associateWorkspace({
+        environmentId,
+        input: { projectId: awenProject.id, path: targetPath },
+      });
+      if (associated._tag === "Failure") {
+        if (!isAtomCommandInterrupted(associated)) {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Failed to add Workspace",
+              description: toBranchActionErrorMessage(squashAtomCommandFailure(associated)),
+            }),
+          );
+        }
+        return;
+      }
+      const workspace = associated.value.workspace;
+      const isWorktree = workspace.role === "worktree";
+      setDraftThreadContext(draftId ?? threadRef, {
+        branch: branchName,
+        worktreePath: isWorktree ? workspace.workspaceRoot : null,
+        envMode: isWorktree ? "worktree" : "local",
+        environmentSelection: "manual",
+        projectRef: scopeProjectRef(environmentId, workspace.awenProjectId),
+      });
+    });
+  };
+
   const selectBranch = (refName: VcsRef) => {
     if (!branchCwd || !activeProjectCwd || isBranchActionPending) return;
 
@@ -423,9 +523,18 @@ export function BranchToolbarBranchSelector({
     });
 
     if (selectionTarget.reuseExistingWorktree) {
-      setThreadBranch(refName.name, selectionTarget.nextWorktreePath);
       setIsBranchMenuOpen(false);
       onComposerFocusRequest?.();
+      const workspaceSwitch = resolveWorkspaceSwitch({
+        activeProjectCwd,
+        activeWorktreePath,
+        selectionTarget,
+      });
+      if (workspaceSwitch.switchWorkspace && workspaceSwitch.targetPath !== null) {
+        switchToWorkspace(refName.name, workspaceSwitch.targetPath);
+        return;
+      }
+      setThreadBranch(refName.name, selectionTarget.nextWorktreePath);
       return;
     }
 
