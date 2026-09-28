@@ -3,10 +3,15 @@
 Issue #5 keeps the donor terminal chain intact: the server owns the real PTY
 and bounded history, the typed WebSocket contracts expose lifecycle operations,
 and the web client renders the stream with xterm.js (`@xterm/xterm`).
-There is one terminal identity per `(workspaceId, terminalId)` pair. The
-`terminalId` is always chosen by the client; `term-1` is only the conventional
-first id. The old `(threadId, terminalId)` shape remains a decode-compatible
-adapter for donor/setup clients and is not the Awen ownership path.
+
+Issue #165 gives every terminal one stable, Environment-scoped identity: the
+client-chosen `terminalId`. It is the lookup, persistence, subscription, and
+deep-link key, and it survives PTY restarts, reconnect, and Workspace
+reassignment. `term-1` is only the conventional first id. The old
+`(threadId, terminalId)` owner shape and the `(workspaceId, terminalId)` pair
+are no longer identity: a `workspaceId` may accompany a request as the
+terminal's current assignment (used only to resolve a launch directory), but it
+is never the key and may be absent.
 
 ## Public operations
 
@@ -15,14 +20,16 @@ The matching contracts are in `packages/contracts/src/terminal.ts` and
 `packages/contracts/src/rpc.ts`.
 
 - `open` starts a terminal lazily or returns the existing session for the same
-  Workspace pair. Workspace-owned opens resolve `cwd` from the persisted
-  Workspace on the daemon; callers cannot redirect them by sending another cwd.
-  A PTY startup failure is represented by an `error` snapshot and event;
-  the event message includes the shells that were attempted.
+  stable `terminalId`. When a `workspaceId` is supplied, the daemon resolves
+  `cwd` from the persisted Workspace and callers cannot redirect it; otherwise
+  the caller's `cwd` is used. A PTY startup failure is represented by an
+  `error` snapshot and event; the event message includes the shells that were
+  attempted.
 - `attach` attaches an existing Workspace session and streams an initial
   snapshot followed by live output, exit, error, clear, restart, and activity
-  events. It does not create a missing Workspace session. Detaching removes
-  only the client listener; it does not kill the PTY.
+  events. It creates a missing terminal only when a launch `cwd` or Workspace
+  assignment is supplied. Detaching removes only the client listener; it does
+  not kill the PTY.
 - `write` sends input bytes to the running PTY. `resize` forwards settled
   columns and rows to the PTY. The shell can observe the new size through
   `stty`/its native console API.
@@ -72,19 +79,22 @@ guessing an appearance, and declares the PTY it actually provides:
 `TERM=xterm-256color`, `TERM_PROGRAM=awen`, `COLORTERM=truecolor`. An explicit
 per-session `env` from the client still overrides those defaults.
 
-## Workspace ownership
+## Workspace assignment and reconnect
 
-The Awen path maps a Terminal Session to the persisted Workspace and keeps
-the PTY state in the single `TerminalManager`. The terminal summary exposes
-`kind: "terminal"`, `workspaceId`, and a monotonically increasing `generation`.
-The daemon persists the Session index beside terminal history. On daemon
-restart, a former live generation is reported as `exited`; reopening starts a
-new generation rather than pretending the old shell was recovered. Closing an
-Agent or its View does not close a Workspace terminal.
+The Awen path keeps PTY state in the single `TerminalManager`, keyed by the
+stable `terminalId`. The terminal summary exposes `kind: "terminal"`, an
+optional `workspaceId` assignment, and a monotonically increasing
+`generation`. The daemon persists the Session index beside terminal history.
+On daemon restart, a former live generation is reported as `exited`; reopening
+starts a new generation rather than pretending the old shell was recovered.
+Closing a client connection or the desktop window does not close the PTY;
+reopening the same `terminalId` reconnects to the same running instance.
+Moving or hiding a Pane never restarts it. Unregistering a Workspace does not
+close or replace a terminal still assigned to it.
 
-Session identity remains the stable `(workspaceId, terminalId)` pair; title
-changes never alter it. Workspace-created terminals receive creation-order
-defaults (`Terminal 1`, `Terminal 2`, ...). A terminal-provided title is
+Session identity remains the stable `terminalId`; title changes never alter it.
+Workspace-created terminals receive creation-order defaults within their
+Workspace (`Terminal 1`, `Terminal 2`, ...). A terminal-provided title is
 persisted and restored until the next PTY publishes a title. A manually
 renamed title takes precedence and is equally durable across that boundary.
 
@@ -102,14 +112,16 @@ pnpm smoke:terminal
 
 It uses the live `node-pty` adapter and the current host shell, then checks
 ANSI color, cursor/alternate-screen control sequences, Chinese output, PTY
-resize visibility, shell exit code, detach/attach history reuse, and invalid
-cwd errors. It prints the host OS and shell so the evidence is tied to the
-machine that ran it.
+resize visibility, shell exit code, detach/attach history reuse, same-PTY
+reconnect identity, and invalid cwd errors. It prints the host OS and shell so
+the evidence is tied to the machine that ran it.
 
-The smoke's `issue-5-terminal-smoke` id is disposable server-seam input, not
-an ownership model. The donor ownership path is checked separately through the
-visible Web client: `ThreadTerminalDrawer` → `useAttachedTerminalSession` →
-`terminalEnvironment` → typed WebSocket contracts → `TerminalManager`.
+The smoke addresses one stable `terminalId` and asserts that detaching and
+reattaching reuses the same PTY pid and retained history. That id is disposable
+server-seam input, not an ownership model. The product path is checked
+separately through the visible Web client:
+`TerminalViewport` → `useAttachedTerminalSession` → `terminalEnvironment` →
+typed WebSocket contracts → `TerminalManager`.
 
 Related regression commands:
 

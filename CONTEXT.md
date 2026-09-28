@@ -279,9 +279,13 @@ Closing its View preserves the Session, with or without unsent content.
 _Avoid_: Draft Session, Provisional Session
 
 **Terminal session**:
-A Session representing one Workspace-owned terminal work context, including its
-terminal history and resumable state when supported. Its Awen identity is
-independent of the current PTY process and terminal emulator instance.
+A Session representing one terminal work context belonging to one Environment,
+including its terminal history and resumable state when supported. Its Workspace
+assignment is nullable and mutable: the selected Workspace supplies the launch
+directory, but it is not a lookup key. Its Awen identity is independent of the
+current PTY process, the terminal emulator instance, and the Workspace
+assignment; closing the desktop window leaves a daemon-hosted PTY running, and
+reopening the Session reconnects to the same running instance.
 _Avoid_: Terminal, Terminal pane, PTY
 
 **Provider**:
@@ -377,7 +381,13 @@ _Avoid_: Chat wallpaper, Session background, View background
 - A Project owns zero or more Workspaces.
 - A Workspace belongs to exactly one Project.
 - Workspace identity is independent of Git branch, commit, or HEAD state.
-- A Session belongs to exactly one Workspace.
+- An Agent Session belongs to exactly one Workspace. A Terminal Session belongs
+  to one Environment, and its Workspace assignment is nullable and mutable.
+- A Terminal Session is looked up, subscribed to, and deep-linked by its stable
+  identity; its Workspace assignment is mutable metadata and never part of that
+  identity. The Pane/attach path never restarts the PTY because of an
+  assignment change; an explicit `open` restarts only when its launch context
+  (`cwd`, worktree, or env) changes.
 - The current Session kinds are Agent session and Terminal session; other
   main-area content is a View, not a Session.
 - Session identity is independent of its runtime process and provider-native

@@ -78,20 +78,17 @@ export function useSessionCommands(
       toastManager.add({ type: "success", title: "Agent session closed" });
     } else {
       const terminalId = runtimeTerminalIdForTarget(target);
-      if (!terminalId) {
-        failureToast(
-          "Failed to close terminal session",
-          new Error("Terminal id could not be resolved."),
-        );
-        return;
-      }
       let revert: WillCloseRevert | void = undefined;
       if (options?.onWillClose) {
         revert = await options.onWillClose();
       }
       const result = await closeTerminal({
         environmentId: target.environmentId,
-        input: { workspaceId: target.workspaceId, terminalId, deleteHistory: false },
+        input: {
+          terminalId,
+          ...(target.workspaceId !== undefined ? { workspaceId: target.workspaceId } : {}),
+          deleteHistory: false,
+        },
       });
       if (result._tag === "Failure") {
         revert?.();
@@ -156,17 +153,13 @@ export function useSessionCommands(
         toastManager.add({ type: "success", title: "Agent session deleted" });
       } else {
         const terminalId = runtimeTerminalIdForTarget(target);
-        if (!terminalId) {
-          revert?.();
-          failureToast(
-            "Failed to delete terminal session",
-            new Error("Terminal id could not be resolved."),
-          );
-          return;
-        }
         const result = await closeTerminal({
           environmentId: target.environmentId,
-          input: { workspaceId: target.workspaceId, terminalId, deleteHistory: true },
+          input: {
+            terminalId,
+            ...(target.workspaceId !== undefined ? { workspaceId: target.workspaceId } : {}),
+            deleteHistory: true,
+          },
         });
         if (result._tag === "Failure") {
           revert?.();

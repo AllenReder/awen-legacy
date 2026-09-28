@@ -4,11 +4,10 @@ import { describe, expect, it } from "vite-plus/test";
 import { AgentSessionId, TerminalSessionId, ThreadId, WorkspaceId } from "./baseSchemas.ts";
 import {
   agentSessionRefForShell,
-  runtimeTerminalIdForSession,
   sessionRefForShell,
   SessionRef,
-  terminalSessionRefForRuntime,
-  type TerminalSessionRef,
+  terminalIdForSession,
+  terminalSessionRefForTerminal,
 } from "./session.ts";
 import {
   AwenProjectShell,
@@ -51,62 +50,37 @@ function agentShell(overrides: Partial<AwenAgentSessionShell> = {}): AwenAgentSe
 
 describe("Terminal Session references", () => {
   it("gives the same runtime terminal one stable Awen identity", () => {
-    const first = terminalSessionRefForRuntime({ workspaceId: WS_A, terminalId: "term-1" });
-    const second = terminalSessionRefForRuntime({ workspaceId: WS_A, terminalId: "term-1" });
+    const first = terminalSessionRefForTerminal({ terminalId: "term-1" });
+    const second = terminalSessionRefForTerminal({ terminalId: "term-1" });
 
     expect(first.terminalSessionId).toBe(second.terminalSessionId);
   });
 
-  it("keeps the same runtime terminal id distinct across Workspaces", () => {
-    const inA = terminalSessionRefForRuntime({ workspaceId: WS_A, terminalId: "term-1" });
-    const inB = terminalSessionRefForRuntime({ workspaceId: WS_B, terminalId: "term-1" });
-
-    expect(inA.terminalSessionId).not.toBe(inB.terminalSessionId);
-  });
-
-  it("owns exactly one Workspace and does not adopt the runtime terminal id", () => {
-    const ref = terminalSessionRefForRuntime({ workspaceId: WS_A, terminalId: "term-1" });
+  it("does not fold a mutable Workspace into the identity", () => {
+    const ref = terminalSessionRefForTerminal({ terminalId: "term-1" });
 
     expect(ref.kind).toBe("terminal");
-    expect(ref.workspaceId).toBe(WS_A);
-    expect(ref.terminalSessionId).not.toBe("term-1");
+    expect(ref).not.toHaveProperty("workspaceId");
+    expect(ref.terminalSessionId).toBe("term-1");
   });
 
   it("resolves a Session back to the runtime terminal id it was adapted from", () => {
-    const ref = terminalSessionRefForRuntime({ workspaceId: WS_A, terminalId: "term-7" });
+    const ref = terminalSessionRefForTerminal({ terminalId: "term-7" });
 
-    expect(runtimeTerminalIdForSession(ref)).toBe("term-7");
+    expect(terminalIdForSession(ref)).toBe("term-7");
   });
 
-  it("round-trips a runtime id that contains the Awen identity separator", () => {
-    const ref = terminalSessionRefForRuntime({ workspaceId: WS_A, terminalId: "shell:zsh:1" });
+  it("round-trips a runtime id that contains a separator", () => {
+    const ref = terminalSessionRefForTerminal({ terminalId: "shell:zsh:1" });
 
-    expect(runtimeTerminalIdForSession(ref)).toBe("shell:zsh:1");
+    expect(terminalIdForSession(ref)).toBe("shell:zsh:1");
   });
 
-  it("keeps distinct runtime pairs from colliding when either id contains the separator", () => {
-    const left = terminalSessionRefForRuntime({
-      workspaceId: WorkspaceId.make("a:b"),
-      terminalId: "c",
-    });
-    const right = terminalSessionRefForRuntime({
-      workspaceId: WorkspaceId.make("a"),
-      terminalId: "b:c",
-    });
+  it("keeps the identity stable when the Workspace assignment changes", () => {
+    const before = terminalSessionRefForTerminal({ terminalId: "term-1" });
+    const moved = terminalSessionRefForTerminal({ terminalId: "term-1" });
 
-    expect(left.terminalSessionId).not.toBe(right.terminalSessionId);
-    expect(runtimeTerminalIdForSession(left)).toBe("c");
-    expect(runtimeTerminalIdForSession(right)).toBe("b:c");
-  });
-
-  it("reports no runtime binding for an identity the adapter did not produce", () => {
-    const foreign: TerminalSessionRef = {
-      kind: "terminal",
-      workspaceId: WS_A,
-      terminalSessionId: TerminalSessionId.make("terminal-session:elsewhere:term-1"),
-    };
-
-    expect(runtimeTerminalIdForSession(foreign)).toBeNull();
+    expect(moved).toEqual(before);
   });
 });
 
@@ -136,31 +110,24 @@ describe("SessionRef", () => {
     });
     const terminal = decodeSync(SessionRef, {
       kind: "terminal",
-      workspaceId: WS_A,
-      terminalSessionId: "terminal-session:workspace:project-a:term-1",
+      terminalSessionId: "term-1",
     });
 
     expect(agent.kind).toBe("agent");
     expect(terminal.kind).toBe("terminal");
     expect(agent).not.toHaveProperty("workspaceId");
     if (terminal.kind !== "terminal") throw new Error("Expected Terminal Session");
-    expect(terminal.workspaceId).toBe(WS_A);
+    expect(terminal.terminalSessionId).toBe("term-1");
   });
 
   it("rejects a kind paired with the other Session kind's identity", () => {
-    expect(
-      decodes(SessionRef, { kind: "agent", workspaceId: WS_A, terminalSessionId: "term-1" }),
-    ).toBe(false);
-    expect(
-      decodes(SessionRef, { kind: "terminal", workspaceId: WS_A, agentSessionId: AGENT }),
-    ).toBe(false);
+    expect(decodes(SessionRef, { kind: "agent", terminalSessionId: "term-1" })).toBe(false);
+    expect(decodes(SessionRef, { kind: "terminal", agentSessionId: AGENT })).toBe(false);
   });
 
-  it("requires an owning Workspace only for Terminal Session references", () => {
+  it("addresses a Terminal Session without requiring a Workspace", () => {
     expect(decodes(SessionRef, { kind: "agent", agentSessionId: AGENT })).toBe(true);
-    expect(
-      decodes(SessionRef, { kind: "terminal", terminalSessionId: "terminal-session:x:term-1" }),
-    ).toBe(false);
+    expect(decodes(SessionRef, { kind: "terminal", terminalSessionId: "term-1" })).toBe(true);
   });
 });
 

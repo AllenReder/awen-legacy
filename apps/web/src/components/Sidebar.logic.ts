@@ -22,7 +22,7 @@ import {
   type ThreadSortInput,
 } from "../lib/threadSort";
 import type { SidebarThreadSummary, Thread } from "../types";
-import { cn, randomUUID } from "../lib/utils";
+import { cn } from "../lib/utils";
 import { isLatestTurnSettled } from "../session-logic";
 import {
   resolveAgentSessionStatus,
@@ -1224,9 +1224,4 @@ export function sortScopedProjectsForSidebar<
       left.environmentId.localeCompare(right.environmentId) ||
       left.id.localeCompare(right.id),
   );
-}
-
-/** Allocate once per creation request, independently of delayed metadata or closed Sessions. */
-export function nextWorkspaceTerminalId(): string {
-  return `term-${randomUUID()}`;
 }

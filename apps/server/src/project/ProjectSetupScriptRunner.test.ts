@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from "@effect/vitest";
-import { type OrchestrationProject, ProjectId, type TerminalEvent } from "@awen/contracts";
+import {
+  type OrchestrationProject,
+  ProjectId,
+  TerminalSessionId,
+  type TerminalEvent,
+} from "@awen/contracts";
 import { HostProcessEnvironment, HostProcessPlatform } from "@awen/shared/hostProcess";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -88,8 +93,9 @@ describe("ProjectSetupScriptRunner", () => {
   it.effect("runs the inherited machine setup action in the checkout's worktree", () => {
     const open = vi.fn(() =>
       Effect.succeed({
-        threadId: "thread-1",
         terminalId: "setup-default-setup",
+        sessionId: TerminalSessionId.make("setup-default-setup"),
+        kind: "terminal" as const,
         cwd: "/repo/worktrees/a",
         worktreePath: "/repo/worktrees/a",
         status: "running" as const,
@@ -111,7 +117,6 @@ describe("ProjectSetupScriptRunner", () => {
       });
       expect(result).toMatchObject({ status: "started", scriptId: "default-setup" });
       expect(open).toHaveBeenCalledWith({
-        threadId: "thread-1",
         terminalId: "setup-default-setup",
         cwd: "/repo/worktrees/a",
         worktreePath: "/repo/worktrees/a",
@@ -123,7 +128,6 @@ describe("ProjectSetupScriptRunner", () => {
         },
       });
       expect(write).toHaveBeenCalledWith({
-        threadId: "thread-1",
         terminalId: "setup-default-setup",
         data: "npm install\r",
       });
@@ -172,8 +176,9 @@ describe("ProjectSetupScriptRunner", () => {
     () => {
       const open = vi.fn(() =>
         Effect.succeed({
-          threadId: "thread-1",
           terminalId: "setup-setup",
+          sessionId: TerminalSessionId.make("setup-setup"),
+          kind: "terminal" as const,
           cwd: "/repo/worktrees/a",
           worktreePath: "/repo/worktrees/a",
           status: "running" as const,
@@ -214,7 +219,6 @@ describe("ProjectSetupScriptRunner", () => {
           async: true,
         });
         expect(open).toHaveBeenCalledWith({
-          threadId: "thread-1",
           terminalId: "setup-setup",
           cwd: "/repo/worktrees/a",
           worktreePath: "/repo/worktrees/a",
@@ -226,7 +230,6 @@ describe("ProjectSetupScriptRunner", () => {
           },
         });
         expect(write).toHaveBeenCalledWith({
-          threadId: "thread-1",
           terminalId: "setup-setup",
           data: "bun install\r",
         });
@@ -239,8 +242,9 @@ describe("ProjectSetupScriptRunner", () => {
     () => {
       const open = vi.fn(() =>
         Effect.succeed({
-          threadId: "thread-1",
           terminalId: "setup-setup",
+          sessionId: TerminalSessionId.make("setup-setup"),
+          kind: "terminal" as const,
           cwd: "/repo/worktrees/a",
           worktreePath: "/repo/worktrees/a",
           status: "running" as const,
@@ -274,9 +278,7 @@ describe("ProjectSetupScriptRunner", () => {
       ]);
       const emit = (data: string) =>
         Effect.suspend(() =>
-          listener
-            ? listener({ threadId: "thread-1", terminalId: "setup-setup", type: "output", data })
-            : Effect.void,
+          listener ? listener({ terminalId: "setup-setup", type: "output", data }) : Effect.void,
         );
 
       return Effect.gen(function* () {
@@ -341,8 +343,9 @@ describe("ProjectSetupScriptRunner", () => {
   it.effect("unsubscribes from terminal output when the command cannot be written", () => {
     const open = vi.fn(() =>
       Effect.succeed({
-        threadId: "thread-1",
         terminalId: "setup-setup",
+        sessionId: TerminalSessionId.make("setup-setup"),
+        kind: "terminal" as const,
         cwd: "/repo/worktrees/a",
         worktreePath: "/repo/worktrees/a",
         status: "running" as const,
@@ -399,8 +402,9 @@ describe("ProjectSetupScriptRunner", () => {
   ])("wraps the command for the $shell syntax", ({ shell, expected }) => {
     const open = vi.fn(() =>
       Effect.succeed({
-        threadId: "thread-1",
         terminalId: "setup-setup",
+        sessionId: TerminalSessionId.make("setup-setup"),
+        kind: "terminal" as const,
         cwd: "/repo/worktrees/a",
         worktreePath: "/repo/worktrees/a",
         status: "running" as const,

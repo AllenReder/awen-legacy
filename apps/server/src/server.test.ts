@@ -6981,6 +6981,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                 {
                   workspaceId,
                   terminalId: "terminal-unique",
+                  sessionId: TerminalSessionId.make("terminal-unique"),
+                  kind: "terminal",
                   cwd: "/tmp/project",
                   worktreePath: null,
                   status: "exited",
@@ -7008,7 +7010,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.deepEqual(item.snapshot.awenProjects?.[0]?.workspaces[0]?.sessions, [
         {
           kind: "terminal",
-          id: TerminalSessionId.make("terminal-session:9:workspace:terminal-unique"),
+          id: TerminalSessionId.make("terminal-unique"),
           workspaceId,
           title: "Shell",
           status: "open",
@@ -8698,7 +8700,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           terminalManager: {
             close: (input) =>
               Effect.sync(() => {
-                effects.push(`terminal.close:${input.threadId}`);
+                effects.push(`terminal.close:${input.terminalId}`);
               }),
           },
           orchestrationEngine: {
@@ -8766,7 +8768,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           terminalManager: {
             close: (input) =>
               Effect.sync(() => {
-                effects.push(`terminal.close:${input.threadId}`);
+                effects.push(`terminal.close:${input.terminalId}`);
               }),
           },
           orchestrationEngine: {
@@ -8841,7 +8843,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           terminalManager: {
             close: (input) =>
               Effect.sync(() => {
-                effects.push(`terminal.close:${input.threadId}`);
+                effects.push(`terminal.close:${input.terminalId}`);
               }),
           },
           orchestrationEngine: {
@@ -8895,7 +8897,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             terminalManager: {
               close: (input) =>
                 Effect.sync(() => {
-                  effects.push(`terminal.close:${input.threadId}`);
+                  effects.push(`terminal.close:${input.terminalId}`);
                 }),
             },
             orchestrationEngine: {
@@ -8961,7 +8963,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           terminalManager: {
             close: (input) =>
               Effect.sync(() => {
-                effects.push(`terminal.close:${input.threadId}`);
+                effects.push(`terminal.close:${input.terminalId}`);
               }),
           },
           orchestrationEngine: {
@@ -9057,7 +9059,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           terminalManager: {
             close: (input) =>
               Effect.sync(() => {
-                effects.push(`terminal.close:${input.threadId}`);
+                effects.push(`terminal.close:${input.terminalId}`);
               }),
           },
           orchestrationEngine: {
@@ -9130,7 +9132,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           terminalManager: {
             close: (input) =>
               Effect.sync(() => {
-                effects.push(`terminal.close:${input.threadId}`);
+                effects.push(`terminal.close:${input.terminalId}`);
               }),
           },
           orchestrationEngine: {
@@ -10485,8 +10487,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
   it.effect("routes websocket rpc terminal methods", () =>
     Effect.gen(function* () {
       const snapshot = {
-        threadId: "thread-1",
         terminalId: "default",
+        sessionId: TerminalSessionId.make("default"),
+        kind: "terminal" as const,
         cwd: "/tmp/project",
         worktreePath: null,
         status: "running" as const,
@@ -10516,7 +10519,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const opened = yield* Effect.scoped(
         withWsRpcClient(wsUrl, (client) =>
           client[WS_METHODS.terminalOpen]({
-            threadId: "thread-1",
             terminalId: "default",
             cwd: "/tmp/project",
           }),
@@ -10527,7 +10529,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       yield* Effect.scoped(
         withWsRpcClient(wsUrl, (client) =>
           client[WS_METHODS.terminalWrite]({
-            threadId: "thread-1",
             terminalId: "default",
             data: "echo hi\n",
           }),
@@ -10537,7 +10538,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       yield* Effect.scoped(
         withWsRpcClient(wsUrl, (client) =>
           client[WS_METHODS.terminalResize]({
-            threadId: "thread-1",
             terminalId: "default",
             cols: 120,
             rows: 40,
@@ -10548,7 +10548,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       yield* Effect.scoped(
         withWsRpcClient(wsUrl, (client) =>
           client[WS_METHODS.terminalClear]({
-            threadId: "thread-1",
             terminalId: "default",
           }),
         ),
@@ -10557,7 +10556,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const restarted = yield* Effect.scoped(
         withWsRpcClient(wsUrl, (client) =>
           client[WS_METHODS.terminalRestart]({
-            threadId: "thread-1",
             terminalId: "default",
             cwd: "/tmp/project",
             cols: 120,
@@ -10570,7 +10568,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       yield* Effect.scoped(
         withWsRpcClient(wsUrl, (client) =>
           client[WS_METHODS.terminalClose]({
-            threadId: "thread-1",
             terminalId: "default",
           }),
         ),
@@ -10581,7 +10578,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
   it.effect("routes websocket rpc terminal.write errors", () =>
     Effect.gen(function* () {
       const terminalError = new TerminalNotRunningError({
-        threadId: "thread-1",
         terminalId: "default",
       });
       yield* buildAppUnderTest({
@@ -10596,7 +10592,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const result = yield* Effect.scoped(
         withWsRpcClient(wsUrl, (client) =>
           client[WS_METHODS.terminalWrite]({
-            threadId: "thread-1",
             terminalId: "default",
             data: "echo fail\n",
           }),

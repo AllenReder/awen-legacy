@@ -77,11 +77,7 @@ import {
 import { resolveProjectSettings } from "@awen/shared/projectSettings";
 import { truncate } from "@awen/shared/String";
 import { resolveThreadReferenceCopyTarget } from "@awen/shared/threadReference";
-import {
-  getTerminalLabel,
-  nextTerminalId,
-  resolveTerminalSessionLabel,
-} from "@awen/shared/terminalLabels";
+import { getTerminalLabel, resolveTerminalSessionLabel } from "@awen/shared/terminalLabels";
 import { Debouncer } from "@tanstack/react-pacer";
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -230,6 +226,7 @@ import {
   PaperclipIcon,
   WifiOffIcon,
 } from "lucide-react";
+import { createTerminalId } from "~/lib/terminalIds";
 import { cn, randomHex, randomUUID } from "~/lib/utils";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { decodeProjectScriptKeybindingRule } from "~/lib/projectScriptKeybindings";
@@ -320,7 +317,10 @@ import { environmentCatalog } from "../connection/catalog";
 import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
 import { useEnvironmentDisconnectDelay } from "../hooks/useEnvironmentDisconnectDelay";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
-import { useKnownTerminalSessions, useThreadRunningTerminalIds } from "../state/terminalSessions";
+import {
+  useKnownTerminalSessions,
+  useWorkspaceRunningTerminalIds,
+} from "../state/terminalSessions";
 import { useEnvironmentQuery } from "../state/query";
 import {
   environmentServerConfigsAtom,
@@ -909,7 +909,6 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
   const visible = active && terminalUiState.terminalOpen;
   const knownTerminalSessions = useKnownTerminalSessions({
     environmentId: threadRef.environmentId,
-    threadId: workspaceId === null ? threadId : null,
     workspaceId,
   });
   const panelSurfaces = useRightPanelStore(
@@ -974,19 +973,6 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
   const serverOrderedTerminalIds = useMemo(
     () => drawerTerminalSessions.map((session) => session.target.terminalId),
     [drawerTerminalSessions],
-  );
-  // Every client-side id source participates in allocation: the server list
-  // lags fresh opens, and panel terminals are filtered out of the drawer's
-  // sessions — an id collision attaches two viewports to one PTY session.
-  const allocatableTerminalIds = useMemo(
-    () => [
-      ...new Set([
-        ...serverOrderedTerminalIds,
-        ...terminalUiState.terminalIds,
-        ...panelTerminalIds,
-      ]),
-    ],
-    [panelTerminalIds, serverOrderedTerminalIds, terminalUiState.terminalIds],
   );
   const storeSetTerminalHeight = useTerminalUiStateStore((state) => state.setTerminalHeight);
   const storeSplitTerminal = useTerminalUiStateStore((state) => state.splitTerminal);
@@ -1057,13 +1043,13 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
     if (!cwd) {
       return;
     }
-    const terminalId = nextTerminalId(allocatableTerminalIds);
+    const terminalId = createTerminalId();
     storeSplitTerminal(threadRef, terminalId);
     bumpFocusRequestId();
     void openTerminal({
       environmentId: threadRef.environmentId,
       input: {
-        ...(workspaceId ? { workspaceId } : { threadId }),
+        ...(workspaceId ? { workspaceId } : {}),
         terminalId,
         cwd,
         ...(effectiveWorktreePath != null ? { worktreePath: effectiveWorktreePath } : {}),
@@ -1071,7 +1057,6 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
       },
     });
   }, [
-    allocatableTerminalIds,
     bumpFocusRequestId,
     cwd,
     effectiveWorktreePath,
@@ -1086,13 +1071,13 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
     if (!cwd) {
       return;
     }
-    const terminalId = nextTerminalId(allocatableTerminalIds);
+    const terminalId = createTerminalId();
     storeSplitTerminalVertical(threadRef, terminalId);
     bumpFocusRequestId();
     void openTerminal({
       environmentId: threadRef.environmentId,
       input: {
-        ...(workspaceId ? { workspaceId } : { threadId }),
+        ...(workspaceId ? { workspaceId } : {}),
         terminalId,
         cwd,
         ...(effectiveWorktreePath != null ? { worktreePath: effectiveWorktreePath } : {}),
@@ -1100,7 +1085,6 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
       },
     });
   }, [
-    allocatableTerminalIds,
     bumpFocusRequestId,
     cwd,
     effectiveWorktreePath,
@@ -1116,13 +1100,13 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
     if (!cwd) {
       return;
     }
-    const terminalId = nextTerminalId(allocatableTerminalIds);
+    const terminalId = createTerminalId();
     storeNewTerminal(threadRef, terminalId);
     bumpFocusRequestId();
     void openTerminal({
       environmentId: threadRef.environmentId,
       input: {
-        ...(workspaceId ? { workspaceId } : { threadId }),
+        ...(workspaceId ? { workspaceId } : {}),
         terminalId,
         cwd,
         ...(effectiveWorktreePath != null ? { worktreePath: effectiveWorktreePath } : {}),
@@ -1133,7 +1117,6 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
     bumpFocusRequestId,
     cwd,
     effectiveWorktreePath,
-    allocatableTerminalIds,
     runtimeEnv,
     storeNewTerminal,
     threadId,
@@ -1156,7 +1139,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
         writeTerminal({
           environmentId: threadRef.environmentId,
           input: {
-            ...(workspaceId ? { workspaceId } : { threadId }),
+            ...(workspaceId ? { workspaceId } : {}),
             terminalId,
             data: "exit\n",
           },
@@ -1166,7 +1149,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
         const closeResult = await closeTerminalMutation({
           environmentId: threadRef.environmentId,
           input: {
-            ...(workspaceId ? { workspaceId } : { threadId }),
+            ...(workspaceId ? { workspaceId } : {}),
             terminalId,
             deleteHistory: true,
           },
@@ -1298,7 +1281,6 @@ const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPane
   const workspaceId = project === null ? null : workspaceIdForAwenProject(project.id);
   const knownTerminalSessions = useKnownTerminalSessions({
     environmentId: threadRef.environmentId,
-    threadId: workspaceId === null ? threadRef.threadId : null,
     workspaceId,
   });
   const threadWorktreePath = serverThread?.worktreePath ?? draftThread?.worktreePath ?? null;
@@ -1950,26 +1932,14 @@ export default function ChatView(props: ChatViewProps) {
   const activeThreadEnvironmentId = activeThread?.environmentId ?? null;
   const activeWorkspaceId =
     activeThread === undefined ? null : workspaceIdForAwenProject(activeThread.projectId);
-  const runningTerminalIds = useThreadRunningTerminalIds({
+  const runningTerminalIds = useWorkspaceRunningTerminalIds({
     environmentId: activeThread?.environmentId ?? null,
-    threadId: activeWorkspaceId === null ? activeThreadId : null,
     workspaceId: activeWorkspaceId,
   });
-  const activeThreadKnownSessionsRaw = useKnownTerminalSessions({
+  const activeThreadKnownSessions = useKnownTerminalSessions({
     environmentId: activeThread?.environmentId ?? null,
-    threadId: activeWorkspaceId === null ? activeThreadId : null,
     workspaceId: activeWorkspaceId,
   });
-  const activeThreadKnownSessions = useMemo(() => {
-    if (activeThreadId === null) {
-      return [];
-    }
-    return activeThreadKnownSessionsRaw.filter((session) =>
-      activeWorkspaceId !== null
-        ? session.target.workspaceId === activeWorkspaceId
-        : session.target.threadId === activeThreadId,
-    );
-  }, [activeThreadId, activeThreadKnownSessionsRaw, activeWorkspaceId]);
   const activeServerOrderedTerminalIds = useMemo(
     () => activeThreadKnownSessions.map((session) => session.target.terminalId),
     [activeThreadKnownSessions],
@@ -2035,10 +2005,6 @@ export default function ChatView(props: ChatViewProps) {
         ),
       ),
     [rightPanelState.surfaces],
-  );
-  const allocatableActiveTerminalIds = useMemo(
-    () => [...new Set([...activeKnownTerminalIds, ...panelTerminalIds])],
-    [activeKnownTerminalIds, panelTerminalIds],
   );
   const previewPanelOpen = activeRightPanelKind === "preview" && isPreviewSupportedInRuntime();
   const rightPanelOpen = rightPanelState.isOpen;
@@ -3999,14 +3965,12 @@ export default function ChatView(props: ChatViewProps) {
       if (!cwdForOpen) {
         return;
       }
-      const terminalId = nextTerminalId(allocatableActiveTerminalIds);
+      const terminalId = createTerminalId();
       storeEnsureTerminal(activeThreadRef, terminalId, { open: true });
       void openTerminal({
         environmentId,
         input: {
-          ...(activeWorkspaceId
-            ? { workspaceId: activeWorkspaceId }
-            : { threadId: activeThreadId }),
+          ...(activeWorkspaceId ? { workspaceId: activeWorkspaceId } : {}),
           terminalId,
           cwd: cwdForOpen,
           ...(activeThreadWorktreePath != null ? { worktreePath: activeThreadWorktreePath } : {}),
@@ -4025,7 +3989,6 @@ export default function ChatView(props: ChatViewProps) {
     activeWorkspaceId,
     activeThreadRef,
     activeThreadWorktreePath,
-    allocatableActiveTerminalIds,
     environmentId,
     gitCwd,
     openTerminal,
@@ -4043,7 +4006,7 @@ export default function ChatView(props: ChatViewProps) {
       if (!cwdForOpen) {
         return;
       }
-      const terminalId = nextTerminalId(allocatableActiveTerminalIds);
+      const terminalId = createTerminalId();
       if (direction === "vertical") {
         storeSplitTerminalVertical(activeThreadRef, terminalId);
       } else {
@@ -4053,9 +4016,7 @@ export default function ChatView(props: ChatViewProps) {
       void openTerminal({
         environmentId,
         input: {
-          ...(activeWorkspaceId
-            ? { workspaceId: activeWorkspaceId }
-            : { threadId: activeThreadId }),
+          ...(activeWorkspaceId ? { workspaceId: activeWorkspaceId } : {}),
           terminalId,
           cwd: cwdForOpen,
           ...(activeThreadWorktreePath != null ? { worktreePath: activeThreadWorktreePath } : {}),
@@ -4070,7 +4031,6 @@ export default function ChatView(props: ChatViewProps) {
       activeProject,
       activeThreadId,
       activeWorkspaceId,
-      allocatableActiveTerminalIds,
       activeThreadRef,
       openTerminal,
       activeThreadWorktreePath,
@@ -4089,13 +4049,13 @@ export default function ChatView(props: ChatViewProps) {
     if (!cwdForOpen) {
       return;
     }
-    const terminalId = nextTerminalId(allocatableActiveTerminalIds);
+    const terminalId = createTerminalId();
     storeNewTerminal(activeThreadRef, terminalId);
     setTerminalFocusRequestId((value) => value + 1);
     void openTerminal({
       environmentId,
       input: {
-        ...(activeWorkspaceId ? { workspaceId: activeWorkspaceId } : { threadId: activeThreadId }),
+        ...(activeWorkspaceId ? { workspaceId: activeWorkspaceId } : {}),
         terminalId,
         cwd: cwdForOpen,
         ...(activeThreadWorktreePath != null ? { worktreePath: activeThreadWorktreePath } : {}),
@@ -4109,7 +4069,6 @@ export default function ChatView(props: ChatViewProps) {
     activeProject,
     activeThreadId,
     activeWorkspaceId,
-    allocatableActiveTerminalIds,
     activeThreadRef,
     openTerminal,
     activeThreadWorktreePath,
@@ -4124,9 +4083,7 @@ export default function ChatView(props: ChatViewProps) {
         writeTerminal({
           environmentId,
           input: {
-            ...(activeWorkspaceId
-              ? { workspaceId: activeWorkspaceId }
-              : { threadId: activeThreadId }),
+            ...(activeWorkspaceId ? { workspaceId: activeWorkspaceId } : {}),
             terminalId,
             data: "exit\n",
           },
@@ -4135,9 +4092,7 @@ export default function ChatView(props: ChatViewProps) {
         const closeResult = await closeTerminalMutation({
           environmentId,
           input: {
-            ...(activeWorkspaceId
-              ? { workspaceId: activeWorkspaceId }
-              : { threadId: activeThreadId }),
+            ...(activeWorkspaceId ? { workspaceId: activeWorkspaceId } : {}),
             terminalId,
             deleteHistory: true,
           },
@@ -4203,14 +4158,10 @@ export default function ChatView(props: ChatViewProps) {
         worktreePath: targetWorktreePath,
         ...(options?.env ? { extraEnv: options.env } : {}),
       });
-      const targetTerminalId = shouldCreateNewTerminal
-        ? nextTerminalId(allocatableActiveTerminalIds)
-        : baseTerminalId;
+      const targetTerminalId = shouldCreateNewTerminal ? createTerminalId() : baseTerminalId;
       const openTerminalInput: TerminalOpenInput = shouldCreateNewTerminal
         ? {
-            ...(activeWorkspaceId
-              ? { workspaceId: activeWorkspaceId }
-              : { threadId: activeThreadId }),
+            ...(activeWorkspaceId ? { workspaceId: activeWorkspaceId } : {}),
             terminalId: targetTerminalId,
             cwd: targetCwd,
             ...(targetWorktreePath !== null ? { worktreePath: targetWorktreePath } : {}),
@@ -4219,9 +4170,7 @@ export default function ChatView(props: ChatViewProps) {
             rows: SCRIPT_TERMINAL_ROWS,
           }
         : {
-            ...(activeWorkspaceId
-              ? { workspaceId: activeWorkspaceId }
-              : { threadId: activeThreadId }),
+            ...(activeWorkspaceId ? { workspaceId: activeWorkspaceId } : {}),
             terminalId: targetTerminalId,
             cwd: targetCwd,
             ...(targetWorktreePath !== null ? { worktreePath: targetWorktreePath } : {}),
@@ -4249,9 +4198,7 @@ export default function ChatView(props: ChatViewProps) {
       const writeResult = await writeTerminal({
         environmentId,
         input: {
-          ...(activeWorkspaceId
-            ? { workspaceId: activeWorkspaceId }
-            : { threadId: activeThreadId }),
+          ...(activeWorkspaceId ? { workspaceId: activeWorkspaceId } : {}),
           terminalId: targetTerminalId,
           data: `${script.command}\r`,
         },
@@ -4279,7 +4226,6 @@ export default function ChatView(props: ChatViewProps) {
       environmentId,
       openTerminal,
       activeKnownTerminalIds,
-      allocatableActiveTerminalIds,
       runningTerminalIds,
       terminalUiState.activeTerminalId,
       writeTerminal,
@@ -4741,13 +4687,13 @@ export default function ChatView(props: ChatViewProps) {
   const addTerminalSurface = useCallback(() => {
     if (!activeThreadRef || !activeThreadId || !activeProject) return;
     const cwd = gitCwd ?? activeProject.workspaceRoot;
-    const terminalId = nextTerminalId(allocatableActiveTerminalIds);
+    const terminalId = createTerminalId();
     useRightPanelStore.getState().openTerminal(activeThreadRef, terminalId);
     setTerminalFocusRequestId((value) => value + 1);
     void openTerminal({
       environmentId: activeThreadRef.environmentId,
       input: {
-        ...(activeWorkspaceId ? { workspaceId: activeWorkspaceId } : { threadId: activeThreadId }),
+        ...(activeWorkspaceId ? { workspaceId: activeWorkspaceId } : {}),
         terminalId,
         cwd,
         ...(activeThreadWorktreePath != null ? { worktreePath: activeThreadWorktreePath } : {}),
@@ -4763,7 +4709,6 @@ export default function ChatView(props: ChatViewProps) {
     activeWorkspaceId,
     activeThreadRef,
     activeThreadWorktreePath,
-    allocatableActiveTerminalIds,
     gitCwd,
     openTerminal,
   ]);
@@ -4778,7 +4723,7 @@ export default function ChatView(props: ChatViewProps) {
       ) {
         return;
       }
-      const terminalId = nextTerminalId(allocatableActiveTerminalIds);
+      const terminalId = createTerminalId();
       const cwd = gitCwd ?? activeProject.workspaceRoot;
       useRightPanelStore
         .getState()
@@ -4787,9 +4732,7 @@ export default function ChatView(props: ChatViewProps) {
       void openTerminal({
         environmentId: activeThreadRef.environmentId,
         input: {
-          ...(activeWorkspaceId
-            ? { workspaceId: activeWorkspaceId }
-            : { threadId: activeThreadId }),
+          ...(activeWorkspaceId ? { workspaceId: activeWorkspaceId } : {}),
           terminalId,
           cwd,
           ...(activeThreadWorktreePath != null ? { worktreePath: activeThreadWorktreePath } : {}),
@@ -4807,7 +4750,6 @@ export default function ChatView(props: ChatViewProps) {
       activeWorkspaceId,
       activeThreadRef,
       activeThreadWorktreePath,
-      allocatableActiveTerminalIds,
       gitCwd,
       openTerminal,
     ],
@@ -4831,9 +4773,7 @@ export default function ChatView(props: ChatViewProps) {
       void closeTerminalMutation({
         environmentId: activeThreadRef.environmentId,
         input: {
-          ...(activeWorkspaceId
-            ? { workspaceId: activeWorkspaceId }
-            : { threadId: activeThreadRef.threadId }),
+          ...(activeWorkspaceId ? { workspaceId: activeWorkspaceId } : {}),
           terminalId,
           deleteHistory: true,
         },

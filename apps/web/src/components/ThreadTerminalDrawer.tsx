@@ -399,7 +399,7 @@ export function TerminalViewport({
   const terminalSession = useAttachedTerminalSession({
     environmentId,
     terminal: {
-      ...(workspaceId ? { workspaceId } : { threadId: threadId! }),
+      ...(workspaceId ? { workspaceId } : {}),
       terminalId,
       cwd,
       ...(worktreePath !== undefined ? { worktreePath } : {}),
@@ -411,7 +411,7 @@ export function TerminalViewport({
     runTerminalWrite({
       environmentId,
       input: {
-        ...(workspaceId ? { workspaceId } : { threadId: threadId! }),
+        ...(workspaceId ? { workspaceId } : {}),
         terminalId,
         data,
       },
@@ -423,7 +423,7 @@ export function TerminalViewport({
     return runTerminalResize({
       environmentId,
       input: {
-        ...(workspaceId ? { workspaceId } : { threadId: threadId! }),
+        ...(workspaceId ? { workspaceId } : {}),
         terminalId,
         cols,
         rows,

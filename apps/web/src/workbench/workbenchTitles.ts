@@ -29,6 +29,23 @@ function locationFor(
       if (workspace !== undefined) return { project, workspace };
       continue;
     }
+    if (target.kind === "workspaceTerminal") {
+      // Prefer the current assignment; otherwise locate the workspace that
+      // still projects this terminal so its breadcrumb survives a move.
+      const assigned =
+        target.workspaceId === undefined
+          ? undefined
+          : project.workspaces.find((candidate) => candidate.id === target.workspaceId);
+      const workspace =
+        assigned ??
+        project.workspaces.find((candidate) =>
+          [...(candidate.sessions ?? []), ...(candidate.historySessions ?? [])].some(
+            (session) => session.kind === "terminal" && session.id === target.terminalSessionId,
+          ),
+        );
+      if (workspace !== undefined) return { project, workspace };
+      continue;
+    }
     const workspace = project.workspaces.find((candidate) => candidate.id === target.workspaceId);
     if (workspace !== undefined) return { project, workspace };
   }

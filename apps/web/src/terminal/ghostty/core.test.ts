@@ -1,3 +1,4 @@
+import { TerminalSessionId } from "@awen/contracts";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import {
   applyTerminalAttachStreamEvent,
@@ -81,8 +82,9 @@ describe("GhosttyTerminalCore snapshots", () => {
     return applyTerminalAttachStreamEvent(nextTerminalAttachSeedState(), {
       type: "snapshot",
       snapshot: {
-        threadId: "terminal-stream-test",
         terminalId: "term-1",
+        sessionId: TerminalSessionId.make("term-1"),
+        kind: "terminal",
         cwd: "/repo",
         worktreePath: null,
         status: "running",
@@ -99,7 +101,6 @@ describe("GhosttyTerminalCore snapshots", () => {
   function append(state: TerminalBufferState, data: string) {
     return applyTerminalAttachStreamEvent(state, {
       type: "output",
-      threadId: "terminal-stream-test",
       terminalId: "term-1",
       data,
     });
@@ -341,8 +342,9 @@ describe("GhosttyTerminalCore snapshots", () => {
     let cursor = initial.cursor;
 
     const snapshot = {
-      threadId: "terminal-stream-test",
       terminalId: "term-1",
+      sessionId: TerminalSessionId.make("term-1"),
+      kind: "terminal" as const,
       cwd: "/repo",
       worktreePath: null,
       status: "running" as const,
@@ -355,8 +357,8 @@ describe("GhosttyTerminalCore snapshots", () => {
     };
     const events = [
       { type: "snapshot", snapshot },
-      { type: "cleared", threadId: snapshot.threadId, terminalId: snapshot.terminalId },
-      { type: "restarted", threadId: snapshot.threadId, terminalId: snapshot.terminalId, snapshot },
+      { type: "cleared", terminalId: snapshot.terminalId },
+      { type: "restarted", terminalId: snapshot.terminalId, snapshot },
     ] as const;
     for (const event of events) {
       core.write("\r\nstale local text");

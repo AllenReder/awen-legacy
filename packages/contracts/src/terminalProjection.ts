@@ -1,12 +1,13 @@
 import { WorkspaceId } from "./baseSchemas.ts";
-import { terminalSessionIdForRuntime } from "./session.ts";
 import type { TerminalSummary } from "./terminal.ts";
 import type { AwenProjectShell, AwenTerminalSessionShell } from "./workspace.ts";
 
 /**
  * Join the terminal metadata projection to the durable Workspace tree. The
  * metadata stream is authoritative for terminals; orchestration owns Agents.
- * Legacy thread terminals cannot be assigned a Workspace by guessing a cwd.
+ *
+ * A terminal with no Workspace assignment is not part of any Workspace subtree;
+ * its Pane and deep link survive independently of the assignment.
  */
 export function projectTerminalSessions(
   projects: ReadonlyArray<AwenProjectShell>,
@@ -18,7 +19,7 @@ export function projectTerminalSessions(
   for (const terminal of terminals) {
     if (terminal.workspaceId === undefined) continue;
     const workspaceId = WorkspaceId.make(terminal.workspaceId);
-    const id = terminalSessionIdForRuntime(workspaceId, terminal.terminalId);
+    const id = terminal.sessionId;
     const isClosed = terminal.status === "closed";
     const targetMap = isClosed ? historySessions : activeSessions;
     let group = targetMap.get(workspaceId);

@@ -1,6 +1,7 @@
 import { TerminalViewport } from "../components/ThreadTerminalDrawer";
 import { useAwenWorkspace } from "../state/entities";
 import { useEnvironment } from "../state/environments";
+import { useTerminalSessionSummary } from "../state/terminalSessions";
 import { runtimeTerminalIdForTarget } from "./sessionTarget";
 import type { ViewTarget } from "./viewRegistry";
 import { WifiOff } from "lucide-react";
@@ -36,10 +37,19 @@ export function TerminalView({
   focusRequestId = 0,
   availableSize,
 }: TerminalViewProps) {
-  const workspace = useAwenWorkspace(target.environmentId, target.workspaceId);
+  const workspaceId = target.workspaceId ?? null;
+  const workspace = useAwenWorkspace(target.environmentId, workspaceId);
   const terminalId = runtimeTerminalIdForTarget(target);
+  const summary = useTerminalSessionSummary({
+    environmentId: target.environmentId,
+    terminalId,
+  });
+  // Launch context comes from the current assignment when present, otherwise
+  // from the durable terminal metadata, so an unassigned or moved terminal
+  // still reconnects to its PTY.
+  const cwd = workspace?.workspaceRoot ?? summary?.cwd ?? null;
   const environment = useEnvironment(target.environmentId);
-  if (workspace === null || terminalId === null) {
+  if (cwd === null) {
     const isOffline = environment !== null && environment.connection.phase !== "connected";
     if (isOffline) {
       return (
@@ -70,10 +80,11 @@ export function TerminalView({
       topFade
       advancedTypography={false}
       environmentId={target.environmentId}
-      workspaceId={target.workspaceId}
+      {...(workspaceId !== null ? { workspaceId } : {})}
       terminalId={terminalId}
-      terminalLabel="Terminal"
-      cwd={workspace.workspaceRoot}
+      terminalLabel={summary?.title ?? summary?.label ?? "Terminal"}
+      cwd={cwd}
+      {...(summary?.worktreePath !== undefined ? { worktreePath: summary.worktreePath } : {})}
       onSessionExited={() => undefined}
       focusRequestId={focusRequestId}
       autoFocus={focused}

@@ -11,7 +11,7 @@ const WS_A: WorkspaceId = "ws-a" as WorkspaceId;
 const WS_B: WorkspaceId = "ws-b" as WorkspaceId;
 
 describe("terminalTargetForRuntime", () => {
-  it("binds a runtime terminal to a workbench target with a typed Awen Session identity", () => {
+  it("binds a runtime terminal to a workbench target with its stable Awen identity", () => {
     const target = terminalTargetForRuntime({
       environmentId: ENV_A,
       workspaceId: WS_A,
@@ -20,8 +20,7 @@ describe("terminalTargetForRuntime", () => {
 
     expect(target.kind).toBe("workspaceTerminal");
     expect(target.workspaceId).toBe(WS_A);
-    // The runtime PTY id is not the product-level target identity.
-    expect(target.terminalSessionId).not.toBe("term-1");
+    expect(target.terminalSessionId).toBe("term-1");
   });
 
   it("gives one runtime terminal the same target identity on every call", () => {
@@ -38,10 +37,20 @@ describe("terminalTargetForRuntime", () => {
 
     expect(targetKey(first)).toBe(targetKey(second));
   });
+
+  it("carries no Workspace requirement for an unassigned terminal", () => {
+    const target = terminalTargetForRuntime({
+      environmentId: ENV_A,
+      terminalId: "term-1",
+    });
+
+    expect(target.workspaceId).toBeUndefined();
+    expect(target.terminalSessionId).toBe("term-1");
+  });
 });
 
 describe("runtimeTerminalIdForTarget", () => {
-  it("resolves a workbench target back to the runtime terminal it adapts", () => {
+  it("resolves a workbench target back to the runtime terminal it addresses", () => {
     const target = terminalTargetForRuntime({
       environmentId: ENV_A,
       workspaceId: WS_A,
@@ -51,7 +60,7 @@ describe("runtimeTerminalIdForTarget", () => {
     expect(runtimeTerminalIdForTarget(target)).toBe("term-7");
   });
 
-  it("keeps the same terminal id distinct across Workspaces", () => {
+  it("keeps one target identity when the Workspace assignment changes", () => {
     const inA = terminalTargetForRuntime({
       environmentId: ENV_A,
       workspaceId: WS_A,
@@ -63,12 +72,12 @@ describe("runtimeTerminalIdForTarget", () => {
       terminalId: "term-1",
     });
 
-    expect(targetKey(inA)).not.toBe(targetKey(inB));
+    expect(targetKey(inA)).toBe(targetKey(inB));
     expect(runtimeTerminalIdForTarget(inA)).toBe("term-1");
     expect(runtimeTerminalIdForTarget(inB)).toBe("term-1");
   });
 
-  it("scopes the same terminal id and Workspace by Environment", () => {
+  it("scopes the same terminal id by Environment", () => {
     const inA = terminalTargetForRuntime({
       environmentId: ENV_A,
       workspaceId: WS_A,

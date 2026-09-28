@@ -30,7 +30,7 @@ import { Route as SettingsAppearanceRouteImport } from './routes/settings.appear
 import { Route as ProjectsProjectKeyRouteImport } from './routes/projects.$projectKey'
 import { Route as ChatPullRequestsRouteImport } from './routes/_chat.pull-requests'
 import { Route as ChatEnvironmentIdThreadIdRouteImport } from './routes/_chat.$environmentId.$threadId'
-import { Route as ChatEnvironmentIdWorkspacesWorkspaceIdTerminalSessionsTerminalSessionIdRouteImport } from './routes/_chat.$environmentId.workspaces.$workspaceId.terminal-sessions.$terminalSessionId'
+import { Route as ChatEnvironmentIdTerminalSessionsTerminalSessionIdRouteImport } from './routes/_chat.$environmentId.terminal-sessions.$terminalSessionId'
 
 const WelcomeRoute = WelcomeRouteImport.update({
   id: '/welcome',
@@ -138,14 +138,12 @@ const ChatEnvironmentIdThreadIdRoute =
     path: '/$environmentId/$threadId',
     getParentRoute: () => ChatRoute,
   } as any)
-const ChatEnvironmentIdWorkspacesWorkspaceIdTerminalSessionsTerminalSessionIdRoute =
-  ChatEnvironmentIdWorkspacesWorkspaceIdTerminalSessionsTerminalSessionIdRouteImport.update(
-    {
-      id: '/$environmentId/workspaces/$workspaceId/terminal-sessions/$terminalSessionId',
-      path: '/$environmentId/workspaces/$workspaceId/terminal-sessions/$terminalSessionId',
-      getParentRoute: () => ChatRoute,
-    } as any,
-  )
+const ChatEnvironmentIdTerminalSessionsTerminalSessionIdRoute =
+  ChatEnvironmentIdTerminalSessionsTerminalSessionIdRouteImport.update({
+    id: '/$environmentId/terminal-sessions/$terminalSessionId',
+    path: '/$environmentId/terminal-sessions/$terminalSessionId',
+    getParentRoute: () => ChatRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof ChatIndexRoute
@@ -168,7 +166,7 @@ export interface FileRoutesByFullPath {
   '/settings/snap-shot': typeof SettingsSnapShotRoute
   '/settings/source-control': typeof SettingsSourceControlRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
-  '/$environmentId/workspaces/$workspaceId/terminal-sessions/$terminalSessionId': typeof ChatEnvironmentIdWorkspacesWorkspaceIdTerminalSessionsTerminalSessionIdRoute
+  '/$environmentId/terminal-sessions/$terminalSessionId': typeof ChatEnvironmentIdTerminalSessionsTerminalSessionIdRoute
 }
 export interface FileRoutesByTo {
   '/pair': typeof PairRoute
@@ -191,7 +189,7 @@ export interface FileRoutesByTo {
   '/settings/source-control': typeof SettingsSourceControlRoute
   '/': typeof ChatIndexRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
-  '/$environmentId/workspaces/$workspaceId/terminal-sessions/$terminalSessionId': typeof ChatEnvironmentIdWorkspacesWorkspaceIdTerminalSessionsTerminalSessionIdRoute
+  '/$environmentId/terminal-sessions/$terminalSessionId': typeof ChatEnvironmentIdTerminalSessionsTerminalSessionIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -216,7 +214,7 @@ export interface FileRoutesById {
   '/settings/source-control': typeof SettingsSourceControlRoute
   '/_chat/': typeof ChatIndexRoute
   '/_chat/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
-  '/_chat/$environmentId/workspaces/$workspaceId/terminal-sessions/$terminalSessionId': typeof ChatEnvironmentIdWorkspacesWorkspaceIdTerminalSessionsTerminalSessionIdRoute
+  '/_chat/$environmentId/terminal-sessions/$terminalSessionId': typeof ChatEnvironmentIdTerminalSessionsTerminalSessionIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -241,7 +239,7 @@ export interface FileRouteTypes {
     | '/settings/snap-shot'
     | '/settings/source-control'
     | '/$environmentId/$threadId'
-    | '/$environmentId/workspaces/$workspaceId/terminal-sessions/$terminalSessionId'
+    | '/$environmentId/terminal-sessions/$terminalSessionId'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/pair'
@@ -264,7 +262,7 @@ export interface FileRouteTypes {
     | '/settings/source-control'
     | '/'
     | '/$environmentId/$threadId'
-    | '/$environmentId/workspaces/$workspaceId/terminal-sessions/$terminalSessionId'
+    | '/$environmentId/terminal-sessions/$terminalSessionId'
   id:
     | '__root__'
     | '/_chat'
@@ -288,7 +286,7 @@ export interface FileRouteTypes {
     | '/settings/source-control'
     | '/_chat/'
     | '/_chat/$environmentId/$threadId'
-    | '/_chat/$environmentId/workspaces/$workspaceId/terminal-sessions/$terminalSessionId'
+    | '/_chat/$environmentId/terminal-sessions/$terminalSessionId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -449,11 +447,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatEnvironmentIdThreadIdRouteImport
       parentRoute: typeof ChatRoute
     }
-    '/_chat/$environmentId/workspaces/$workspaceId/terminal-sessions/$terminalSessionId': {
-      id: '/_chat/$environmentId/workspaces/$workspaceId/terminal-sessions/$terminalSessionId'
-      path: '/$environmentId/workspaces/$workspaceId/terminal-sessions/$terminalSessionId'
-      fullPath: '/$environmentId/workspaces/$workspaceId/terminal-sessions/$terminalSessionId'
-      preLoaderRoute: typeof ChatEnvironmentIdWorkspacesWorkspaceIdTerminalSessionsTerminalSessionIdRouteImport
+    '/_chat/$environmentId/terminal-sessions/$terminalSessionId': {
+      id: '/_chat/$environmentId/terminal-sessions/$terminalSessionId'
+      path: '/$environmentId/terminal-sessions/$terminalSessionId'
+      fullPath: '/$environmentId/terminal-sessions/$terminalSessionId'
+      preLoaderRoute: typeof ChatEnvironmentIdTerminalSessionsTerminalSessionIdRouteImport
       parentRoute: typeof ChatRoute
     }
   }
@@ -463,15 +461,15 @@ interface ChatRouteChildren {
   ChatPullRequestsRoute: typeof ChatPullRequestsRoute
   ChatIndexRoute: typeof ChatIndexRoute
   ChatEnvironmentIdThreadIdRoute: typeof ChatEnvironmentIdThreadIdRoute
-  ChatEnvironmentIdWorkspacesWorkspaceIdTerminalSessionsTerminalSessionIdRoute: typeof ChatEnvironmentIdWorkspacesWorkspaceIdTerminalSessionsTerminalSessionIdRoute
+  ChatEnvironmentIdTerminalSessionsTerminalSessionIdRoute: typeof ChatEnvironmentIdTerminalSessionsTerminalSessionIdRoute
 }
 
 const ChatRouteChildren: ChatRouteChildren = {
   ChatPullRequestsRoute: ChatPullRequestsRoute,
   ChatIndexRoute: ChatIndexRoute,
   ChatEnvironmentIdThreadIdRoute: ChatEnvironmentIdThreadIdRoute,
-  ChatEnvironmentIdWorkspacesWorkspaceIdTerminalSessionsTerminalSessionIdRoute:
-    ChatEnvironmentIdWorkspacesWorkspaceIdTerminalSessionsTerminalSessionIdRoute,
+  ChatEnvironmentIdTerminalSessionsTerminalSessionIdRoute:
+    ChatEnvironmentIdTerminalSessionsTerminalSessionIdRoute,
 }
 
 const ChatRouteWithChildren = ChatRoute._addFileChildren(ChatRouteChildren)

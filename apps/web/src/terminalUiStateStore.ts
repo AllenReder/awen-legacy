@@ -9,6 +9,7 @@ import { parseScopedThreadKey, scopedThreadKey } from "@awen/client-runtime/envi
 import { type ScopedThreadRef } from "@awen/contracts";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
+import { createTerminalId } from "./lib/terminalIds";
 import { resolveStorage } from "./lib/storage";
 import {
   DEFAULT_THREAD_TERMINAL_HEIGHT,
@@ -347,10 +348,14 @@ function upsertTerminalIntoGroups(
   });
 }
 
-function setThreadTerminalOpen(state: ThreadTerminalUiState, open: boolean): ThreadTerminalUiState {
+function setThreadTerminalOpen(
+  state: ThreadTerminalUiState,
+  open: boolean,
+  fallbackTerminalId: string = DEFAULT_THREAD_TERMINAL_ID,
+): ThreadTerminalUiState {
   const normalized = normalizeThreadTerminalUiState(state);
   if (open && normalized.terminalIds.length === 0) {
-    return upsertTerminalIntoGroups(normalized, DEFAULT_THREAD_TERMINAL_ID, "new");
+    return upsertTerminalIntoGroups(normalized, fallbackTerminalId, "new");
   }
   if (normalized.terminalOpen === open) return normalized;
   return { ...normalized, terminalOpen: open };
@@ -630,11 +635,13 @@ export const useTerminalUiStateStore = create<TerminalUiStateStoreState>()(
             get().terminalUiStateByThreadKey,
             threadRef,
           );
+          const defaultTerminalId =
+            open && terminalState.terminalIds.length === 0 ? createTerminalId() : null;
           updateTerminal(
             threadRef,
-            (state) => setThreadTerminalOpen(state, open),
-            open && terminalState.terminalIds.length === 0
-              ? { terminalId: DEFAULT_THREAD_TERMINAL_ID, suppressed: false }
+            (state) => setThreadTerminalOpen(state, open, defaultTerminalId ?? undefined),
+            defaultTerminalId !== null
+              ? { terminalId: defaultTerminalId, suppressed: false }
               : undefined,
           );
         },

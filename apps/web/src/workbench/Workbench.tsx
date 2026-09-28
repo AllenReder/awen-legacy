@@ -5,6 +5,8 @@ import { useAwenProjects, useEnvironmentShellSnapshotPresent } from "../state/en
 import { useComposerDraftStore } from "../composerDraftStore";
 import { useEnvironmentCatalogSnapshot } from "../state/environmentCatalogSnapshot";
 import { useEnvironments } from "../state/environments";
+import { useEnvironmentQuery } from "../state/query";
+import { terminalEnvironment } from "../state/terminal";
 import { PaneTree } from "./PaneTree";
 import { TabTransitionController } from "./tabTransitionReact";
 import { installTabSwitchProfiler } from "./transitionProfiler";
@@ -44,12 +46,22 @@ export function Workbench() {
   const environmentId = deepLinkInput?.environmentId ?? null;
   const catalog = useEnvironmentCatalogSnapshot(environmentId);
   const environmentSnapshotPresent = useEnvironmentShellSnapshotPresent(environmentId);
-  const resolution = resolveDeepLink(deepLinkInput, projects, {
-    catalogReady: catalog.isReady,
-    environmentExists: catalog.entry !== null,
-    environmentEnabled: catalog.entry?.enabled === true,
-    environmentSnapshotPresent,
-  });
+  // Terminal deep links resolve from the metadata stream, which includes
+  // unassigned terminals that the Workspace projection omits.
+  const terminalMetadata = useEnvironmentQuery(
+    environmentId === null ? null : terminalEnvironment.metadata({ environmentId, input: null }),
+  );
+  const resolution = resolveDeepLink(
+    deepLinkInput,
+    projects,
+    {
+      catalogReady: catalog.isReady,
+      environmentExists: catalog.entry !== null,
+      environmentEnabled: catalog.entry?.enabled === true,
+      environmentSnapshotPresent,
+    },
+    terminalMetadata.data ?? [],
+  );
   // Observe active-to-closed/deleted transitions and clean up across Tabs.
   const activeSessionTargetsRef = useRef<Map<string, ViewTarget>>(new Map());
   useEffect(() => {
@@ -84,7 +96,11 @@ export function Workbench() {
     if (previous.size > 0) {
       for (const [key, target] of previous) {
         if (
-          target.kind !== "welcome" &&
+          // A Terminal Session's projection only carries assigned terminals, so
+          // absence can mean a reassignment rather than a removal. A Terminal
+          // View closes explicitly (its close-semantics ticket), not from the
+          // Workspace projection.
+          target.kind === "agentSession" &&
           observedEnvironmentIds.has(target.environmentId) &&
           !nextActiveTargets.has(key)
         ) {

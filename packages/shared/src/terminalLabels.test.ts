@@ -3,7 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import type { TerminalSummary } from "@awen/contracts";
 import { DEFAULT_TERMINAL_ID } from "@awen/contracts";
 
-import { getTerminalLabel, nextTerminalId, resolveTerminalSessionLabel } from "./terminalLabels.ts";
+import { getTerminalLabel, resolveTerminalSessionLabel } from "./terminalLabels.ts";
 
 describe("getTerminalLabel", () => {
   it("uses the numeric suffix for term-* ids", () => {
@@ -28,26 +28,5 @@ describe("resolveTerminalSessionLabel", () => {
     expect(resolveTerminalSessionLabel(DEFAULT_TERMINAL_ID, { label: "   " })).toBe("Terminal 1");
     expect(resolveTerminalSessionLabel(DEFAULT_TERMINAL_ID, null)).toBe("Terminal 1");
     expect(resolveTerminalSessionLabel("term-2", undefined)).toBe("Terminal 2");
-  });
-});
-
-describe("nextTerminalId", () => {
-  it("allocates term-1 when no terminals are listed yet", () => {
-    expect(nextTerminalId([])).toBe(DEFAULT_TERMINAL_ID);
-  });
-
-  it("allocates term-2 when only term-1 exists", () => {
-    expect(nextTerminalId([DEFAULT_TERMINAL_ID])).toBe("term-2");
-  });
-
-  it("skips over taken term-N slots", () => {
-    expect(nextTerminalId([DEFAULT_TERMINAL_ID, "term-2", "term-3"])).toBe("term-4");
-    expect(nextTerminalId([DEFAULT_TERMINAL_ID, "term-3"])).toBe("term-2");
-    expect(nextTerminalId(["term-2", "term-3"])).toBe("term-1");
-  });
-
-  it("ignores blank/whitespace-only ids", () => {
-    expect(nextTerminalId(["", "  ", DEFAULT_TERMINAL_ID])).toBe("term-2");
-    expect(nextTerminalId(["", "  "])).toBe("term-1");
   });
 });

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import { defaultAnimateLayoutChanges, type AnimateLayoutChanges } from "@dnd-kit/sortable";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
+import { createTerminalId } from "../lib/terminalIds";
 import {
   animateSidebarLayoutChanges,
   applySidebarThreadDrop,
@@ -27,7 +28,6 @@ import {
   resolveSidebarThreadStatus,
   resolveThreadStatusPill,
   resolveWorkingStartedAt,
-  nextWorkspaceTerminalId,
   searchSidebarThreads,
   formatWorkingDurationLabel,
   shouldClearThreadSelectionOnMouseDown,
@@ -2577,11 +2577,11 @@ describe("navigation after parking a thread", () => {
   );
 });
 
-describe("nextWorkspaceTerminalId", () => {
+describe("createTerminalId", () => {
   it("allocates distinct identities even before metadata catches up or after all terminals close", () => {
-    const first = nextWorkspaceTerminalId();
-    const second = nextWorkspaceTerminalId();
+    const first = createTerminalId();
+    const second = createTerminalId();
     expect(first).not.toBe(second);
-    expect(nextWorkspaceTerminalId()).not.toBe(first);
+    expect(createTerminalId()).not.toBe(first);
   });
 });

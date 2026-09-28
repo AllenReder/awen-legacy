@@ -17,7 +17,6 @@ import * as PtyAdapter from "../src/terminal/PtyAdapter.ts";
 import * as TerminalManager from "../src/terminal/Manager.ts";
 import * as ProcessRunner from "../src/processRunner.ts";
 
-const THREAD_ID = "issue-5-terminal-smoke";
 const TERMINAL_ID = DEFAULT_TERMINAL_ID;
 const RESIZED_COLS = 100;
 const RESIZED_ROWS = 32;
@@ -99,7 +98,6 @@ async function main(): Promise<void> {
           });
 
           const openInput = {
-            threadId: THREAD_ID,
             terminalId: TERMINAL_ID,
             cwd: baseDir,
             cols: 80,
@@ -125,7 +123,6 @@ async function main(): Promise<void> {
             "\u001b[31mAWEN_RED\u001b[0m\n中文\n" +
             "\u001b[?1049h\u001b[2J\u001b[HAWEN_ALT\u001b[?1049l\n";
           yield* manager.write({
-            threadId: THREAD_ID,
             terminalId: TERMINAL_ID,
             data: nodeCommand(
               `process.stdout.write(Buffer.from(${JSON.stringify(
@@ -156,7 +153,6 @@ async function main(): Promise<void> {
             "process.stdin.once('data',()=>{process.stdout.write('\\u001b[?1049l\\u001b[2J\\u001b[HAWEN_FULL_SCREEN_RESTORED\\n');process.exit(0)})",
           ].join(";");
           yield* manager.write({
-            threadId: THREAD_ID,
             terminalId: TERMINAL_ID,
             data: nodeCommand(fullScreenProgram),
           });
@@ -167,7 +163,6 @@ async function main(): Promise<void> {
             }),
           );
           yield* manager.write({
-            threadId: THREAD_ID,
             terminalId: TERMINAL_ID,
             data: "x",
           });
@@ -180,7 +175,6 @@ async function main(): Promise<void> {
             }),
           );
           yield* manager.write({
-            threadId: THREAD_ID,
             terminalId: TERMINAL_ID,
             data: nodeCommand("process.stdout.write('AWEN_AFTER_FULLSCREEN\\n')"),
           });
@@ -191,13 +185,11 @@ async function main(): Promise<void> {
           );
 
           yield* manager.resize({
-            threadId: THREAD_ID,
             terminalId: TERMINAL_ID,
             cols: RESIZED_COLS,
             rows: RESIZED_ROWS,
           });
           yield* manager.write({
-            threadId: THREAD_ID,
             terminalId: TERMINAL_ID,
             data: nodeCommand(
               "process.stdout.write(`AWEN_SIZE:${process.stdout.rows} ${process.stdout.columns}:AWEN_SIZE_END\\n`)",
@@ -214,7 +206,6 @@ async function main(): Promise<void> {
           unsubscribe();
           const detachedMarker = "AWEN_DETACHED_OUTPUT";
           yield* manager.write({
-            threadId: THREAD_ID,
             terminalId: TERMINAL_ID,
             data: nodeCommand(`process.stdout.write(${JSON.stringify(`${detachedMarker}\n`)})`),
           });
@@ -246,7 +237,6 @@ async function main(): Promise<void> {
           );
 
           yield* manager.write({
-            threadId: THREAD_ID,
             terminalId: TERMINAL_ID,
             data: nodeCommand("process.stdout.write('AWEN_LIVE_AFTER_ATTACH\\n')"),
           });
@@ -257,7 +247,6 @@ async function main(): Promise<void> {
           );
 
           yield* manager.write({
-            threadId: THREAD_ID,
             terminalId: TERMINAL_ID,
             data: "exit 7\n",
           });
@@ -273,14 +262,12 @@ async function main(): Promise<void> {
           );
 
           yield* manager.close({
-            threadId: THREAD_ID,
             terminalId: TERMINAL_ID,
             deleteHistory: true,
           });
 
           const invalidError = yield* Effect.flip(
             manager.open({
-              threadId: THREAD_ID,
               terminalId: "invalid-cwd",
               cwd: NodePath.join(baseDir, "missing-cwd"),
             }),

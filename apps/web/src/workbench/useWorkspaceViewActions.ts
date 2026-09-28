@@ -5,7 +5,7 @@ import {
 } from "@awen/client-runtime/state/runtime";
 import { useCallback } from "react";
 
-import { nextWorkspaceTerminalId } from "../components/Sidebar.logic";
+import { createTerminalId } from "../lib/terminalIds";
 import { toastManager } from "../components/ui/toast";
 import { terminalEnvironment } from "../state/terminal";
 import { useAtomCommand } from "../state/use-atom-command";
@@ -47,7 +47,7 @@ export function useWorkspaceViewActions({
   }, [environmentId, paneId, workspaceId]);
 
   const onNewTerminalSession = useCallback(() => {
-    const terminalId = nextWorkspaceTerminalId();
+    const terminalId = createTerminalId();
     void openTerminal({
       environmentId,
       input: { workspaceId, terminalId },
