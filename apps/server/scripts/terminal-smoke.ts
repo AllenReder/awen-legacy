@@ -14,6 +14,7 @@ import * as ManagedRuntime from "effect/ManagedRuntime";
 
 import * as NodePtyAdapter from "../src/terminal/NodePtyAdapter.ts";
 import * as PtyAdapter from "../src/terminal/PtyAdapter.ts";
+import { terminalDirectoryObservationCapability } from "../src/terminal/DirectoryObservation.ts";
 import * as TerminalManager from "../src/terminal/Manager.ts";
 import * as ProcessRunner from "../src/processRunner.ts";
 
@@ -73,7 +74,12 @@ function assert(condition: unknown, message: string): asserts condition {
 async function main(): Promise<void> {
   const baseDir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "awen-c04-terminal-"));
   const logsDir = NodePath.join(baseDir, "userdata", "logs", "terminals");
+  const followDir = NodePath.join(baseDir, "follow-target");
+  await NodeFSP.mkdir(followDir, { recursive: true });
   const shell = currentShell();
+  const directoryObservationSupported = terminalDirectoryObservationCapability(
+    NodeProcess.platform,
+  ).supported;
   const runtime = ManagedRuntime.make(runtimeLayer);
   const events: TerminalAttachStreamEvent[] = [];
 
@@ -95,10 +101,18 @@ async function main(): Promise<void> {
                 childCommand: null,
                 processIds: [],
               }),
+            // Registered Workspaces for the real-shell directory-following
+            // scenario; harmless where directory observation is unsupported.
+            listRegisteredWorkspaceDirectories: () =>
+              Effect.succeed([
+                { workspaceId: "smoke-origin", workspaceRoot: baseDir },
+                { workspaceId: "smoke-target", workspaceRoot: followDir },
+              ]),
           });
 
           const openInput = {
             terminalId: TERMINAL_ID,
+            workspaceId: "smoke-origin",
             cwd: baseDir,
             cols: 80,
             rows: 24,
@@ -205,6 +219,53 @@ async function main(): Promise<void> {
 
           unsubscribe();
           const detachedMarker = "AWEN_DETACHED_OUTPUT";
+
+          // Real-shell directory following: `cd` reprojects the assignment while
+          // the PTY and its output stream stay intact.
+          let followedDirectory = false;
+          if (directoryObservationSupported) {
+            const readAssignment = () =>
+              Effect.map(manager.getMetadata(), (metadata) =>
+                metadata.find((summary) => summary.terminalId === TERMINAL_ID),
+              );
+            const waitForAssignment = (workspaceId: string, action: string) =>
+              Effect.gen(function* () {
+                for (let attempt = 0; attempt < WAIT_TIMEOUT_MS / 50; attempt += 1) {
+                  const summary = yield* readAssignment();
+                  if (summary?.workspaceId === workspaceId) return summary;
+                  yield* Effect.sleep("50 millis");
+                }
+                return yield* Effect.die(
+                  new Error(`The real shell did not ${action} the terminal to ${workspaceId}.`),
+                );
+              });
+
+            yield* manager.write({
+              terminalId: TERMINAL_ID,
+              data: `cd ${JSON.stringify(followDir)}\n`,
+            });
+            const moved = yield* waitForAssignment("smoke-target", "move");
+            assert(moved.pid === firstPid, "Following the shell directory restarted the PTY.");
+
+            yield* manager.write({
+              terminalId: TERMINAL_ID,
+              data: nodeCommand("process.stdout.write('AWEN_AFTER_CD\\n')"),
+            });
+            yield* Effect.promise(() =>
+              waitFor("output continuity after the shell moved", () =>
+                outputText(events).includes("AWEN_AFTER_CD"),
+              ),
+            );
+
+            yield* manager.write({
+              terminalId: TERMINAL_ID,
+              data: `cd ${JSON.stringify(baseDir)}\n`,
+            });
+            const returned = yield* waitForAssignment("smoke-origin", "return");
+            assert(returned.pid === firstPid, "Returning the shell directory restarted the PTY.");
+            followedDirectory = true;
+          }
+
           yield* manager.write({
             terminalId: TERMINAL_ID,
             data: nodeCommand(`process.stdout.write(${JSON.stringify(`${detachedMarker}\n`)})`),
@@ -277,7 +338,7 @@ async function main(): Promise<void> {
             "Invalid cwd did not produce a structured cwd error.",
           );
 
-          return { firstPid, invalidError: invalidError.message };
+          return { firstPid, followedDirectory, invalidError: invalidError.message };
         }),
       ).pipe(Effect.provide(runtimeLayer)),
     );
@@ -288,6 +349,11 @@ async function main(): Promise<void> {
     );
     console.log(
       "Verified: ANSI color, alternate screen, Chinese output, detach/attach history, and invalid cwd error.",
+    );
+    console.log(
+      result.followedDirectory
+        ? "Verified: a real shell `cd` reprojected the Workspace assignment without restarting the PTY or interrupting output."
+        : `Skipped: directory following is unsupported on ${NodeProcess.platform}; the assignment is retained.`,
     );
   } finally {
     await runtime.dispose();

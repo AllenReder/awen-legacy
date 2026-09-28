@@ -4,7 +4,8 @@ import {
   type ContextMenuItem,
   type EnvironmentId,
   type ProjectId,
-  type TerminalSessionId,
+  TerminalSessionId,
+  type TerminalSummary,
   type ThreadId,
   type WorkspaceId,
 } from "@awen/contracts";
@@ -22,7 +23,6 @@ import {
   FolderIcon,
   GitBranchIcon,
   PlusIcon,
-  TerminalIcon,
 } from "lucide-react";
 import {
   useCallback,
@@ -43,7 +43,7 @@ import { newThreadId } from "../lib/utils";
 import { readLocalApi } from "../localApi";
 import { environmentServerConfigsAtom } from "../state/server";
 import { useEnvironments } from "../state/environments";
-import { useAwenProjects, useThreadShell } from "../state/entities";
+import { useAwenProjects, useThreadShell, useUnassignedTerminals } from "../state/entities";
 import { projectEnvironment, workspaceEnvironment } from "../state/projects";
 import { terminalEnvironment } from "../state/terminal";
 import { threadEnvironment } from "../state/threads";
@@ -303,6 +303,21 @@ export function AwenSidebar() {
     [environments],
   );
   const serverConfigs = useAtomValue(environmentServerConfigsAtom);
+  const unassignedTerminals = useUnassignedTerminals();
+  const environmentLabels = useMemo(
+    () =>
+      new Map(environments.map((environment) => [environment.environmentId, environment.label])),
+    [environments],
+  );
+  const unassignedByEnvironment = useMemo(() => {
+    const groups = new Map<EnvironmentId, TerminalSummary[]>();
+    for (const { environmentId, summary } of unassignedTerminals) {
+      const group = groups.get(environmentId);
+      if (group) group.push(summary);
+      else groups.set(environmentId, [summary]);
+    }
+    return [...groups.entries()];
+  }, [unassignedTerminals]);
   const [addWorkspaceProject, setAddWorkspaceProject] = useState<EnvironmentAwenProject | null>(
     null,
   );
@@ -990,6 +1005,34 @@ export function AwenSidebar() {
                 </div>
               );
             })}
+            {unassignedByEnvironment.length > 0 ? (
+              <div
+                data-testid="sidebar-unassigned-terminals"
+                className="mt-1 flex flex-col gap-px border-t border-sidebar-border pt-1"
+              >
+                <div className="px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-sidebar-muted-foreground">
+                  Unassigned terminals
+                </div>
+                {unassignedByEnvironment.map(([environmentId, terminals]) => (
+                  <div key={environmentId} className="flex flex-col gap-px">
+                    {unassignedByEnvironment.length > 1 ? (
+                      <div className="truncate px-2 py-0.5 text-[10px] text-sidebar-muted-foreground">
+                        {environmentLabels.get(environmentId) ?? environmentId}
+                      </div>
+                    ) : null}
+                    {terminals.map((summary) => (
+                      <UnassignedTerminalRow
+                        key={`${environmentId}:${summary.terminalId}`}
+                        environmentId={environmentId}
+                        summary={summary}
+                        renameTerminal={renameTerminal}
+                        navigate={navigate}
+                      />
+                    ))}
+                  </div>
+                ))}
+              </div>
+            ) : null}
           </div>
         </SidebarGroup>
       </SidebarContent>
@@ -1092,6 +1135,47 @@ function WorkspaceAgentSessionRow({
     >
       <ProviderIcon className="size-3.5 shrink-0" />
       <span className="min-w-0 flex-1 truncate">{session.title}</span>
+    </SessionRow>
+  );
+}
+
+function UnassignedTerminalRow({
+  environmentId,
+  summary,
+  renameTerminal,
+  navigate,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly summary: TerminalSummary;
+  readonly renameTerminal: (
+    target: Extract<ViewTarget, { kind: "workspaceTerminal" }>,
+    title: string,
+  ) => void;
+  readonly navigate: ReturnType<typeof useNavigate>;
+}) {
+  const TerminalOrAgentIcon = resolveTerminalIcon(summary);
+  const status = resolveTerminalSessionStatus(summary);
+  const title = (summary.title ?? summary.label).trim() || "Terminal";
+  // No Workspace assignment: the target carries only the stable Session identity.
+  const target = {
+    kind: "workspaceTerminal" as const,
+    environmentId,
+    terminalSessionId: TerminalSessionId.make(summary.terminalId),
+  };
+
+  return (
+    <SessionRow
+      data-testid="sidebar-session-row"
+      data-session-kind="terminal"
+      data-session-unassigned="true"
+      sessionTitle={title}
+      status={status}
+      target={target}
+      navigateTo={(route) => void navigate({ ...route, to: route.to as never } as never)}
+      onStartRename={() => renameTerminal(target, title)}
+    >
+      <TerminalOrAgentIcon className="size-3.5 shrink-0" />
+      <span className="min-w-0 flex-1 truncate">{title}</span>
     </SessionRow>
   );
 }

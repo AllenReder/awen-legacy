@@ -252,6 +252,19 @@ const TerminalRenamedEvent = Schema.Struct({
   title: TrimmedNonEmptyString,
 });
 
+/**
+ * The Session's Workspace assignment changed without a PTY restart.
+ *
+ * A reliable directory observation moved the terminal into another registered
+ * Workspace, into the unassigned group, or back; its identity, PTY, history,
+ * and event stream are unchanged. Clients refresh the metadata projection
+ * rather than re-opening the terminal.
+ */
+const TerminalAssignedEvent = Schema.Struct({
+  ...TerminalEventBaseSchema.fields,
+  type: Schema.Literal("assigned"),
+});
+
 export const TerminalEvent = Schema.Union([
   TerminalStartedEvent,
   TerminalOutputEvent,
@@ -262,6 +275,7 @@ export const TerminalEvent = Schema.Union([
   TerminalRestartedEvent,
   TerminalActivityEvent,
   TerminalRenamedEvent,
+  TerminalAssignedEvent,
 ]);
 export type TerminalEvent = typeof TerminalEvent.Type;
 

@@ -94,6 +94,10 @@ export function useAwenProjects() {
   return useAtomValue(environmentWorkspace.awenProjectsAtom);
 }
 
+export function useUnassignedTerminals() {
+  return useAtomValue(environmentWorkspace.unassignedTerminalsAtom);
+}
+
 export function useEnvironmentShellSnapshotPresent(environmentId: EnvironmentId | null): boolean {
   const state = useAtomValue(
     environmentId === null

@@ -30,6 +30,7 @@ const mockState = {
   environments: [] as any[],
   navigate: vi.fn(),
   threadShell: null as any,
+  unassignedTerminals: [] as any[],
 };
 
 const mockTerminalSessions = {
@@ -57,6 +58,7 @@ vi.mock("../state/entities", () => ({
   useAwenAgentSessionShell: () => null,
   readThreadShell: () => null,
   useThreadShell: () => mockState.threadShell,
+  useUnassignedTerminals: () => mockState.unassignedTerminals,
 }));
 
 vi.mock("../state/environments", () => ({
@@ -161,6 +163,8 @@ describe("AwenSidebar", () => {
     mockState.projects = [];
     mockTerminalSessions.sessions = [];
     mockState.threadShell = null;
+    mockState.environments = [];
+    mockState.unassignedTerminals = [];
     useUiStateStore.setState({ threadLastVisitedAtById: {} });
   });
 
@@ -177,6 +181,42 @@ describe("AwenSidebar", () => {
 
     const header = renderer.root.findByProps({ "data-sidebar": "header" });
     expect(header).toBeDefined();
+  });
+
+  it("renders unassigned terminals in a Sidebar group", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    mockState.projects = [];
+    mockState.unassignedTerminals = [
+      {
+        environmentId: "local",
+        summary: {
+          terminalId: "term-1",
+          sessionId: "term-1",
+          kind: "terminal",
+          cwd: "/tmp/elsewhere",
+          worktreePath: null,
+          status: "running",
+          pid: 1,
+          exitCode: null,
+          exitSignal: null,
+          hasRunningSubprocess: false,
+          label: "zsh",
+          title: "Moved shell",
+          updatedAt: "2026-01-01T00:00:00Z",
+        },
+      },
+    ];
+
+    await act(() => {
+      renderer = create(<AwenSidebar />);
+    });
+
+    const section = renderer.root.findByProps({ "data-testid": "sidebar-unassigned-terminals" });
+    expect(section).toBeDefined();
+    const rows = renderer.root.findAllByProps({ "data-session-id": "term-1" });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.props["data-session-unassigned"]).toBe("true");
+    expect(rows[0]?.props["data-workspace-key"]).toBe("local:");
   });
 
   it("renders the sidebar header and project list when projects exist", async () => {

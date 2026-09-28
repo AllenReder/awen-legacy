@@ -154,3 +154,67 @@ it("projects live Terminal Sessions beside Agent Sessions and removes only the t
   unmount();
   registry.dispose();
 });
+
+it("lists unassigned non-closed terminals per Environment", () => {
+  const makeTerminal = (
+    terminalId: string,
+    overrides: Partial<TerminalSummary> = {},
+  ): TerminalSummary => ({
+    terminalId,
+    sessionId: TerminalSessionId.make(terminalId),
+    kind: "terminal",
+    cwd: "/tmp/somewhere",
+    worktreePath: null,
+    status: "running",
+    pid: 42,
+    exitCode: null,
+    exitSignal: null,
+    hasRunningSubprocess: false,
+    label: "zsh",
+    updatedAt: "2026-09-18T00:00:00Z",
+    ...overrides,
+  });
+
+  const localMetadata = Atom.make<ReadonlyArray<TerminalSummary> | null>([
+    makeTerminal("term-local-unassigned"),
+    makeTerminal("term-local-assigned", { workspaceId: WORKSPACE_ID }),
+    makeTerminal("term-local-closed", { status: "closed" }),
+  ]);
+  const remoteMetadata = Atom.make<ReadonlyArray<TerminalSummary> | null>([
+    makeTerminal("term-remote-unassigned"),
+  ]);
+  const entities = createEnvironmentWorkspaceAtoms({
+    catalogValueAtom: Atom.make({
+      isReady: true,
+      entries: new Map([
+        [LOCAL, { enabled: true }],
+        [REMOTE, { enabled: true }],
+      ]),
+    } as unknown as EnvironmentCatalogState),
+    snapshotAtom: () => Atom.make<OrchestrationShellSnapshot | null>(null),
+    terminalMetadataAtom: (environmentId) =>
+      environmentId === LOCAL ? localMetadata : remoteMetadata,
+  });
+  const registry = AtomRegistry.make();
+
+  expect(
+    registry
+      .get(entities.environmentUnassignedTerminalsAtom(LOCAL))
+      .map((entry) => [entry.environmentId, entry.summary.terminalId]),
+  ).toEqual([[LOCAL, "term-local-unassigned"]]);
+  expect(
+    registry
+      .get(entities.unassignedTerminalsAtom)
+      .map((entry) => [entry.environmentId, entry.summary.terminalId]),
+  ).toEqual([
+    [LOCAL, "term-local-unassigned"],
+    [REMOTE, "term-remote-unassigned"],
+  ]);
+
+  registry.set(localMetadata, [
+    makeTerminal("term-local-unassigned", { workspaceId: WORKSPACE_ID }),
+  ]);
+  expect(registry.get(entities.environmentUnassignedTerminalsAtom(LOCAL))).toEqual([]);
+
+  registry.dispose();
+});

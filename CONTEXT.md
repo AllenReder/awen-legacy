@@ -388,6 +388,14 @@ _Avoid_: Chat wallpaper, Session background, View background
   identity. The Pane/attach path never restarts the PTY because of an
   assignment change; an explicit `open` restarts only when its launch context
   (`cwd`, worktree, or env) changes.
+- A Terminal Session's Workspace assignment follows reliable shell-directory
+  observation without changing launch context, PTY, identity, or Pane. Unknown
+  observation retains the last confirmed assignment; a known path outside every
+  registered Workspace becomes unassigned.
+- Destructive Workspace directory deletion consults live directory occupancy
+  evidence (observed directories and last confirmed assignments), not the
+  Sidebar assignment alone. Unregistering a Workspace remains distinct from
+  deleting its directory.
 - The current Session kinds are Agent session and Terminal session; other
   main-area content is a View, not a Session.
 - Session identity is independent of its runtime process and provider-native

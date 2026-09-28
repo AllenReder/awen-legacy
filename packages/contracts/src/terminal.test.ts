@@ -353,6 +353,23 @@ describe("TerminalEvent", () => {
     ).toBe(true);
   });
 
+  it("accepts assignment changes and omits the Workspace when unassigned", () => {
+    expect(
+      decodes(TerminalEvent, {
+        type: "assigned",
+        terminalId: DEFAULT_TERMINAL_ID,
+        workspaceId: "workspace:sibling",
+        sequence: 7,
+      }),
+    ).toBe(true);
+    expect(
+      decodes(TerminalEvent, {
+        type: "assigned",
+        terminalId: DEFAULT_TERMINAL_ID,
+      }),
+    ).toBe(true);
+  });
+
   it("accepts started events with snapshot worktree metadata", () => {
     expect(
       decodes(TerminalEvent, {
