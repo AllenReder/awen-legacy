@@ -135,7 +135,7 @@ interface FilePreviewPanelProps {
   workspaceMutationId: string | null;
   initialDraft?: FileEditorDraft | undefined;
   onDraftChange?: ((draft: FileEditorDraft | null) => void) | undefined;
-  navigationOpensPane?: boolean | undefined;
+  navigationManaged?: boolean | undefined;
   explicitSave?: boolean | undefined;
   paneId?: string | undefined;
 }
@@ -999,7 +999,7 @@ export default function FilePreviewPanel({
   workspaceMutationId,
   initialDraft,
   onDraftChange,
-  navigationOpensPane = false,
+  navigationManaged = false,
   explicitSave = false,
   paneId,
 }: FilePreviewPanelProps) {
@@ -1036,8 +1036,15 @@ export default function FilePreviewPanel({
   const [pendingSwitchPath, setPendingSwitchPath] = useState<string | null>(null);
   const [showSwitchModal, setShowSwitchModal] = useState(false);
   const [showCloseModal, setShowCloseModal] = useState(false);
+  const [closeReason, setCloseReason] = useState<"close" | "switch">("close");
   const [showDiffModal, setShowDiffModal] = useState(false);
   const closeResolverRef = useRef<((allowed: boolean) => void) | null>(null);
+  useEffect(
+    () => () => {
+      closeResolverRef.current?.(false);
+    },
+    [],
+  );
   const { resolvedTheme } = useTheme();
   const wordWrap = useClientSettings((settings) => settings.wordWrap);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -1211,8 +1218,8 @@ export default function FilePreviewPanel({
   const handleDraftChange = useCallback(
     (next: string) => {
       draftHashRef.current ??= file.data?.contentHash ?? undefined;
-      draftContentsRef.current = next;
       const dirty = next !== (file.data?.contents ?? "");
+      draftContentsRef.current = dirty ? next : null;
       setIsDirty((prev) => (prev !== dirty ? dirty : prev));
       if (relativePath)
         draftCallbackRef.current?.(
@@ -1357,9 +1364,10 @@ export default function FilePreviewPanel({
   useEffect(() => {
     if (!paneId || !explicitSave) return;
     return useWorkbenchStore.getState().registerCloseGuard(paneId, {
-      isDirty: () => isDirty,
-      confirmClose: () =>
+      isDirty: () => draftContentsRef.current !== null,
+      confirmClose: (reason = "close") =>
         new Promise<boolean>((resolve) => {
+          setCloseReason(reason);
           closeResolverRef.current = resolve;
           setShowCloseModal(true);
         }),
@@ -1368,14 +1376,14 @@ export default function FilePreviewPanel({
 
   const handleOpenFileWithGuard = useCallback(
     (path: string) => {
-      if (explicitSave && isDirty && !navigationOpensPane) {
+      if (explicitSave && isDirty && !navigationManaged) {
         setPendingSwitchPath(path);
         setShowSwitchModal(true);
       } else {
         onOpenFile?.(path);
       }
     },
-    [explicitSave, isDirty, onOpenFile, navigationOpensPane],
+    [explicitSave, isDirty, onOpenFile, navigationManaged],
   );
 
   return (
@@ -1615,7 +1623,10 @@ export default function FilePreviewPanel({
                   cwd={cwd}
                   relativePath={relativePath}
                   composerDraftTarget={composerDraftTarget}
-                  contents={initialContents ?? file.data.contents}
+                  contents={
+                    (restoredDraft?.path === relativePath ? initialContents : undefined) ??
+                    file.data.contents
+                  }
                   resolvedTheme={resolvedTheme}
                   revealRequestId={revealRequestId}
                   wordWrap={wordWrap}
@@ -1726,7 +1737,8 @@ export default function FilePreviewPanel({
             <DialogHeader>
               <DialogTitle>Unsaved Changes</DialogTitle>
               <DialogDescription>
-                Do you want to save the changes you made to {relativePath} before closing?
+                Do you want to save the changes you made to {relativePath} before{" "}
+                {closeReason === "switch" ? "switching files" : "closing"}?
               </DialogDescription>
             </DialogHeader>
             <DialogFooter variant="bare">

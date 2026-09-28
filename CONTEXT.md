@@ -81,10 +81,10 @@ does not require the daemon to hold a long-lived Session.
 _Avoid_: Session, Workspace panel
 
 **File View**:
-A Workspace View for previewing and editing one file addressed by Workspace
-and path. A Files View browses the Workspace and opens File Views beside it;
-each resource has one presenting Pane across the Workbench.
-_Avoid_: File panel, File browser
+A Workspace View combining file browsing, preview and editing in one Pane.
+Each Environment and Workspace has one File View across the Workbench; opening
+another file switches its current selection in place, protecting unsaved edits.
+_Avoid_: File panel, File browser, Pane per file
 
 **Git View**:
 A Workspace View for inspecting Git state and changes in its Workspace. It

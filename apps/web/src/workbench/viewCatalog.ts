@@ -39,12 +39,6 @@ export interface ViewTargets {
   };
   fileView: WorkspaceViewTarget & {
     readonly definitionId: "fileView";
-    readonly initialPath?: never;
-    readonly revealLine?: never;
-  };
-  fileEditor: WorkspaceViewTarget & {
-    readonly definitionId: "fileEditor";
-    readonly initialPath: string;
   };
   gitView: WorkspaceViewTarget & {
     readonly definitionId: "gitView";
@@ -109,24 +103,12 @@ const catalog: Readonly<Record<keyof ViewTargets, CatalogEntry>> = {
   },
   fileView: {
     validate: (value) =>
-      workspace(value) && value.initialPath === undefined && value.revealLine === undefined,
-    resource: (target) =>
-      target.kind === "workspace" ? [target.environmentId, target.workspaceId] : [],
-  },
-  fileEditor: {
-    validate: (value) =>
       workspace(value) &&
-      path(value.initialPath) &&
+      (value.initialPath === undefined || path(value.initialPath)) &&
       (value.revealLine === undefined ||
         (Number.isSafeInteger(value.revealLine) && Number(value.revealLine) > 0)),
     resource: (target) =>
-      target.kind === "workspace"
-        ? [
-            target.environmentId,
-            target.workspaceId,
-            ...(target.initialPath === undefined ? [] : [target.initialPath]),
-          ]
-        : [],
+      target.kind === "workspace" ? [target.environmentId, target.workspaceId] : [],
   },
   gitView: {
     validate: (value) =>
@@ -155,4 +137,31 @@ export function targetKey(target: ViewTarget): string {
 
 export function targetsEqual(a: ViewTarget, b: ViewTarget): boolean {
   return targetKey(a) === targetKey(b);
+}
+
+/** Validate persisted presentation with the same Workspace path rules as navigation. */
+export function isViewPresentation(
+  target: ViewTarget,
+  value: unknown,
+): value is Readonly<Record<string, unknown>> {
+  if (!record(value)) return false;
+  if (target.definitionId !== "fileView") return true;
+  if (value.selectedPath !== undefined && value.selectedPath !== null && !path(value.selectedPath))
+    return false;
+  if (
+    value.revealLine !== undefined &&
+    value.revealLine !== null &&
+    !(Number.isSafeInteger(value.revealLine) && Number(value.revealLine) > 0)
+  )
+    return false;
+  const draft = value.fileDraft;
+  return (
+    draft === undefined ||
+    draft === null ||
+    (record(draft) &&
+      path(draft.path) &&
+      draft.path === value.selectedPath &&
+      typeof draft.contents === "string" &&
+      (draft.contentHash === undefined || typeof draft.contentHash === "string"))
+  );
 }

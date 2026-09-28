@@ -8,7 +8,7 @@ import {
   type LayoutMemory,
 } from "./scrollingLayout";
 import { leafIds, type LayoutNode } from "./layout";
-import { targetKey, isViewTarget, definitionIdForTarget } from "./viewCatalog";
+import { targetKey, isViewTarget, isViewPresentation, definitionIdForTarget } from "./viewCatalog";
 import type { PaneView, WorkbenchSnapshot, WorkbenchTab } from "./workbenchState";
 
 export const WORKBENCH_PERSISTENCE_KEY = "awen:workbench:v2";
@@ -79,7 +79,8 @@ function isPaneView(value: unknown): value is PaneView {
     typeof value.definitionId === "string" &&
     value.definitionId.length > 0 &&
     isViewTarget(value.target) &&
-    value.definitionId === definitionIdForTarget(value.target)
+    value.definitionId === definitionIdForTarget(value.target) &&
+    isViewPresentation(value.target, value.presentation)
   );
 }
 

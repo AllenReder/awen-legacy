@@ -36,7 +36,7 @@ export function openSessionFile(ref: ScopedThreadRef, path: string, line?: numbe
     workspace && withinWorkspace && !path.startsWith("attachment:")
       ? {
           kind: "workspace",
-          definitionId: "fileEditor",
+          definitionId: "fileView",
           environmentId: ref.environmentId,
           workspaceId: workspace.id,
           initialPath: relativePath,

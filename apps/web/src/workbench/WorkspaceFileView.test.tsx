@@ -79,7 +79,7 @@ describe("WorkspaceFileView", () => {
 
     const target: Extract<ViewTarget, { kind: "workspace" }> = {
       kind: "workspace",
-      definitionId: "fileEditor",
+      definitionId: "fileView",
       environmentId,
       workspaceId,
       initialPath: "src/main.ts",
@@ -205,7 +205,9 @@ it.each(["original-hash", undefined])(
     });
     await act(() => mockPanelProps.mock.lastCall![0].onOpenFile("src/main.ts"));
     const tab = useWorkbenchStore.getState().tabs[0]!;
-    expect(tab.panes.size).toBe(2);
+    expect(tab.panes.size).toBe(1);
+    expect(tab.focusedPaneId).toBe(sourceId);
+    expect(mockPanelProps.mock.lastCall![0].relativePath).toBe("src/main.ts");
     const editorId = tab.focusedPaneId;
     const editorTarget = tab.panes.get(editorId)!.target as Extract<
       ViewTarget,
@@ -213,8 +215,7 @@ it.each(["original-hash", undefined])(
     >;
     expect(editorTarget).toEqual({
       ...files,
-      definitionId: "fileEditor",
-      initialPath: "src/main.ts",
+      definitionId: "fileView",
     });
     await act(() => {
       renderer.update(

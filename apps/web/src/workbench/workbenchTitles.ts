@@ -70,8 +70,6 @@ export function resolveTargetBreadcrumbs(
   const projectTitle = location?.project.title ?? "Project";
   const workspaceTitle = location?.workspace.title ?? "Workspace";
   if (target.kind === "workspace") {
-    if (target.definitionId === "fileEditor")
-      return target.initialPath ? [projectTitle, workspaceTitle, target.initialPath] : ["File"];
     if (target.definitionId === "fileView") return [projectTitle, workspaceTitle, "Files"];
     if (target.definitionId === "gitView") return [projectTitle, workspaceTitle, "Changes"];
     return [projectTitle, workspaceTitle];
@@ -95,7 +93,6 @@ export function fallbackTargetTitle(target: ViewTarget): string {
     case "project":
       return "Project";
     case "workspace":
-      if (target.definitionId === "fileEditor") return target.initialPath ?? "File";
       if (target.definitionId === "fileView") return "Files";
       if (target.definitionId === "gitView") return "Changes";
       return "Workspace";
@@ -128,7 +125,6 @@ export function resolveTargetTitle(
 
   switch (target.kind) {
     case "workspace":
-      if (target.definitionId === "fileEditor") return target.initialPath ?? "File";
       if (target.definitionId === "fileView") return `${workspace.title}: Files`;
       if (target.definitionId === "gitView") return `${workspace.title}: Changes`;
       return workspace.title;

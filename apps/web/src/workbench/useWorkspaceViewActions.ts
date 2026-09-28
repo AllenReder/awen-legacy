@@ -76,7 +76,7 @@ export function useWorkspaceViewActions({
     (initialPath: string) => {
       useWorkbenchStore.getState().openFromPane(paneId, {
         kind: "workspace",
-        definitionId: "fileEditor",
+        definitionId: "fileView",
         environmentId,
         workspaceId,
         initialPath,

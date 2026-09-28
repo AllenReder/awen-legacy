@@ -127,11 +127,11 @@ export function getSessionRowTabState(
 }
 
 function paneView(target: ViewTarget): PaneView {
-  if (target.kind === "workspace" && target.revealLine !== undefined) {
-    const { revealLine, ...resource } = target;
+  if (target.kind === "workspace" && target.definitionId === "fileView") {
+    const { initialPath, revealLine, ...resource } = target;
     return {
-      presentation: { revealLine },
-      definitionId: definitionIdForTarget(target),
+      presentation: { selectedPath: initialPath ?? null, revealLine: revealLine ?? null },
+      definitionId: target.definitionId,
       target: resource,
     };
   }
@@ -148,13 +148,23 @@ function focusResource(
   target: ViewTarget,
 ) {
   snapshot = applySetFocused(applyActivateTab(snapshot, location.tabId), location.paneId);
-  if (target.kind !== "workspace" || target.revealLine === undefined) return snapshot;
+  if (
+    target.kind !== "workspace" ||
+    target.definitionId !== "fileView" ||
+    target.initialPath === undefined
+  )
+    return snapshot;
   const tab = getActiveTab(snapshot);
   const pane = tab.panes.get(location.paneId)!;
   const panes = new Map(tab.panes);
   panes.set(location.paneId, {
     ...pane,
-    presentation: { ...pane.presentation, revealLine: target.revealLine },
+    presentation: {
+      ...pane.presentation,
+      selectedPath: target.initialPath,
+      revealLine: target.revealLine ?? null,
+      ...(pane.presentation.selectedPath !== target.initialPath ? { fileDraft: null } : {}),
+    },
   });
   return updateTab(snapshot, { ...tab, panes });
 }

@@ -119,18 +119,23 @@ it("keeps opened file targets after migration and uses the new Workspace for fut
   expect(files).toEqual([
     {
       kind: "workspace",
-      definitionId: "fileEditor",
+      definitionId: "fileView",
       environmentId,
       workspaceId: workspaceA,
-      initialPath: "main.ts",
     },
     {
       kind: "workspace",
-      definitionId: "fileEditor",
+      definitionId: "fileView",
       environmentId,
       workspaceId: workspaceB,
-      initialPath: "main.ts",
     },
   ]);
+  expect(
+    useWorkbenchStore
+      .getState()
+      .tabs.flatMap((tab) => [...tab.panes.values()])
+      .filter((pane) => pane.definitionId === "fileView")
+      .map((pane) => pane.presentation.selectedPath),
+  ).toEqual(["main.ts", "main.ts"]);
   act(() => renderer.unmount());
 });

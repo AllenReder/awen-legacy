@@ -32,16 +32,6 @@ export const workspaceFileViewDefinition: ViewDefinition<
   Component: WorkspaceFileView,
 };
 
-export const fileEditorViewDefinition: ViewDefinition<Extract<ViewTarget, { kind: "workspace" }>> =
-  {
-    id: "fileEditor",
-    label: "File",
-    accepts: (target): target is Extract<ViewTarget, { kind: "workspace" }> =>
-      target.kind === "workspace" && target.definitionId === "fileEditor",
-    bind: emptyViewBinding,
-    Component: WorkspaceFileView,
-  };
-
 export const workspaceGitViewDefinition: ViewDefinition<
   Extract<ViewTarget, { kind: "workspace" }>
 > = {
@@ -76,7 +66,6 @@ export function registerCoreViewDefinitions(options: { force?: boolean } = {}): 
   registerViewDefinition(agentViewDefinition);
   registerViewDefinition(terminalViewDefinition);
   registerViewDefinition(workspaceFileViewDefinition);
-  registerViewDefinition(fileEditorViewDefinition);
   registerViewDefinition(workspaceGitViewDefinition);
   registered = true;
 }

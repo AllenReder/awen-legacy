@@ -34,7 +34,10 @@ export function WorkspaceFileView({
     paneId,
   });
   const presentation = useWorkbenchStore((state) => getPanePresentation(state, paneId));
-  const selectedPath = target.initialPath ?? null;
+  const selectedPath =
+    typeof presentation?.selectedPath === "string"
+      ? presentation.selectedPath
+      : (target.initialPath ?? null);
   const revealLine =
     typeof presentation?.revealLine === "number"
       ? presentation.revealLine
@@ -111,7 +114,7 @@ export function WorkspaceFileView({
           onDraftChange={(fileDraft) =>
             useWorkbenchStore.getState().setPanePresentation(paneId, { fileDraft })
           }
-          navigationOpensPane
+          navigationManaged
           paneId={paneId}
           explicitSave
           workspaceMutationId={null}

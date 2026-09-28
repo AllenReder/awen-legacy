@@ -126,6 +126,9 @@ session lifecycle. It never sends a provider turn:
 ```bash
 pnpm test:e2e:workbench
 
+# Focused Files verification: in-place switching, dirty decisions, disk save and restore.
+WORKBENCH_E2E_FILES_ONLY=1 pnpm test:e2e:workbench
+
 # Reuse the installed Chrome instead of Playwright's browser download.
 PLAYWRIGHT_USE_SYSTEM_CHROME=1 pnpm test:e2e:workbench
 

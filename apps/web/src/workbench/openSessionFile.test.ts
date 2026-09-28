@@ -63,11 +63,11 @@ it("opens absolute and relative Session file links in the same peer Pane and rev
   expect(opened.panes.has(source)).toBe(true);
   expect(opened.panes.get(editor)?.target).toEqual({
     kind: "workspace",
-    definitionId: "fileEditor",
+    definitionId: "fileView",
     environmentId,
     workspaceId,
-    initialPath: "src/main.ts",
   });
+  expect(opened.panes.get(editor)?.presentation.selectedPath).toBe("src/main.ts");
   useWorkbenchStore.getState().createTab();
   openSessionFile(ref, "./src/main.ts", 42);
   expect(getActiveTab(useWorkbenchStore.getState()).focusedPaneId).toBe(editor);
