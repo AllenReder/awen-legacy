@@ -41,7 +41,7 @@ it("passes measured content size and keyboard focus to each View and releases me
     },
   );
   registerViewDefinition({
-    id: "workspace",
+    id: "fileView",
     label: "Workspace",
     accepts: (target): target is Extract<ViewTarget, { kind: "workspace" }> =>
       target.kind === "workspace",
@@ -52,6 +52,7 @@ it("passes measured content size and keyboard focus to each View and releases me
   });
   const first = {
     kind: "workspace",
+    definitionId: "fileView" as const,
     environmentId: "local" as EnvironmentId,
     workspaceId: "w1" as WorkspaceId,
   } as const;
@@ -114,7 +115,7 @@ it("keeps View content mounted through layout switches, stacking and column move
     return <input value={value} onChange={(e) => setValue(e.target.value)} />;
   }
   registerViewDefinition({
-    id: "workspace",
+    id: "fileView",
     label: "Workspace",
     accepts: (target): target is Extract<ViewTarget, { kind: "workspace" }> =>
       target.kind === "workspace",
@@ -123,6 +124,7 @@ it("keeps View content mounted through layout switches, stacking and column move
   });
   const target = {
     kind: "workspace",
+    definitionId: "fileView" as const,
     environmentId: "local" as EnvironmentId,
     workspaceId: "one" as WorkspaceId,
   } as const;
@@ -149,7 +151,7 @@ it("keeps View content mounted through layout switches, stacking and column move
 it("does not render extra column or stack headers in scrolling mode", async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   registerViewDefinition({
-    id: "workspace",
+    id: "fileView",
     label: "Workspace",
     accepts: (target): target is Extract<ViewTarget, { kind: "workspace" }> =>
       target.kind === "workspace",
@@ -158,6 +160,7 @@ it("does not render extra column or stack headers in scrolling mode", async () =
   });
   const target = {
     kind: "workspace",
+    definitionId: "fileView" as const,
     environmentId: "local" as EnvironmentId,
     workspaceId: "s1" as WorkspaceId,
   } as const;
@@ -179,7 +182,7 @@ it("does not render extra column or stack headers in scrolling mode", async () =
 it("applies pane gap, radius, and shadow CSS variables to the canvas", async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   registerViewDefinition({
-    id: "workspace",
+    id: "fileView",
     label: "Workspace",
     accepts: (target): target is Extract<ViewTarget, { kind: "workspace" }> =>
       target.kind === "workspace",
@@ -188,6 +191,7 @@ it("applies pane gap, radius, and shadow CSS variables to the canvas", async () 
   });
   const target = {
     kind: "workspace",
+    definitionId: "fileView" as const,
     environmentId: "local" as EnvironmentId,
     workspaceId: "w1" as WorkspaceId,
   } as const;
@@ -206,7 +210,7 @@ it("applies pane gap, radius, and shadow CSS variables to the canvas", async () 
 it("prevents native focus scroll on PaneHeader mousedown unless clicking a button", async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   registerViewDefinition({
-    id: "workspace",
+    id: "fileView",
     label: "Workspace",
     accepts: (target): target is Extract<ViewTarget, { kind: "workspace" }> =>
       target.kind === "workspace",
@@ -215,6 +219,7 @@ it("prevents native focus scroll on PaneHeader mousedown unless clicking a butto
   });
   const target = {
     kind: "workspace",
+    definitionId: "fileView" as const,
     environmentId: "local" as EnvironmentId,
     workspaceId: "w1" as WorkspaceId,
   } as const;
@@ -244,7 +249,7 @@ it("prevents native focus scroll on PaneHeader mousedown unless clicking a butto
 it("focuses the pane via onMouseDownCapture on the pane frame", async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   registerViewDefinition({
-    id: "workspace",
+    id: "fileView",
     label: "Workspace",
     accepts: (target): target is Extract<ViewTarget, { kind: "workspace" }> =>
       target.kind === "workspace",
@@ -253,6 +258,7 @@ it("focuses the pane via onMouseDownCapture on the pane frame", async () => {
   });
   const first = {
     kind: "workspace",
+    definitionId: "fileView" as const,
     environmentId: "local" as EnvironmentId,
     workspaceId: "w1" as WorkspaceId,
   } as const;
@@ -286,7 +292,7 @@ it("clears viewFocused on the blurred pane immediately during scrolling animatio
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   const focusLog: { paneId: string; focused: boolean }[] = [];
   registerViewDefinition({
-    id: "workspace",
+    id: "fileView",
     label: "Workspace",
     accepts: (target): target is Extract<ViewTarget, { kind: "workspace" }> =>
       target.kind === "workspace",
@@ -299,6 +305,7 @@ it("clears viewFocused on the blurred pane immediately during scrolling animatio
 
   const first = {
     kind: "workspace",
+    definitionId: "fileView" as const,
     environmentId: "local" as EnvironmentId,
     workspaceId: "w1" as WorkspaceId,
   } as const;
@@ -331,7 +338,7 @@ it("clears viewFocused on the blurred pane immediately during scrolling animatio
 it("blurs activeElement of another pane on activation and prevents focus bounce", async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   registerViewDefinition({
-    id: "workspace",
+    id: "fileView",
     label: "Workspace",
     accepts: (target): target is Extract<ViewTarget, { kind: "workspace" }> =>
       target.kind === "workspace",
@@ -341,6 +348,7 @@ it("blurs activeElement of another pane on activation and prevents focus bounce"
 
   const first = {
     kind: "workspace",
+    definitionId: "fileView" as const,
     environmentId: "local" as EnvironmentId,
     workspaceId: "w1" as WorkspaceId,
   } as const;
@@ -379,7 +387,7 @@ it("blurs activeElement of another pane on activation and prevents focus bounce"
 it("supports bidirectional focus switching between panes without focus bounce", async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   registerViewDefinition({
-    id: "workspace",
+    id: "fileView",
     label: "Workspace",
     accepts: (target): target is Extract<ViewTarget, { kind: "workspace" }> =>
       target.kind === "workspace",
@@ -393,6 +401,7 @@ it("supports bidirectional focus switching between panes without focus bounce", 
 
   const first = {
     kind: "workspace",
+    definitionId: "fileView" as const,
     environmentId: "local" as EnvironmentId,
     workspaceId: "w1" as WorkspaceId,
   } as const;
@@ -430,6 +439,7 @@ it("renders pane headers with integrated seamless design without a bottom border
   resetWorkbenchStore();
   const target = {
     kind: "workspace",
+    definitionId: "fileView" as const,
     environmentId: "local" as EnvironmentId,
     workspaceId: "w1" as WorkspaceId,
   } as const;
@@ -445,7 +455,7 @@ it("renders pane headers with integrated seamless design without a bottom border
 it("preserves inactive tab DOM in Keep-Alive state with display: none instead of unmounting", async () => {
   resetWorkbenchStore();
   registerViewDefinition({
-    id: "workspace",
+    id: "fileView",
     label: "Workspace",
     accepts: (target): target is Extract<ViewTarget, { kind: "workspace" }> =>
       target.kind === "workspace",
@@ -455,11 +465,13 @@ it("preserves inactive tab DOM in Keep-Alive state with display: none instead of
 
   const first = {
     kind: "workspace",
+    definitionId: "fileView" as const,
     environmentId: "local" as EnvironmentId,
     workspaceId: "w1" as WorkspaceId,
   } as const;
   const second = {
     kind: "workspace",
+    definitionId: "fileView" as const,
     environmentId: "local" as EnvironmentId,
     workspaceId: "w2" as WorkspaceId,
   } as const;
@@ -510,7 +522,7 @@ it("preserves inactive tab DOM in Keep-Alive state with display: none instead of
 it("renders environment badge in Pane header identifying local vs remote hosts", async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   registerViewDefinition({
-    id: "workspace",
+    id: "fileView",
     label: "Workspace",
     accepts: (target): target is Extract<ViewTarget, { kind: "workspace" }> =>
       target.kind === "workspace",
@@ -520,11 +532,13 @@ it("renders environment badge in Pane header identifying local vs remote hosts",
 
   const targetA = {
     kind: "workspace" as const,
+    definitionId: "fileView" as const,
     environmentId: "local" as EnvironmentId,
     workspaceId: "w1" as WorkspaceId,
   };
   const targetB = {
     kind: "workspace" as const,
+    definitionId: "fileView" as const,
     environmentId: "remote-wsl" as EnvironmentId,
     workspaceId: "w1" as WorkspaceId,
   };

@@ -87,3 +87,55 @@ describe("useWorkspaceViewActions", () => {
     });
   });
 });
+
+it("keeps opened file targets after migration and uses the new Workspace for future navigation", () => {
+  resetWorkbenchStore();
+  const environmentId = EnvironmentId.make("env-1");
+  const workspaceA = WorkspaceId.make("workspace-a");
+  const workspaceB = WorkspaceId.make("workspace-b");
+  useWorkbenchStore.getState().openTarget({
+    kind: "agentSession",
+    environmentId,
+    agentSessionId: AgentSessionId.make("agent-1"),
+  });
+  const paneId = useWorkbenchStore.getState().tabs[0]!.focusedPaneId;
+  let actions!: ReturnType<typeof useWorkspaceViewActions>;
+  function Probe({ workspaceId }: { workspaceId: WorkspaceId }) {
+    actions = useWorkspaceViewActions({ environmentId, workspaceId, paneId });
+    return null;
+  }
+  let renderer!: ReactTestRenderer;
+  act(() => {
+    renderer = create(<Probe workspaceId={workspaceA} />);
+  });
+  act(() => actions.onOpenFile("main.ts"));
+  act(() => renderer.update(<Probe workspaceId={workspaceB} />));
+  act(() => actions.onOpenFile("main.ts"));
+  const files = useWorkbenchStore
+    .getState()
+    .tabs.flatMap((tab) => [...tab.panes.values()])
+    .map((pane) => pane.target)
+    .filter((target) => target.kind === "workspace");
+  expect(files).toEqual([
+    {
+      kind: "workspace",
+      definitionId: "fileView",
+      environmentId,
+      workspaceId: workspaceA,
+    },
+    {
+      kind: "workspace",
+      definitionId: "fileView",
+      environmentId,
+      workspaceId: workspaceB,
+    },
+  ]);
+  expect(
+    useWorkbenchStore
+      .getState()
+      .tabs.flatMap((tab) => [...tab.panes.values()])
+      .filter((pane) => pane.definitionId === "fileView")
+      .map((pane) => pane.presentation.selectedPath),
+  ).toEqual(["main.ts", "main.ts"]);
+  act(() => renderer.unmount());
+});

@@ -1,7 +1,7 @@
+import { openSessionFile } from "~/workbench/openSessionFile";
 import type { ScopedThreadRef } from "@awen/contracts";
 import { isWindowsAbsolutePath, normalizeProjectPathForComparison } from "@awen/shared/path";
 
-import { useRightPanelStore } from "./rightPanelStore";
 import { resolvePathLinkTarget } from "./terminal-links";
 
 interface OpenDiffFilePrimaryActionInput {
@@ -9,6 +9,7 @@ interface OpenDiffFilePrimaryActionInput {
   readonly filePath: string;
   readonly activeCwd: string | undefined;
   readonly repositoryRoot?: string | undefined;
+  readonly openWorkspaceFile?: ((path: string) => void) | undefined;
   readonly openInEditor: (targetPath: string) => void;
 }
 
@@ -83,6 +84,7 @@ export function openDiffFilePrimaryAction({
   activeCwd,
   repositoryRoot,
   openInEditor,
+  openWorkspaceFile,
 }: OpenDiffFilePrimaryActionInput): void {
   const workspaceFilePath = resolveDiffPathForWorkspace({
     filePath,
@@ -91,8 +93,13 @@ export function openDiffFilePrimaryAction({
   });
   if (!workspaceFilePath) return;
 
+  if (openWorkspaceFile) {
+    openWorkspaceFile(workspaceFilePath);
+    return;
+  }
+
   if (threadRef) {
-    useRightPanelStore.getState().openFile(threadRef, workspaceFilePath);
+    openSessionFile(threadRef, workspaceFilePath);
     return;
   }
 

@@ -1,11 +1,13 @@
 export interface PaneCloseGuard {
   readonly isDirty: () => boolean;
-  readonly confirmClose: () => Promise<boolean>;
+  readonly confirmClose: (reason?: "close" | "switch") => Promise<boolean>;
 }
 import { type LayoutMode } from "./scrollingLayout";
 import { create } from "zustand";
 
 import {
+  findResourcePane,
+  getPanePresentation,
   applySetLayoutMode,
   applyColumnChange,
   applyMoveInColumn,
@@ -14,14 +16,12 @@ import {
   applyActivateTab,
   activeTabIdAfterClose,
   applyClosePane,
-  applyDedupeSessionViews,
   applyRemoveSessionViews,
-  applyReplacePaneTarget,
   applyRenameTab,
   applyOpenDeepLinkTarget,
   applyOpenTarget,
+  applyOpenFromPane,
   applyPruneWorkspaceViews,
-  applyRemoveWorkspaceViews,
   applySetFocused,
   applySetSplitRatio,
   applySplitPane,
@@ -64,11 +64,12 @@ export interface WorkbenchStore extends WorkbenchSnapshot {
   renameTab: (tabId: string, title: string | null) => void;
   closeView: (paneId: string) => void;
   removeSessionViews: (target: ViewTarget) => void;
-  replaceTarget: (paneId: string, target: ViewTarget) => void;
   previewDrop: (source: ViewDragSource, target: ViewDropTarget) => ViewDropResult | null;
   commitDrop: (result: ViewDropResult) => void;
-  openTarget: (target: ViewTarget) => void;
-  openDeepLinkTarget: (target: ViewTarget) => void;
+  openTarget: (target: ViewTarget) => Promise<boolean>;
+  openFromPane: (paneId: string, target: ViewTarget) => Promise<boolean>;
+  setPanePresentation: (paneId: string, presentation: Readonly<Record<string, unknown>>) => void;
+  openDeepLinkTarget: (target: ViewTarget) => Promise<boolean>;
   pruneWorkspaceViews: (
     workspaces: ReadonlyArray<{ readonly environmentId: string; readonly workspaceId: string }>,
     observedEnvironmentIds?: ReadonlyArray<string>,
@@ -112,16 +113,21 @@ export function createWorkbenchStore(options: WorkbenchStoreOptions = {}) {
   const generateId = options.generateId ?? defaultGenerateId;
   const persist = options.persist ?? ((snapshot) => writeWorkbenchSnapshot(snapshot));
   const tabCloseDelayMs = () => scaledMotionDuration(FLUID_MOTION_DURATION_MS);
-  const initialSnapshot = applyDedupeSessionViews(
-    applyRemoveWorkspaceViews(
-      options.initialSnapshot ?? readWorkbenchSnapshot() ?? emptyWorkbenchSnapshot(generateId),
-      generateId,
-    ),
-    generateId,
-  );
+  const initialSnapshot =
+    options.initialSnapshot ?? readWorkbenchSnapshot() ?? emptyWorkbenchSnapshot(generateId);
   const previews = new WeakMap<ViewDropResult, WorkbenchSnapshot>();
   const closeGuards = new Map<string, PaneCloseGuard>();
   const closureListeners = new Set<ViewClosureListener>();
+  const guardWaiters = new Map<string, Set<(guard: PaneCloseGuard | null) => void>>();
+  const waitForFileGuard = (paneId: string): Promise<PaneCloseGuard | null> => {
+    const guard = closeGuards.get(paneId);
+    if (guard) return Promise.resolve(guard);
+    return new Promise((resolve) => {
+      const waiters = guardWaiters.get(paneId) ?? new Set();
+      waiters.add(resolve);
+      guardWaiters.set(paneId, waiters);
+    });
+  };
   const closeTimers = new Set<ReturnType<typeof setTimeout>>();
   const scheduleCloseTask = (task: () => void, delay: number) => {
     const timer = setTimeout(() => {
@@ -131,16 +137,78 @@ export function createWorkbenchStore(options: WorkbenchStoreOptions = {}) {
     closeTimers.add(timer);
   };
   const notifyClosedViews = (before: WorkbenchSnapshot, after: WorkbenchSnapshot) => {
-    const remaining = new Set(
-      after.tabs.flatMap((tab) => [...tab.panes.values()].map((view) => view.id)),
-    );
+    const remaining = new Set(after.tabs.flatMap((tab) => [...tab.panes.keys()]));
     const removed = before.tabs
-      .flatMap((tab) => [...tab.panes.values()])
-      .filter((view) => !remaining.has(view.id))
-      .map((view) => view.target);
+      .flatMap((tab) => [...tab.panes.entries()])
+      .filter(([paneId]) => !remaining.has(paneId))
+      .map(([, view]) => view.target);
     if (removed.length > 0) for (const listener of closureListeners) listener(removed);
   };
   const store = create<WorkbenchStore>((set, get) => {
+    const pendingFileNavigations = new Map<string, Promise<boolean>>();
+    const navigate = (
+      target: ViewTarget,
+      transition: (snapshot: WorkbenchSnapshot) => WorkbenchSnapshot,
+    ): Promise<boolean> => {
+      const commit = () => {
+        set((snapshot) => ({
+          ...transition(snapshot),
+          focusRequestId: snapshot.focusRequestId + 1,
+        }));
+        return true;
+      };
+      if (
+        target.kind !== "workspace" ||
+        target.definitionId !== "fileView" ||
+        target.initialPath === undefined
+      ) {
+        return Promise.resolve(commit());
+      }
+      const location = findResourcePane(get(), target);
+      if (!location) return Promise.resolve(commit());
+      const pending = pendingFileNavigations.get(location.paneId);
+      if (pending)
+        return pending.then(() =>
+          findResourcePane(get(), target)?.paneId === location.paneId
+            ? navigate(target, transition)
+            : false,
+        );
+      const presentation = getPanePresentation(get(), location.paneId);
+      if (presentation?.selectedPath === target.initialPath) return Promise.resolve(commit());
+      const guard = closeGuards.get(location.paneId);
+      if (!guard?.isDirty() && !presentation?.fileDraft) return Promise.resolve(commit());
+      // Make the existing Files Pane and its decision dialog visible across Tabs.
+      set((snapshot) =>
+        applySetFocused(applyActivateTab(snapshot, location.tabId), location.paneId),
+      );
+      const confirmNavigation = async (mountedGuard: PaneCloseGuard | null): Promise<boolean> => {
+        let current = getPanePresentation(get(), location.paneId);
+        if (
+          !mountedGuard ||
+          !current ||
+          current.selectedPath !== presentation?.selectedPath ||
+          findResourcePane(get(), target)?.paneId !== location.paneId
+        )
+          return false;
+        if (mountedGuard.isDirty() || current.fileDraft) {
+          if (!(await mountedGuard.confirmClose("switch"))) return false;
+        }
+        current = getPanePresentation(get(), location.paneId);
+        if (
+          !current ||
+          current.selectedPath !== presentation?.selectedPath ||
+          findResourcePane(get(), target)?.paneId !== location.paneId
+        )
+          return false;
+        return commit();
+      };
+      const operation = (
+        guard ? confirmNavigation(guard) : waitForFileGuard(location.paneId).then(confirmNavigation)
+      ).finally(() => pendingFileNavigations.delete(location.paneId));
+      pendingFileNavigations.set(location.paneId, operation);
+      return operation;
+    };
+
     /**
      * Remove the given closing Tabs once their fluid collapse has settled.
      *
@@ -311,6 +379,8 @@ export function createWorkbenchStore(options: WorkbenchStoreOptions = {}) {
       renameTab: (tabId, title) => set((snapshot) => applyRenameTab(snapshot, tabId, title)),
       registerCloseGuard: (paneId, guard) => {
         closeGuards.set(paneId, guard);
+        for (const resolve of guardWaiters.get(paneId) ?? []) resolve(guard);
+        guardWaiters.delete(paneId);
         return () => {
           if (closeGuards.get(paneId) === guard) {
             closeGuards.delete(paneId);
@@ -347,8 +417,18 @@ export function createWorkbenchStore(options: WorkbenchStoreOptions = {}) {
           false,
         );
       },
-      replaceTarget: (paneId, target) =>
-        set((snapshot) => applyReplacePaneTarget(snapshot, paneId, target, generateId)),
+      openFromPane: (paneId, target) =>
+        navigate(target, (snapshot) => applyOpenFromPane(snapshot, paneId, target, generateId)),
+      setPanePresentation: (paneId, presentation) =>
+        set((snapshot) => ({
+          tabs: snapshot.tabs.map((tab) => {
+            const pane = tab.panes.get(paneId);
+            if (!pane) return tab;
+            const panes = new Map(tab.panes);
+            panes.set(paneId, { ...pane, presentation: { ...pane.presentation, ...presentation } });
+            return { ...tab, panes };
+          }),
+        })),
       previewDrop: (source, target) => {
         const base = get();
         const result = applyViewDrop(base, source, target, generateId);
@@ -364,15 +444,9 @@ export function createWorkbenchStore(options: WorkbenchStoreOptions = {}) {
           return { ...result.snapshot, focusRequestId: snapshot.focusRequestId + 1 };
         }),
       openTarget: (target) =>
-        set((snapshot) => ({
-          ...applyOpenTarget(snapshot, target, generateId),
-          focusRequestId: snapshot.focusRequestId + 1,
-        })),
+        navigate(target, (snapshot) => applyOpenTarget(snapshot, target, generateId)),
       openDeepLinkTarget: (target) =>
-        set((snapshot) => ({
-          ...applyOpenDeepLinkTarget(snapshot, target, generateId),
-          focusRequestId: snapshot.focusRequestId + 1,
-        })),
+        navigate(target, (snapshot) => applyOpenDeepLinkTarget(snapshot, target, generateId)),
       pruneWorkspaceViews: (workspaces, observedEnvironmentIds) =>
         set((snapshot) =>
           applyPruneWorkspaceViews(snapshot, workspaces, generateId, observedEnvironmentIds),
@@ -395,6 +469,11 @@ export function createWorkbenchStore(options: WorkbenchStoreOptions = {}) {
 
   closeTimersByStore.set(store, closeTimers);
   store.subscribe((snapshot, previous) => {
+    for (const [paneId, waiters] of guardWaiters) {
+      if (getPanePresentation(snapshot, paneId)) continue;
+      for (const resolve of waiters) resolve(null);
+      guardWaiters.delete(paneId);
+    }
     if (snapshot.tabs === previous.tabs && snapshot.activeTabId === previous.activeTabId) return;
     persist({ tabs: snapshot.tabs, activeTabId: snapshot.activeTabId });
   });

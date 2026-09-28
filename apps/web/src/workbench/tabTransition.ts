@@ -76,7 +76,7 @@ let transitionState: TabTransitionState | null = null;
 let cards: Array<{ tabId: string; slot: number }> = [];
 let destinationSlot = 0;
 // Move a cyclic target to the new edge only after both slots are offscreen,
-// preserving one live View instance per Tab.
+// preserving one live View presentation per Tab.
 let pendingRelocation: { tabId: string; slot: number; midpoint: number; dir: -1 | 1 } | null = null;
 const motion = createMotionValue(0);
 let cancelSettle: (() => void) | null = null;

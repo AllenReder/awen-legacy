@@ -1,3 +1,4 @@
+import { openSessionFile } from "~/workbench/openSessionFile";
 import { scaledMotionDuration, skipAutomaticWorkbenchMotion } from "../workbench/workbenchMotion";
 import { useLoadBalancedEnvironment } from "../hooks/useLoadBalancedEnvironment";
 import { visibleThreadPullRequests } from "@awen/shared/threadPullRequests";
@@ -714,6 +715,7 @@ type ChatViewProps = {
   focusRequestId?: number;
   availableSize?: { readonly width: number; readonly height: number };
   workbenchMode?: boolean;
+  onOpenWorkspaceFile?: (path: string) => void;
   onBrowseFiles?: () => void;
   onReviewChanges?: () => void;
   onNewTerminalSession?: () => void;
@@ -1451,6 +1453,7 @@ export default function ChatView(props: ChatViewProps) {
     focusRequestId = 0,
     availableSize,
     workbenchMode = false,
+    onOpenWorkspaceFile,
     onBrowseFiles,
     onReviewChanges,
     onNewTerminalSession,
@@ -4498,10 +4501,14 @@ export default function ChatView(props: ChatViewProps) {
   const autoShowFloatingPreview = useClientSettings(selectAutoShowFloatingPreview);
   const openFileSurface = useCallback(
     (relativePath: string) => {
+      if (onOpenWorkspaceFile) {
+        onOpenWorkspaceFile(relativePath);
+        return;
+      }
       if (!activeThreadRef || !activeProject) return;
-      useRightPanelStore.getState().openFile(activeThreadRef, relativePath);
+      openSessionFile(activeThreadRef, relativePath);
     },
-    [activeProject, activeThreadRef],
+    [activeProject, activeThreadRef, onOpenWorkspaceFile],
   );
   // The shell carries server PR updates even while thread detail is still loading.
   const activeThreadMetadata = activeThreadShell ?? activeThread;

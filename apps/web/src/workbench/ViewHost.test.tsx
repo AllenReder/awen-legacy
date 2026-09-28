@@ -21,7 +21,7 @@ it("renders a registered Project View with typed updates and only its granted co
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   const target = {
     kind: "project",
-    definitionId: "project-summary",
+    definitionId: "project",
     environmentId: "local" as EnvironmentId,
     projectId: "p1" as AwenProjectId,
   } as const;
@@ -45,7 +45,7 @@ it("renders a registered Project View with typed updates and only its granted co
     },
   };
   registerViewDefinition({
-    id: "project-summary",
+    id: "project",
     label: "Project summary",
     accepts: (value): value is Extract<ViewTarget, { kind: "project" }> => value.kind === "project",
     bind: () => ({ dataSource, capabilities }),
@@ -90,14 +90,16 @@ it("rejects incompatible target kinds even when the requested definition id exis
     }),
     Component: () => null,
   });
-  expect(resolveViewDefinition({ kind: "welcome", definitionId: "summary" })).toBeNull();
+  expect(
+    resolveViewDefinition({ kind: "welcome", definitionId: "summary" } as unknown as ViewTarget),
+  ).toBeNull();
 });
 
-it("renders a Session extension with canonical identity and unsubscribes on target replacement", async () => {
+it("renders an Agent definition with canonical identity and unsubscribes on target replacement", async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   const active = new Set<string>();
   registerViewDefinition({
-    id: "session-summary",
+    id: "agentSession",
     label: "Session summary",
     accepts: (target): target is Extract<ViewTarget, { kind: "agentSession" }> =>
       target.kind === "agentSession",
@@ -117,7 +119,7 @@ it("renders a Session extension with canonical identity and unsubscribes on targ
   });
   const target = {
     kind: "agentSession",
-    definitionId: "session-summary",
+    definitionId: "agentSession",
     environmentId: "local" as EnvironmentId,
     agentSessionId: "s1" as AgentSessionId,
   } as const;

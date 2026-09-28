@@ -415,7 +415,7 @@ const TabPaneTree = memo(
         aria-hidden={!isActive}
       >
         <div className="workbench-canvas" style={canvasStyle}>
-          {[...tab.panes].map(([paneId, view]) => {
+          {[...tab.panes.keys()].map((paneId) => {
             const current = layout.rects.get(paneId);
             const preview = previewLayout?.rects.get(paneId);
             const targetRect = preview ?? current;
@@ -425,7 +425,7 @@ const TabPaneTree = memo(
               dragState.source.paneId === paneId;
             return (
               <div
-                key={view.id}
+                key={paneId}
                 className="workbench-pane-frame"
                 data-pane-id={paneId}
                 style={targetRect}
@@ -638,7 +638,6 @@ function Pane({ tab, projects, paneId, focused }: PaneProps) {
       data-pane-id={paneId}
       data-workbench-pane-drop=""
       data-workbench-tab-id={tab.id}
-      data-view-instance-id={view?.id}
       data-pane-focused={focused}
       data-pane-target-kind={target?.kind ?? "empty"}
     >
@@ -656,7 +655,7 @@ function Pane({ tab, projects, paneId, focused }: PaneProps) {
             <EmptyPane target={target} />
           ) : (
             <definition.Component
-              key={view?.id}
+              key={paneId}
               target={target!}
               paneId={paneId}
               focused={focused}

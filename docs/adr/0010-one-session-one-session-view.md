@@ -1,5 +1,7 @@
 # One Session, one Session View across the Workbench
 
+View identity and reuse decisions are superseded by [ADR-0028](0028-pane-view-catalog.md) and #156/#168.
+
 **Status: accepted**
 
 A Session has exactly one Session View in the whole Workbench. Opening a Session

@@ -14,7 +14,7 @@
  *
  * The kept core is what C12 (cross-pane drag-drop) and C13–C14 (Scrolling
  * layout) will need too. Panes themselves are not modeled here — a Pane is a
- * leaf in this tree plus an external `View instance` keyed by leaf id (see
+ * leaf in this tree plus an external Pane View specification keyed by leaf id (see
  * `viewRegistry.ts` and `workbenchStore.ts`).
  */
 
@@ -66,8 +66,8 @@ export type LayoutSash = {
 /**
  * One Awen Tab — C10 ships exactly one. Multi-tab is C11.
  *
- * A leaf id maps 1:1 to a `View instance` held outside this module; the workbench
- * store keeps a `Map<leafId, ViewInstance>`. Closing a leaf drops it from both
+ * A leaf id maps 1:1 to a Pane View specification held outside this module; the workbench
+ * store keeps a `Map<leafId, PaneView>`. Closing a leaf drops it from both
  * the layout and the store; the underlying Agent/Terminal Session is never
  * terminated by `closePane` (D3: "Closing a View/Pane/Tab does not by itself
  * terminate a Session").

@@ -1,6 +1,6 @@
+import { openSessionFile } from "~/workbench/openSessionFile";
 import { ArrowUpIcon, ClockIcon } from "lucide-react";
 import { ReadOnlySourcePreview } from "../files/AttachmentFilePreview";
-import { useRightPanelStore } from "~/rightPanelStore";
 import {
   getQuestionAnswerPreview,
   getQuestionAnswerText,
@@ -2914,8 +2914,7 @@ function UserMessageMentionChip(props: {
             )}
             data-markdown-copy={props.copyMarkdown}
             onClick={() => {
-              if (ctx.threadRef)
-                useRightPanelStore.getState().openFile(ctx.threadRef, props.record.path);
+              if (ctx.threadRef) openSessionFile(ctx.threadRef, props.record.path);
             }}
           >
             <PierreEntryIcon

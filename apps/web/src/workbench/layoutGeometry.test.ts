@@ -7,6 +7,7 @@ import type { EnvironmentId, WorkspaceId } from "@awen/contracts";
 
 const testTarget: ViewTarget = {
   kind: "workspace",
+  definitionId: "fileView",
   environmentId: "local" as EnvironmentId,
   workspaceId: "w1" as WorkspaceId,
 };
@@ -22,9 +23,9 @@ describe("layoutGeometry", () => {
         titleMode: "auto",
         titleOverride: "",
         panes: new Map([
-          ["p1", { id: "v1", definitionId: "test", target: testTarget }],
-          ["p2", { id: "v2", definitionId: "test", target: testTarget }],
-          ["p3", { id: "v3", definitionId: "test", target: testTarget }],
+          ["p1", { presentation: {}, definitionId: "test", target: testTarget }],
+          ["p2", { presentation: {}, definitionId: "test", target: testTarget }],
+          ["p3", { presentation: {}, definitionId: "test", target: testTarget }],
         ]),
         columns: [
           { id: "col-1", width: 500, paneIds: ["p1", "p2"], shares: [0.5, 0.5] },
@@ -66,9 +67,9 @@ describe("layoutGeometry", () => {
         titleMode: "auto",
         titleOverride: "",
         panes: new Map([
-          ["p1", { id: "v1", definitionId: "test", target: testTarget }],
-          ["p2", { id: "v2", definitionId: "test", target: testTarget }],
-          ["p3", { id: "v3", definitionId: "test", target: testTarget }],
+          ["p1", { presentation: {}, definitionId: "test", target: testTarget }],
+          ["p2", { presentation: {}, definitionId: "test", target: testTarget }],
+          ["p3", { presentation: {}, definitionId: "test", target: testTarget }],
         ]),
         columns: [
           { id: "col-1", width: 500, paneIds: ["p1", "p2"], shares: [0.5, 0.5] },
@@ -114,10 +115,10 @@ describe("layoutGeometry", () => {
         titleMode: "auto",
         titleOverride: "",
         panes: new Map([
-          ["p1", { id: "v1", definitionId: "test", target: testTarget }],
-          ["p2", { id: "v2", definitionId: "test", target: testTarget }],
-          ["p3", { id: "v3", definitionId: "test", target: testTarget }],
-          ["p4", { id: "v4", definitionId: "test", target: testTarget }],
+          ["p1", { presentation: {}, definitionId: "test", target: testTarget }],
+          ["p2", { presentation: {}, definitionId: "test", target: testTarget }],
+          ["p3", { presentation: {}, definitionId: "test", target: testTarget }],
+          ["p4", { presentation: {}, definitionId: "test", target: testTarget }],
         ]),
         columns: [
           {
@@ -153,8 +154,8 @@ describe("layoutGeometry", () => {
         titleMode: "auto",
         titleOverride: "",
         panes: new Map([
-          ["p1", { id: "v1", definitionId: "test", target: testTarget }],
-          ["p2", { id: "v2", definitionId: "test", target: testTarget }],
+          ["p1", { presentation: {}, definitionId: "test", target: testTarget }],
+          ["p2", { presentation: {}, definitionId: "test", target: testTarget }],
         ]),
       };
 
@@ -183,8 +184,8 @@ describe("layoutGeometry", () => {
         titleMode: "auto",
         titleOverride: "",
         panes: new Map([
-          ["p1", { id: "v1", definitionId: "test", target: testTarget }],
-          ["p2", { id: "v2", definitionId: "test", target: testTarget }],
+          ["p1", { presentation: {}, definitionId: "test", target: testTarget }],
+          ["p2", { presentation: {}, definitionId: "test", target: testTarget }],
         ]),
       };
 
@@ -234,9 +235,9 @@ describe("nested splits and sashes", () => {
       titleMode: "auto",
       titleOverride: "",
       panes: new Map([
-        ["p1", { id: "v1", definitionId: "test", target: testTarget }],
-        ["p2", { id: "v2", definitionId: "test", target: testTarget }],
-        ["p3", { id: "v3", definitionId: "test", target: testTarget }],
+        ["p1", { presentation: {}, definitionId: "test", target: testTarget }],
+        ["p2", { presentation: {}, definitionId: "test", target: testTarget }],
+        ["p3", { presentation: {}, definitionId: "test", target: testTarget }],
       ]),
     };
 

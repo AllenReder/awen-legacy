@@ -111,6 +111,12 @@ import {
   useProjectFileQuery,
 } from "./projectFilesQueryState";
 
+export interface FileEditorDraft {
+  readonly path: string;
+  readonly contents: string;
+  readonly contentHash: string | undefined;
+}
+
 interface FilePreviewPanelProps {
   environmentId: EnvironmentId;
   cwd: string;
@@ -127,6 +133,9 @@ interface FilePreviewPanelProps {
   onPendingChange?: ((relativePath: string, pending: boolean) => void) | undefined;
   selectedFilePending?: boolean | undefined;
   workspaceMutationId: string | null;
+  initialDraft?: FileEditorDraft | undefined;
+  onDraftChange?: ((draft: FileEditorDraft | null) => void) | undefined;
+  navigationManaged?: boolean | undefined;
   explicitSave?: boolean | undefined;
   paneId?: string | undefined;
 }
@@ -988,6 +997,9 @@ export default function FilePreviewPanel({
   onPendingChange,
   selectedFilePending = false,
   workspaceMutationId,
+  initialDraft,
+  onDraftChange,
+  navigationManaged = false,
   explicitSave = false,
   paneId,
 }: FilePreviewPanelProps) {
@@ -995,9 +1007,19 @@ export default function FilePreviewPanel({
     () => threadRef ?? ({ environmentId, threadId: "workspace-files" as any } as ScopedThreadRef),
     [environmentId, threadRef],
   );
-  const draftContentsRef = useRef<string | null>(null);
+  const [restoredDraft] = useState(() =>
+    initialDraft?.path === relativePath ? initialDraft : undefined,
+  );
+  const [initialContents, setInitialContents] = useState(restoredDraft?.contents);
+  const draftContentsRef = useRef<string | null>(restoredDraft?.contents ?? null);
+  const draftHashRef = useRef<string | undefined>(restoredDraft?.contentHash);
+  const draftCallbackRef = useRef(onDraftChange);
+  useEffect(() => {
+    draftCallbackRef.current = onDraftChange;
+  }, [onDraftChange]);
+  const previousPathRef = useRef(relativePath);
   const [reloadKey, setReloadKey] = useState(0);
-  const [isDirty, setIsDirty] = useState(false);
+  const [isDirty, setIsDirty] = useState(restoredDraft !== undefined);
   const [conflict, setConflict] = useState<{
     readonly actualHash?: string | undefined;
     readonly diskContents?: string | undefined;
@@ -1005,14 +1027,24 @@ export default function FilePreviewPanel({
 
   const resetDraft = useCallback(() => {
     draftContentsRef.current = null;
+    draftHashRef.current = undefined;
+    setInitialContents(undefined);
+    draftCallbackRef.current?.(null);
     setIsDirty(false);
   }, []);
 
   const [pendingSwitchPath, setPendingSwitchPath] = useState<string | null>(null);
   const [showSwitchModal, setShowSwitchModal] = useState(false);
   const [showCloseModal, setShowCloseModal] = useState(false);
+  const [closeReason, setCloseReason] = useState<"close" | "switch">("close");
   const [showDiffModal, setShowDiffModal] = useState(false);
   const closeResolverRef = useRef<((allowed: boolean) => void) | null>(null);
+  useEffect(
+    () => () => {
+      closeResolverRef.current?.(false);
+    },
+    [],
+  );
   const { resolvedTheme } = useTheme();
   const wordWrap = useClientSettings((settings) => settings.wordWrap);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -1171,6 +1203,8 @@ export default function FilePreviewPanel({
   }, [absolutePath, createAssetUrl, cwd, environmentHttpBaseUrl, openPreview, threadRef]);
 
   useEffect(() => {
+    if (previousPathRef.current === relativePath) return;
+    previousPathRef.current = relativePath;
     resetDraft();
     setConflict(null);
   }, [relativePath, resetDraft]);
@@ -1183,11 +1217,16 @@ export default function FilePreviewPanel({
 
   const handleDraftChange = useCallback(
     (next: string) => {
-      draftContentsRef.current = next;
+      draftHashRef.current ??= file.data?.contentHash ?? undefined;
       const dirty = next !== (file.data?.contents ?? "");
+      draftContentsRef.current = dirty ? next : null;
       setIsDirty((prev) => (prev !== dirty ? dirty : prev));
+      if (relativePath)
+        draftCallbackRef.current?.(
+          dirty ? { path: relativePath, contents: next, contentHash: draftHashRef.current } : null,
+        );
     },
-    [file.data?.contents],
+    [file.data?.contents, file.data?.contentHash, relativePath],
   );
 
   const conflictDiff = useMemo(() => {
@@ -1222,7 +1261,9 @@ export default function FilePreviewPanel({
           cwd,
           relativePath,
           contents: contentsToSave,
-          expectedContentHash: force ? undefined : (file.data?.contentHash ?? undefined),
+          expectedContentHash: force
+            ? undefined
+            : (draftHashRef.current ?? file.data?.contentHash ?? undefined),
         },
       });
 
@@ -1323,9 +1364,10 @@ export default function FilePreviewPanel({
   useEffect(() => {
     if (!paneId || !explicitSave) return;
     return useWorkbenchStore.getState().registerCloseGuard(paneId, {
-      isDirty: () => isDirty,
-      confirmClose: () =>
+      isDirty: () => draftContentsRef.current !== null,
+      confirmClose: (reason = "close") =>
         new Promise<boolean>((resolve) => {
+          setCloseReason(reason);
           closeResolverRef.current = resolve;
           setShowCloseModal(true);
         }),
@@ -1334,14 +1376,14 @@ export default function FilePreviewPanel({
 
   const handleOpenFileWithGuard = useCallback(
     (path: string) => {
-      if (explicitSave && isDirty) {
+      if (explicitSave && isDirty && !navigationManaged) {
         setPendingSwitchPath(path);
         setShowSwitchModal(true);
       } else {
         onOpenFile?.(path);
       }
     },
-    [explicitSave, isDirty, onOpenFile],
+    [explicitSave, isDirty, onOpenFile, navigationManaged],
   );
 
   return (
@@ -1581,7 +1623,10 @@ export default function FilePreviewPanel({
                   cwd={cwd}
                   relativePath={relativePath}
                   composerDraftTarget={composerDraftTarget}
-                  contents={file.data.contents}
+                  contents={
+                    (restoredDraft?.path === relativePath ? initialContents : undefined) ??
+                    file.data.contents
+                  }
                   resolvedTheme={resolvedTheme}
                   revealRequestId={revealRequestId}
                   wordWrap={wordWrap}
@@ -1692,7 +1737,8 @@ export default function FilePreviewPanel({
             <DialogHeader>
               <DialogTitle>Unsaved Changes</DialogTitle>
               <DialogDescription>
-                Do you want to save the changes you made to {relativePath} before closing?
+                Do you want to save the changes you made to {relativePath} before{" "}
+                {closeReason === "switch" ? "switching files" : "closing"}?
               </DialogDescription>
             </DialogHeader>
             <DialogFooter variant="bare">

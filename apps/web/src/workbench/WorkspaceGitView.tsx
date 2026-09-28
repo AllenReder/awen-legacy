@@ -1,6 +1,7 @@
 import { lazy, Suspense } from "react";
 import { useAwenWorkspace } from "../state/entities";
 import { useEnvironment } from "../state/environments";
+import { useWorkspaceViewActions } from "./useWorkspaceViewActions";
 import type { ViewTarget } from "./viewRegistry";
 import { Spinner } from "~/components/ui/spinner";
 import { WifiOff } from "lucide-react";
@@ -17,11 +18,16 @@ export interface WorkspaceGitViewProps {
 
 export function WorkspaceGitView({
   target,
-  paneId: _paneId,
+  paneId,
   focused: _focused,
   focusRequestId: _focusRequestId = 0,
   availableSize: _availableSize,
 }: WorkspaceGitViewProps) {
+  const { onOpenFile } = useWorkspaceViewActions({
+    environmentId: target.environmentId,
+    workspaceId: target.workspaceId,
+    paneId,
+  });
   const workspace = useAwenWorkspace(target.environmentId, target.workspaceId);
   const environment = useEnvironment(target.environmentId);
 
@@ -65,6 +71,7 @@ export function WorkspaceGitView({
       >
         <DiffPanel
           mode="embedded"
+          onOpenWorkspaceFile={onOpenFile}
           workspaceScope={{
             environmentId: target.environmentId,
             workspaceId: target.workspaceId,

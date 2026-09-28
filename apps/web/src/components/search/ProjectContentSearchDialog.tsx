@@ -1,3 +1,4 @@
+import { openSessionFile } from "~/workbench/openSessionFile";
 import { Spinner } from "~/components/ui/spinner";
 import type { ProjectContentMatch } from "@awen/contracts";
 
@@ -6,7 +7,6 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react
 import { useActiveProjectTarget, type ActiveProjectTarget } from "~/hooks/useActiveProjectTarget";
 import { useTheme } from "~/hooks/useTheme";
 import { cn } from "~/lib/utils";
-import { useRightPanelStore } from "~/rightPanelStore";
 import { useProjectContentSearch } from "~/state/queries";
 
 import { PierreEntryIcon } from "../chat/PierreEntryIcon";
@@ -154,7 +154,7 @@ function OpenContentSearchDialog(props: {
   const openMatch = (match: ProjectContentMatch) => {
     if (!canOpenMatches) return;
     props.onOpenChange(false);
-    useRightPanelStore.getState().openFile(target.threadRef, match.path, match.lineNumber);
+    openSessionFile(target.threadRef, match.path, match.lineNumber);
   };
   const fileCount = useMemo(() => new Set(matches.map((match) => match.path)).size, [matches]);
   const showSearchStatus =

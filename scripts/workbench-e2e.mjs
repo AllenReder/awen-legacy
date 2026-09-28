@@ -11,6 +11,7 @@ import { requestDevRunnerStop } from "./lib/dev-runner-stop.ts";
 import { createProcessTreePort, stopProcessTree } from "./lib/process-tree.ts";
 import { nodeEntryInvocation, withNodeModulesBin } from "./lib/spawn-command.ts";
 import { removePathWithRetry, runTeardownSteps } from "./lib/teardown-steps.ts";
+import { verifyWorkbenchFiles } from "./workbench-file-checks.mjs";
 import { verifyWorkbenchAppearance } from "./workbench-appearance-checks.mjs";
 
 // This suite never sends an Agent turn. Promotion coverage must use the ACP
@@ -111,7 +112,7 @@ async function workbenchStateSignature(page) {
         id: tab.id,
         panes: [...tab.panes.entries()].map(([paneId, view]) => ({
           paneId,
-          viewId: view.id,
+          presentation: view.presentation,
           target: view.target,
         })),
       })),
@@ -336,6 +337,7 @@ async function main() {
     });
     page = await context.newPage();
     page.setDefaultTimeout(timeoutMs);
+    page.on("crash", () => console.error("workbench: browser page crashed"));
     page.on("pageerror", (error) => pageErrors.push(error));
     page.on("console", (message) => {
       if (message.type() === "error") consoleErrors.push(message.text());
@@ -353,6 +355,11 @@ async function main() {
     });
     NodeAssert.equal(await page.locator(".sidebar-stage-backdrop").count(), 0);
     NodeAssert.equal(await page.getByText("Awen", { exact: true }).count(), 0);
+
+    if (process.env.WORKBENCH_E2E_FILES_ONLY === "1") {
+      await verifyWorkbenchFiles(page, repositoryRoot);
+      return;
+    }
 
     if (process.env.WORKBENCH_E2E_APPEARANCE_ONLY === "1") {
       await verifyWorkbenchAppearance(page);

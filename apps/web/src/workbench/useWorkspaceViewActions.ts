@@ -33,7 +33,7 @@ export function useWorkspaceViewActions({
       environmentId,
       workspaceId,
     };
-    useWorkbenchStore.getState().splitPane(paneId, fileTarget, "right");
+    useWorkbenchStore.getState().openFromPane(paneId, fileTarget);
   }, [environmentId, paneId, workspaceId]);
 
   const onReviewChanges = useCallback(() => {
@@ -43,7 +43,7 @@ export function useWorkspaceViewActions({
       environmentId,
       workspaceId,
     };
-    useWorkbenchStore.getState().splitPane(paneId, gitTarget, "right");
+    useWorkbenchStore.getState().openFromPane(paneId, gitTarget);
   }, [environmentId, paneId, workspaceId]);
 
   const onNewTerminalSession = useCallback(() => {
@@ -68,9 +68,22 @@ export function useWorkspaceViewActions({
         workspaceId,
         terminalId,
       });
-      useWorkbenchStore.getState().splitPane(paneId, terminalTarget, "right");
+      useWorkbenchStore.getState().openFromPane(paneId, terminalTarget);
     });
   }, [environmentId, openTerminal, paneId, workspaceId]);
 
-  return { onBrowseFiles, onReviewChanges, onNewTerminalSession };
+  const onOpenFile = useCallback(
+    (initialPath: string) => {
+      useWorkbenchStore.getState().openFromPane(paneId, {
+        kind: "workspace",
+        definitionId: "fileView",
+        environmentId,
+        workspaceId,
+        initialPath,
+      });
+    },
+    [environmentId, workspaceId, paneId],
+  );
+
+  return { onBrowseFiles, onReviewChanges, onNewTerminalSession, onOpenFile };
 }

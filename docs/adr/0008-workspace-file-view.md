@@ -1,5 +1,7 @@
 # Self-contained Workspace File View with safe save and dirty guards
 
+The global reuse scope is updated by [ADR-0028](0028-pane-view-catalog.md) and the revised #156/#168. The in-place switching decision below remains in force.
+
 The File View is an integrated Workspace View that occupies a single Pane, combining directory tree navigation with active file preview and editing. Opening files from the tree switches the active file in-place within the Pane rather than creating new Panes. File mutations use explicit save with content-hash optimistic concurrency control, and unsaved changes are protected by modal confirmation guards on file switch and Pane close.
 
 ## Status
@@ -20,7 +22,7 @@ Awen workspaces require file browsing, inspection, and editing without depending
 
 Adopt the self-contained File View:
 
-1. **ViewTarget**: Defined as `{ kind: "workspace", definitionId: "fileView", environmentId, workspaceId, initialPath?, revealLine? }`. One File View exists per Workspace per Tab.
+1. **ViewTarget**: Defined as `{ kind: "workspace", definitionId: "fileView", environmentId, workspaceId, initialPath?, revealLine? }`. One File View exists per Environment/Workspace across the whole Workbench. The selected path and reveal line live in Pane presentation state.
 2. **In-place switching**: Clicking a file in the integrated tree switches the active file in the same Pane.
 3. **Sidebar entry**: Workspace context menu provides "Browse Files", opening or focusing the Workspace's File View.
 4. **Safe save**: `ProjectReadFileResult` returns `contentHash`; `ProjectWriteFileInput` verifies `expectedContentHash`. Conflict triggers explicit diff/overwrite/reload options without losing drafts.

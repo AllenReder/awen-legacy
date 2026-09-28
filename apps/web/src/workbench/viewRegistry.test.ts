@@ -150,9 +150,7 @@ describe("registerViewDefinition / resolveViewDefinition", () => {
       workspaceId: FIX_WORKSPACE,
     };
     expect(resolveViewDefinition(target)?.id).toBe("fileView");
-    expect(targetKey(target)).toBe(
-      JSON.stringify(["workspace", "fileView", FIX_ENV, FIX_WORKSPACE]),
-    );
+    expect(targetKey(target)).toBe(JSON.stringify(["fileView", FIX_ENV, FIX_WORKSPACE]));
   });
 
   it("resolves registered workspace gitView definition", () => {
@@ -175,9 +173,7 @@ describe("registerViewDefinition / resolveViewDefinition", () => {
       workspaceId: FIX_WORKSPACE,
     };
     expect(resolveViewDefinition(target)?.id).toBe("gitView");
-    expect(targetKey(target)).toBe(
-      JSON.stringify(["workspace", "gitView", FIX_ENV, FIX_WORKSPACE]),
-    );
+    expect(targetKey(target)).toBe(JSON.stringify(["gitView", FIX_ENV, FIX_WORKSPACE]));
   });
 
   it("clearViewRegistry removes all registrations", () => {

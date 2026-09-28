@@ -72,7 +72,15 @@ const projects: ReadonlyArray<EnvironmentAwenProject> = [
 
 describe("resolveTargetTitle", () => {
   it.each([
-    [{ kind: "workspace", environmentId, workspaceId } satisfies ViewTarget, "Main checkout"],
+    [
+      {
+        kind: "workspace",
+        definitionId: "fileView",
+        environmentId,
+        workspaceId,
+      } satisfies ViewTarget,
+      "Main checkout: Files",
+    ],
     [{ kind: "project", environmentId, projectId } satisfies ViewTarget, "Awen"],
     [agentTarget, "Implement tabs"],
     [

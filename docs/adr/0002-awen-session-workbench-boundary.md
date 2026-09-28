@@ -1,5 +1,7 @@
 # Make Awen Session and View the workbench boundary
 
+View identity and reuse decisions are superseded by [ADR-0028](0028-pane-view-catalog.md) and #156/#168.
+
 **Status: accepted; Session View uniqueness is superseded by ADR-0010, and the final-View restore rule is narrowed by ADR-0023**
 
 Awen uses Project → Workspace → Session as its durable work model, with Agent

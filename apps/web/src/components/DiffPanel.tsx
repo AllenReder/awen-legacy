@@ -114,6 +114,7 @@ export interface DiffPanelProps {
   initialGitScope?: "branch" | "unstaged";
   workspaceMutationId?: string | null;
   workspaceScope?: WorkspaceDiffScope;
+  onOpenWorkspaceFile?: (path: string) => void;
 }
 
 export default function DiffPanel({
@@ -122,6 +123,7 @@ export default function DiffPanel({
   initialGitScope: initialGitScopeProp = "branch",
   workspaceMutationId,
   workspaceScope,
+  onOpenWorkspaceFile,
 }: DiffPanelProps) {
   const { resolvedTheme } = useTheme();
   const settings = useClientSettings();
@@ -513,6 +515,7 @@ export default function DiffPanel({
     (filePath: string) => {
       openDiffFilePrimaryAction({
         threadRef: workspaceScope ? null : routeThreadRef,
+        openWorkspaceFile: onOpenWorkspaceFile,
         filePath,
         activeCwd,
         repositoryRoot: activeRepositoryRoot,
@@ -537,6 +540,7 @@ export default function DiffPanel({
       openInPreferredEditor,
       routeThreadRef,
       workspaceScope,
+      onOpenWorkspaceFile,
     ],
   );
   const toggleDiffFileCollapsed = useCallback(
