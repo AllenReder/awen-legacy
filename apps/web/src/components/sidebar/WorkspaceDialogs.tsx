@@ -138,7 +138,7 @@ export function AddWorkspaceDialog({
             <span className="font-medium text-foreground">{project?.title ?? "Project"}</span>.
           </DialogDescription>
         </DialogHeader>
-        <form onSubmit={handleSubmit}>
+        <form onSubmit={handleSubmit} className="contents">
           <DialogPanel className="space-y-4">
             {existingWorktrees.length > 0 ? (
               <div className="space-y-1.5" data-testid="existing-worktrees-container">
@@ -424,7 +424,7 @@ export function NewWorkspaceDialog({
             <span className="font-medium text-foreground">{project?.title ?? "Project"}</span>.
           </DialogDescription>
         </DialogHeader>
-        <form onSubmit={handleSubmit}>
+        <form onSubmit={handleSubmit} className="contents">
           <DialogPanel className="space-y-4">
             <div className="space-y-1.5">
               <Label htmlFor="new-workspace-branch">New Branch Name</Label>
