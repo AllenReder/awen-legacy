@@ -5648,10 +5648,8 @@ export default function ChatView(props: ChatViewProps) {
   const activeThreadBranch =
     canOverrideServerThreadEnvMode && pendingServerThreadBranch !== undefined
       ? pendingServerThreadBranch
-      : canOverrideServerThreadEnvMode
-        ? envMode === "worktree"
-          ? (draftThread?.branch ?? currentGitBranch ?? activeThread?.branch ?? null)
-          : (activeThread?.branch ?? null)
+      : canOverrideServerThreadEnvMode && envMode === "worktree"
+        ? (draftThread?.branch ?? currentGitBranch ?? activeThread?.branch ?? null)
         : (activeThread?.branch ?? null);
   const startFromOrigin = isLocalDraftThread
     ? (draftThread?.startFromOrigin ?? false)
@@ -8839,61 +8837,48 @@ export default function ChatView(props: ChatViewProps) {
       // Pin the temporary branch name when New worktree is chosen so a retry
       // after a partial failure reuses the same directory; clear it when the
       // choice is cancelled.
-      const worktreeBranchName =
-        mode === "worktree"
-          ? (draftThread?.worktreeBranchName ?? buildTemporaryWorktreeBranchName(randomHex))
-          : null;
+      const isWorktree = mode === "worktree";
+      const worktreeBranchName = isWorktree
+        ? (draftThread?.worktreeBranchName ?? buildTemporaryWorktreeBranchName(randomHex))
+        : null;
+      const defaultBranch =
+        isWorktree && !draftThread?.branch && !activeThread?.branch
+          ? (currentGitBranch ?? null)
+          : undefined;
+
       if (canOverrideServerThreadEnvMode) {
-        const defaultBranch =
-          mode === "worktree" && !draftThread?.branch && !activeThread?.branch
-            ? (currentGitBranch ?? null)
-            : undefined;
         setPendingServerThreadEnvMode(mode);
-        if (mode === "local") {
-          setPendingServerThreadBranch(undefined);
-        } else if (defaultBranch !== undefined && defaultBranch !== null) {
-          setPendingServerThreadBranch(defaultBranch);
-        }
-        setDraftThreadContext(composerDraftTarget, {
-          envMode: mode,
-          worktreeBranchName,
-          branch: mode === "local" ? null : (defaultBranch ?? draftThread?.branch ?? null),
-          startFromOrigin: resolveNewDraftStartFromOrigin({
-            envMode: mode,
-            newWorktreesStartFromOrigin: activeProjectSettings.settings.newWorktreesStartFromOrigin,
-          }),
-          ...(mode === "worktree" && draftThread?.worktreePath ? { worktreePath: null } : {}),
-        });
-        scheduleComposerFocus();
-        return;
+        setPendingServerThreadBranch(mode === "local" ? undefined : (defaultBranch ?? undefined));
       }
-      if (isLocalDraftThread) {
-        setDraftThreadContext(composerDraftTarget, {
+
+      setDraftThreadContext(composerDraftTarget, {
+        envMode: mode,
+        worktreeBranchName,
+        branch: mode === "local" ? null : (defaultBranch ?? draftThread?.branch ?? null),
+        startFromOrigin: resolveNewDraftStartFromOrigin({
           envMode: mode,
-          worktreeBranchName,
-          ...(mode === "local" ? { branch: null } : {}),
-          startFromOrigin: resolveNewDraftStartFromOrigin({
-            envMode: mode,
-            newWorktreesStartFromOrigin: activeProjectSettings.settings.newWorktreesStartFromOrigin,
-          }),
-          ...(mode === "worktree" && draftThread?.worktreePath ? { worktreePath: null } : {}),
-        });
-      }
+          newWorktreesStartFromOrigin: activeProjectSettings.settings.newWorktreesStartFromOrigin,
+        }),
+        worktreePath: isWorktree
+          ? null
+          : (activeThread?.worktreePath ?? draftThread?.worktreePath ?? null),
+      });
       scheduleComposerFocus();
     },
     [
+      activeProjectSettings.settings.newWorktreesStartFromOrigin,
+      activeThread?.branch,
+      activeThread?.worktreePath,
       canOverrideServerThreadEnvMode,
       composerDraftTarget,
       currentGitBranch,
       draftThread?.branch,
-      draftThread?.worktreePath,
       draftThread?.worktreeBranchName,
-      isLocalDraftThread,
-      activeProjectSettings.settings.newWorktreesStartFromOrigin,
-      setPendingServerThreadEnvMode,
-      setPendingServerThreadBranch,
+      draftThread?.worktreePath,
       scheduleComposerFocus,
       setDraftThreadContext,
+      setPendingServerThreadBranch,
+      setPendingServerThreadEnvMode,
     ],
   );
 
