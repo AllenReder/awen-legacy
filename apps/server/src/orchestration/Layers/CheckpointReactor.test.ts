@@ -1314,6 +1314,66 @@ describe("CheckpointReactor", () => {
     ).toBe(true);
   });
 
+  it("captures checkpoint when a temporary worktree branch is renamed during the turn", async () => {
+    const harness = await createHarness({ seedFilesystemCheckpoints: false });
+    const threadId = ThreadId.make("thread-1");
+    const turnId = asTurnId("turn-rename-1");
+    const createdAt = "2026-01-01T00:00:00.000Z";
+
+    runGit(harness.cwd, ["checkout", "-b", "awen/a1b2c3d4"]);
+    await runtime!.runPromise(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-initial-branch"),
+        threadId,
+        branch: "awen/a1b2c3d4",
+      }),
+    );
+
+    harness.provider.emit({
+      type: "turn.started",
+      eventId: EventId.make("evt-turn-started-rename-1"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt,
+      threadId,
+      turnId,
+    });
+    await waitForGitRefExists(harness.cwd, checkpointRefForThreadTurn(threadId, 0));
+
+    runGit(harness.cwd, ["branch", "-m", "awen/a1b2c3d4", "awen/semantic-feature"]);
+    await runtime!.runPromise(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-rename-branch"),
+        threadId,
+        branch: "awen/semantic-feature",
+      }),
+    );
+
+    NodeFS.writeFileSync(NodePath.join(harness.cwd, "README.md"), "v2\n", "utf8");
+    harness.provider.emit({
+      type: "turn.completed",
+      eventId: EventId.make("evt-turn-completed-rename-1"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt,
+      threadId,
+      turnId,
+      payload: { state: "completed" },
+    });
+
+    await waitForEvent(harness.engine, (event) => event.type === "thread.turn-diff-completed");
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) => entry.latestTurn?.turnId === "turn-rename-1" && entry.checkpoints.length === 1,
+    );
+
+    expect(thread.checkpoints[0]?.status).toBe("ready");
+    expect(gitRefExists(harness.cwd, checkpointRefForThreadTurn(threadId, 1))).toBe(true);
+    expect(
+      thread.activities.some((activity) => activity.kind === "checkpoint.capture.failed"),
+    ).toBe(false);
+  });
+
   effectIt.effect("marks completion without an execution start as missing", () =>
     Effect.gen(function* () {
       const harness = yield* Effect.promise(() =>

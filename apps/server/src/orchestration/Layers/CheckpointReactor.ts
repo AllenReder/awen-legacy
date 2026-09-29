@@ -1073,6 +1073,18 @@ const make = Effect.gen(function* () {
       );
       return;
     }
+
+    if (event.type === "thread.meta-updated" && event.payload.branch !== undefined) {
+      if (event.payload.branch !== null) {
+        const newRef = event.payload.branch.startsWith("refs/heads/")
+          ? event.payload.branch
+          : `refs/heads/${event.payload.branch}`;
+        yield* executionContexts
+          .relinkHeadRef(event.payload.threadId, newRef)
+          .pipe(Effect.catch(() => Effect.void));
+      }
+      return;
+    }
   });
 
   const processRuntimeEvent = Effect.fn("processRuntimeEvent")(function* (
