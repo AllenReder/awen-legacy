@@ -1,6 +1,11 @@
 export interface PaneCloseGuard {
   readonly isDirty: () => boolean;
   readonly confirmClose: (reason?: "close" | "switch") => Promise<boolean>;
+  /** Explicit close collects the choice before mutating a draft. */
+  readonly prepareClose?: () => Promise<{
+    readonly commit: () => Promise<boolean> | boolean;
+  } | null>;
+  readonly revision?: () => unknown;
 }
 export interface PaneCloseAdapter {
   /** Changes while a confirmation is open invalidate its decision. */
@@ -378,6 +383,7 @@ export function createWorkbenchStore(options: WorkbenchStoreOptions = {}) {
             target: view.target,
             selectedPath: view.presentation?.selectedPath,
             guard,
+            guardRevision: guard?.revision?.(),
             adapter,
             revision: adapter?.revision?.(view.target),
             dirty: guard?.isDirty() ?? Boolean(view.presentation?.fileDraft),
@@ -402,12 +408,31 @@ export function createWorkbenchStore(options: WorkbenchStoreOptions = {}) {
         );
       };
       const operation = (async (): Promise<CloseResult> => {
+        const preparations = new Map<
+          string,
+          { readonly commit: () => Promise<boolean> | boolean }
+        >();
         // Finish every reversible decision before touching any resource.
         for (const entry of captured) {
           try {
             if (entry.dirty) {
               const guard = entry.guard ?? (await waitForFileGuard(entry.paneId));
-              if (!guard || !(await guard.confirmClose("close"))) {
+              if (!guard) {
+                return { outcomes: captured.map(({ paneId }) => ({ paneId, status: "retained" })) };
+              }
+              if (!entry.guard) {
+                entry.guard = guard;
+                entry.guardRevision = guard.revision?.();
+              }
+              if (guard.prepareClose) {
+                const preparation = await guard.prepareClose();
+                if (!preparation) {
+                  return {
+                    outcomes: captured.map(({ paneId }) => ({ paneId, status: "retained" })),
+                  };
+                }
+                preparations.set(entry.paneId, preparation);
+              } else if (!(await guard.confirmClose("close"))) {
                 return { outcomes: captured.map(({ paneId }) => ({ paneId, status: "retained" })) };
               }
             }
@@ -435,11 +460,36 @@ export function createWorkbenchStore(options: WorkbenchStoreOptions = {}) {
             ?.panes.get(entry.paneId);
           if (
             !stillCurrent(entry) ||
-            entry.guard?.isDirty() ||
-            Boolean(currentView?.presentation?.fileDraft)
+            (preparations.has(entry.paneId)
+              ? entry.guard?.revision?.() !== entry.guardRevision
+              : entry.guard?.isDirty() || Boolean(currentView?.presentation?.fileDraft))
           ) {
             outcomes.push({ paneId: entry.paneId, status: "retained" });
             continue;
+          }
+          const preparation = preparations.get(entry.paneId);
+          if (preparation) {
+            try {
+              if (!(await preparation.commit())) {
+                outcomes.push({ paneId: entry.paneId, status: "retained" });
+                continue;
+              }
+              if (
+                !stillCurrent(entry) ||
+                entry.guard?.isDirty() ||
+                Boolean(getPanePresentation(get(), entry.paneId)?.fileDraft)
+              ) {
+                outcomes.push({ paneId: entry.paneId, status: "retained" });
+                continue;
+              }
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error);
+              set((state) => ({
+                closeErrors: new Map(state.closeErrors).set(entry.paneId, message),
+              }));
+              outcomes.push({ paneId: entry.paneId, status: "failed", error: message });
+              continue;
+            }
           }
           if (entry.target.kind === "workspaceTerminal" && !entry.adapter?.cleanup) {
             const error = "Terminal close is unavailable.";
