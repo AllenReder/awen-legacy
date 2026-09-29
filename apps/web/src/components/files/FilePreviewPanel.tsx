@@ -1012,6 +1012,7 @@ export default function FilePreviewPanel({
   );
   const [initialContents, setInitialContents] = useState(restoredDraft?.contents);
   const draftContentsRef = useRef<string | null>(restoredDraft?.contents ?? null);
+  const draftRevisionRef = useRef(0);
   const draftHashRef = useRef<string | undefined>(restoredDraft?.contentHash);
   const draftCallbackRef = useRef(onDraftChange);
   useEffect(() => {
@@ -1026,6 +1027,7 @@ export default function FilePreviewPanel({
   } | null>(null);
 
   const resetDraft = useCallback(() => {
+    draftRevisionRef.current += 1;
     draftContentsRef.current = null;
     draftHashRef.current = undefined;
     setInitialContents(undefined);
@@ -1038,10 +1040,16 @@ export default function FilePreviewPanel({
   const [showCloseModal, setShowCloseModal] = useState(false);
   const [closeReason, setCloseReason] = useState<"close" | "switch">("close");
   const [showDiffModal, setShowDiffModal] = useState(false);
-  const closeResolverRef = useRef<((allowed: boolean) => void) | null>(null);
+  const closeResolverRef = useRef<((choice: "cancel" | "discard" | "save") => void) | null>(null);
+  const resolveCloseChoice = useCallback((choice: "cancel" | "discard" | "save") => {
+    setShowCloseModal(false);
+    const resolve = closeResolverRef.current;
+    closeResolverRef.current = null;
+    resolve?.(choice);
+  }, []);
   useEffect(
     () => () => {
-      closeResolverRef.current?.(false);
+      closeResolverRef.current?.("cancel");
     },
     [],
   );
@@ -1217,6 +1225,7 @@ export default function FilePreviewPanel({
 
   const handleDraftChange = useCallback(
     (next: string) => {
+      draftRevisionRef.current += 1;
       draftHashRef.current ??= file.data?.contentHash ?? undefined;
       const dirty = next !== (file.data?.contents ?? "");
       draftContentsRef.current = dirty ? next : null;
@@ -1253,7 +1262,9 @@ export default function FilePreviewPanel({
         );
         return false;
       }
-      const contentsToSave = draftContentsRef.current ?? file.data?.contents;
+      const draftToSave = draftContentsRef.current;
+      const revisionToSave = draftRevisionRef.current;
+      const contentsToSave = draftToSave ?? file.data?.contents;
       if (!relativePath || contentsToSave === undefined) return true;
       const result = await writeFileCommand({
         environmentId,
@@ -1269,7 +1280,9 @@ export default function FilePreviewPanel({
 
       if (result._tag === "Success") {
         setProjectFileQueryData(environmentId, cwd, relativePath, contentsToSave);
-        resetDraft();
+        // A newer edit made during the write must survive this save.
+        const draftUnchanged = draftRevisionRef.current === revisionToSave;
+        if (draftUnchanged) resetDraft();
         setConflict(null);
         file.refresh();
         toastManager.add(
@@ -1279,7 +1292,7 @@ export default function FilePreviewPanel({
             description: relativePath,
           }),
         );
-        return true;
+        return draftUnchanged;
       }
 
       const err = (result as any).error;
@@ -1363,16 +1376,30 @@ export default function FilePreviewPanel({
 
   useEffect(() => {
     if (!paneId || !explicitSave) return;
+    const ask = (reason: "close" | "switch") =>
+      new Promise<"cancel" | "discard" | "save">((resolve) => {
+        setCloseReason(reason);
+        closeResolverRef.current = resolve;
+        setShowCloseModal(true);
+      });
     return useWorkbenchStore.getState().registerCloseGuard(paneId, {
       isDirty: () => draftContentsRef.current !== null,
-      confirmClose: (reason = "close") =>
-        new Promise<boolean>((resolve) => {
-          setCloseReason(reason);
-          closeResolverRef.current = resolve;
-          setShowCloseModal(true);
-        }),
+      revision: () => draftRevisionRef.current,
+      confirmClose: async (reason = "close") => {
+        const choice = await ask(reason);
+        if (choice === "discard") {
+          resetDraft();
+          return true;
+        }
+        return choice === "save" ? handleSave() : false;
+      },
+      prepareClose: async () => {
+        const choice = await ask("close");
+        if (choice === "cancel") return null;
+        return { commit: () => (choice === "discard" ? (resetDraft(), true) : handleSave()) };
+      },
     });
-  }, [paneId, explicitSave, isDirty]);
+  }, [paneId, explicitSave, isDirty, handleSave, resetDraft]);
 
   const handleOpenFileWithGuard = useCallback(
     (path: string) => {
@@ -1727,10 +1754,7 @@ export default function FilePreviewPanel({
         <Dialog
           open={showCloseModal}
           onOpenChange={(open) => {
-            if (!open) {
-              setShowCloseModal(false);
-              closeResolverRef.current?.(false);
-            }
+            if (!open) resolveCloseChoice("cancel");
           }}
         >
           <DialogPopup showCloseButton={false} className="max-w-md">
@@ -1746,8 +1770,7 @@ export default function FilePreviewPanel({
                 variant="outline"
                 size="sm"
                 onClick={() => {
-                  setShowCloseModal(false);
-                  closeResolverRef.current?.(false);
+                  resolveCloseChoice("cancel");
                 }}
               >
                 Cancel
@@ -1756,24 +1779,12 @@ export default function FilePreviewPanel({
                 variant="outline"
                 size="sm"
                 onClick={() => {
-                  resetDraft();
-                  setShowCloseModal(false);
-                  closeResolverRef.current?.(true);
+                  resolveCloseChoice("discard");
                 }}
               >
                 Don't Save
               </Button>
-              <Button
-                variant="default"
-                size="sm"
-                onClick={async () => {
-                  const saved = await handleSave();
-                  if (saved) {
-                    setShowCloseModal(false);
-                    closeResolverRef.current?.(true);
-                  }
-                }}
-              >
+              <Button variant="default" size="sm" onClick={() => resolveCloseChoice("save")}>
                 Save
               </Button>
             </DialogFooter>

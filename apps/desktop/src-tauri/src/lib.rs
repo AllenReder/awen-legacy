@@ -232,6 +232,28 @@ struct DaemonInvocation {
     current_dir: Option<PathBuf>,
 }
 
+fn resolve_node_command(bundled_node: Option<PathBuf>) -> String {
+    if let Some(command) = read_non_empty_env(&["AWEN_NODE_COMMAND"]) {
+        return command;
+    }
+    let executable = if cfg!(windows) { "node.exe" } else { "node" };
+    bundled_node
+        .into_iter()
+        .chain(env::var_os("PATH").into_iter().flat_map(|path| {
+            env::split_paths(&path)
+                .map(|directory| directory.join(executable))
+                .collect::<Vec<_>>()
+        }))
+        .chain(
+            ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"]
+                .into_iter()
+                .map(|directory| PathBuf::from(directory).join(executable)),
+        )
+        .find(|path| path.is_file())
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_else(|| executable.into())
+}
+
 fn resolve_daemon_invocation() -> Result<DaemonInvocation, String> {
     if let Some(command) = read_non_empty_env(&["AWEN_DAEMON_COMMAND"]) {
         return Ok(DaemonInvocation {
@@ -243,7 +265,7 @@ fn resolve_daemon_invocation() -> Result<DaemonInvocation, String> {
 
     if let Some(entry) = read_non_empty_env(&["AWEN_DAEMON_ENTRY"]) {
         return Ok(DaemonInvocation {
-            command: read_non_empty_env(&["AWEN_NODE_COMMAND"]).unwrap_or_else(|| "node".into()),
+            command: resolve_node_command(None),
             entry_args: vec![entry],
             current_dir: None,
         });
@@ -263,19 +285,13 @@ fn resolve_daemon_invocation() -> Result<DaemonInvocation, String> {
                 .and_then(Path::parent)
                 .map(|runtime| runtime.join(if cfg!(windows) { "node.exe" } else { "node" }));
             return Ok(DaemonInvocation {
-                command: read_non_empty_env(&["AWEN_NODE_COMMAND"])
-                    .or_else(|| {
-                        bundled_node
-                            .filter(|path| path.is_file())
-                            .map(|path| path.to_string_lossy().into_owned())
-                    })
-                    .unwrap_or_else(|| "node".into()),
+                command: resolve_node_command(bundled_node),
                 entry_args: vec![candidate.to_string_lossy().into_owned()],
                 current_dir: candidate.parent().map(Path::to_path_buf),
             });
         }
         return Ok(DaemonInvocation {
-            command: read_non_empty_env(&["AWEN_NODE_COMMAND"]).unwrap_or_else(|| "node".into()),
+            command: resolve_node_command(None),
             entry_args: vec![candidate.to_string_lossy().into_owned()],
             current_dir: candidate
                 .parent()
@@ -661,6 +677,22 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn dev_daemon_launcher_finds_node_with_finder_path() {
+        let invocation = resolve_daemon_invocation().expect("dev daemon entry");
+        let output = Command::new("/usr/bin/env")
+            .args(["-i", "PATH=/usr/bin:/bin", &invocation.command, "--version"])
+            .output()
+            .expect("run launcher command with Finder PATH");
+        assert!(
+            output.status.success(),
+            "launcher command {:?} is unavailable with Finder PATH: {}",
+            invocation.command,
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
 
     #[test]
     fn normalizes_loopback_http_origins_and_drops_paths() {

@@ -395,8 +395,10 @@ _Avoid_: Chat wallpaper, Session background, View background
   main-area content is a View, not a Session.
 - Session identity is independent of its runtime process and provider-native
   session identity.
-- Closing a View, Pane, or Tab does not by itself stop or delete a Session;
-  Session lifecycle actions are explicit.
+- Explicitly closing an Agent Pane only hides its conversation. Explicitly
+  closing a Terminal Pane or its enclosing Tab terminates and deletes that
+  Terminal Session. Moving a Pane, switching Tabs, and closing the desktop
+  window do not close a Session.
 - A Workbench may contain multiple Tabs; each Tab owns its own Panes, and a
   Session View is unique across the whole Workbench rather than per Tab.
 - A Workbench with no opened Session shows a Welcome View rather than an empty

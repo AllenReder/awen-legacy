@@ -1,6 +1,11 @@
 # Middle-click close semantics across Topbar Tab and Sidebar Session
 
-**Status: accepted**
+**Status: accepted for input behavior; Terminal close policy superseded by #156/#169**
+
+The current policy is that an explicit Topbar Tab close, including middle-click,
+terminates and deletes any Terminal Sessions in that Tab. Agent Sessions remain
+intact. The historical decision below records the earlier presentation-only
+Terminal behavior and the input gesture rules that still apply.
 
 Middle-click (mouse button 1 / auxclick) on a Topbar Tab closes the presentation Tab
 layout without affecting the underlying Session. Middle-click on a Sidebar Session

@@ -575,6 +575,7 @@ function Pane({ tab, projects, paneId, focused }: PaneProps) {
   const setFocused = useWorkbenchStore((s) => s.setFocused);
   const focusRequestId = useWorkbenchStore((s) => s.focusRequestId);
   const requestClosePane = useWorkbenchStore((s) => s.requestClosePane);
+  const closeError = useWorkbenchStore((s) => s.closeErrors.get(paneId));
   const view = tab.panes.get(paneId);
   const target = view?.target ?? null;
   const definition = target === null ? null : resolveViewDefinition(target);
@@ -649,6 +650,11 @@ function Pane({ tab, projects, paneId, focused }: PaneProps) {
         onDragStart={drag.onPointerDown}
         onClose={() => void requestClosePane(paneId)}
       />
+      {closeError && (
+        <div role="alert" className="px-3 py-2 text-xs text-destructive">
+          Close failed: {closeError}
+        </div>
+      )}
       <div ref={contentRef} className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col">
           {definition === null ? (

@@ -27,9 +27,9 @@ interface TerminalViewProps {
  * emulator attaches to is resolved at this adapter boundary, so no other
  * Workbench code has to know it.
  *
- * Closing this View (closing the Pane) leaves the PTY running on the daemon —
- * the user can reopen the same Session from the Sidebar and reconnect to its
- * scrollback. Stop / terminate is a separate, explicit user action; see D3.
+ * An explicit Pane or Tab close terminates and deletes the daemon PTY through
+ * the Workbench close adapter. Unmounting this View during navigation or
+ * window shutdown only detaches its emulator.
  */
 export function TerminalView({
   target,

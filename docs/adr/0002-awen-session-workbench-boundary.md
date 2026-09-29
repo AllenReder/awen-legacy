@@ -2,7 +2,12 @@
 
 View identity and reuse decisions are superseded by [ADR-0028](0028-pane-view-catalog.md) and #156/#168.
 
-**Status: accepted; Session View uniqueness is superseded by ADR-0010, and the final-View restore rule is narrowed by ADR-0023**
+**Status: accepted; Session View uniqueness is superseded by ADR-0010, the final-View restore rule is narrowed by ADR-0023, and close policy is superseded by #156/#169**
+
+The current close policy distinguishes Agent and Terminal Views: explicit Agent
+Pane closure hides the conversation; explicit Terminal Pane or enclosing Tab
+closure terminates and deletes the Terminal Session. The historical decision
+below describes the earlier presentation-only Terminal behavior.
 
 Awen uses Project → Workspace → Session as its durable work model, with Agent
 Session and Terminal Session as the current Session kinds. The Workbench owns

@@ -1,6 +1,25 @@
 export interface PaneCloseGuard {
   readonly isDirty: () => boolean;
   readonly confirmClose: (reason?: "close" | "switch") => Promise<boolean>;
+  /** Explicit close collects the choice before mutating a draft. */
+  readonly prepareClose?: () => Promise<{
+    readonly commit: () => Promise<boolean> | boolean;
+  } | null>;
+  readonly revision?: () => unknown;
+}
+export interface PaneCloseAdapter {
+  /** Changes while a confirmation is open invalidate its decision. */
+  readonly revision?: (target: ViewTarget) => unknown;
+  readonly confirm?: (target: ViewTarget) => Promise<boolean>;
+  readonly cleanup?: (target: ViewTarget) => Promise<void>;
+}
+export interface CloseOutcome {
+  readonly paneId: string;
+  readonly status: "closed" | "retained" | "failed";
+  readonly error?: string;
+}
+export interface CloseResult {
+  readonly outcomes: readonly CloseOutcome[];
 }
 import { type LayoutMode } from "./scrollingLayout";
 import { create } from "zustand";
@@ -35,17 +54,18 @@ import {
   type WorkbenchSnapshot,
 } from "./workbenchState";
 import type { SplitDir } from "./layout";
-import type { ViewTarget } from "./viewRegistry";
+import { targetKey, type ViewTarget } from "./viewRegistry";
 import { readWorkbenchSnapshot, writeWorkbenchSnapshot } from "./workbenchPersistence";
 import { FLUID_MOTION_DURATION_MS, scaledMotionDuration } from "./workbenchMotion";
 
 export type ViewClosureListener = (targets: readonly ViewTarget[]) => void;
 
-/** Public presentation commands; lifecycle observers own any Session cleanup. */
+/** Workbench commands and the explicit Pane/Tab close coordinator. */
 export interface WorkbenchStore extends WorkbenchSnapshot {
   readonly focusRequestId: number;
   /** Tabs currently animating their 220ms fluid collapse before removal. */
   readonly closingTabIds: ReadonlySet<string>;
+  readonly closeErrors: ReadonlyMap<string, string>;
   setLayoutMode: (mode: LayoutMode) => void;
   changeColumn: (
     id: string,
@@ -79,8 +99,9 @@ export interface WorkbenchStore extends WorkbenchSnapshot {
   setFocused: (paneId: string) => void;
   setSplitRatio: (splitId: string, index: number, ratio: number) => void;
   registerCloseGuard: (paneId: string, guard: PaneCloseGuard) => () => void;
-  requestClosePane: (paneId: string) => Promise<boolean>;
-  canCloseTab: (tabId: string) => Promise<boolean>;
+  registerCloseAdapter: (definitionId: string, adapter: PaneCloseAdapter) => () => void;
+  requestClosePane: (paneId: string) => Promise<CloseResult>;
+  requestCloseTab: (tabId: string) => Promise<CloseResult>;
   subscribeViewClosures: (listener: ViewClosureListener) => () => void;
 }
 
@@ -117,6 +138,10 @@ export function createWorkbenchStore(options: WorkbenchStoreOptions = {}) {
     options.initialSnapshot ?? readWorkbenchSnapshot() ?? emptyWorkbenchSnapshot(generateId);
   const previews = new WeakMap<ViewDropResult, WorkbenchSnapshot>();
   const closeGuards = new Map<string, PaneCloseGuard>();
+  const closeAdapters = new Map<string, PaneCloseAdapter>();
+  const pendingCloses = new Map<string, Promise<CloseResult>>();
+  const activePaneRequests = new Set<string>();
+  const pendingCleanup = new Map<string, Promise<void>>();
   const closureListeners = new Set<ViewClosureListener>();
   const guardWaiters = new Map<string, Set<(guard: PaneCloseGuard | null) => void>>();
   const waitForFileGuard = (paneId: string): Promise<PaneCloseGuard | null> => {
@@ -342,10 +367,193 @@ export function createWorkbenchStore(options: WorkbenchStoreOptions = {}) {
       scheduleTabRemoval(emptiedTabIds, false);
     };
 
+    const requestClose = (key: string, paneIds: readonly string[], tabId?: string) => {
+      const existing = pendingCloses.get(key);
+      if (existing) return existing;
+      const captured = paneIds.flatMap((paneId) => {
+        const tab = get().tabs.find((item) => item.panes.has(paneId));
+        const view = tab?.panes.get(paneId);
+        if (!tab || !view) return [];
+        const guard = closeGuards.get(paneId);
+        const adapter = closeAdapters.get(view.definitionId);
+        return [
+          {
+            paneId,
+            tabId: tab.id,
+            target: view.target,
+            selectedPath: view.presentation?.selectedPath,
+            guard,
+            guardRevision: guard?.revision?.(),
+            adapter,
+            revision: adapter?.revision?.(view.target),
+            dirty: guard?.isDirty() ?? Boolean(view.presentation?.fileDraft),
+          },
+        ];
+      });
+      if (captured.some(({ paneId }) => activePaneRequests.has(paneId))) {
+        return Promise.resolve({
+          outcomes: captured.map(({ paneId }) => ({ paneId, status: "retained" as const })),
+        });
+      }
+      for (const { paneId } of captured) activePaneRequests.add(paneId);
+      const stillCurrent = (entry: (typeof captured)[number]) => {
+        const tab = get().tabs.find((item) => item.id === entry.tabId);
+        const view = tab?.panes.get(entry.paneId);
+        return Boolean(
+          view &&
+          (tabId === undefined || tabId === entry.tabId) &&
+          targetKey(view.target) === targetKey(entry.target) &&
+          view.presentation?.selectedPath === entry.selectedPath &&
+          entry.adapter?.revision?.(entry.target) === entry.revision,
+        );
+      };
+      const operation = (async (): Promise<CloseResult> => {
+        const preparations = new Map<
+          string,
+          { readonly commit: () => Promise<boolean> | boolean }
+        >();
+        // Finish every reversible decision before touching any resource.
+        for (const entry of captured) {
+          try {
+            if (entry.dirty) {
+              const guard = entry.guard ?? (await waitForFileGuard(entry.paneId));
+              if (!guard) {
+                return { outcomes: captured.map(({ paneId }) => ({ paneId, status: "retained" })) };
+              }
+              if (!entry.guard) {
+                entry.guard = guard;
+                entry.guardRevision = guard.revision?.();
+              }
+              if (guard.prepareClose) {
+                const preparation = await guard.prepareClose();
+                if (!preparation) {
+                  return {
+                    outcomes: captured.map(({ paneId }) => ({ paneId, status: "retained" })),
+                  };
+                }
+                preparations.set(entry.paneId, preparation);
+              } else if (!(await guard.confirmClose("close"))) {
+                return { outcomes: captured.map(({ paneId }) => ({ paneId, status: "retained" })) };
+              }
+            }
+            if (entry.adapter?.confirm && !(await entry.adapter.confirm(entry.target))) {
+              return { outcomes: captured.map(({ paneId }) => ({ paneId, status: "retained" })) };
+            }
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            set((state) => ({
+              closeErrors: new Map(state.closeErrors).set(entry.paneId, message),
+            }));
+            return {
+              outcomes: captured.map(({ paneId }) =>
+                paneId === entry.paneId
+                  ? { paneId, status: "failed", error: message }
+                  : { paneId, status: "retained" },
+              ),
+            };
+          }
+        }
+        const outcomes: CloseOutcome[] = [];
+        for (const entry of captured) {
+          const currentView = get()
+            .tabs.find((tab) => tab.id === entry.tabId)
+            ?.panes.get(entry.paneId);
+          if (
+            !stillCurrent(entry) ||
+            (preparations.has(entry.paneId)
+              ? entry.guard?.revision?.() !== entry.guardRevision
+              : entry.guard?.isDirty() || Boolean(currentView?.presentation?.fileDraft))
+          ) {
+            outcomes.push({ paneId: entry.paneId, status: "retained" });
+            continue;
+          }
+          const preparation = preparations.get(entry.paneId);
+          if (preparation) {
+            try {
+              if (!(await preparation.commit())) {
+                outcomes.push({ paneId: entry.paneId, status: "retained" });
+                continue;
+              }
+              if (
+                !stillCurrent(entry) ||
+                entry.guard?.isDirty() ||
+                Boolean(getPanePresentation(get(), entry.paneId)?.fileDraft)
+              ) {
+                outcomes.push({ paneId: entry.paneId, status: "retained" });
+                continue;
+              }
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error);
+              set((state) => ({
+                closeErrors: new Map(state.closeErrors).set(entry.paneId, message),
+              }));
+              outcomes.push({ paneId: entry.paneId, status: "failed", error: message });
+              continue;
+            }
+          }
+          if (entry.target.kind === "workspaceTerminal" && !entry.adapter?.cleanup) {
+            const error = "Terminal close is unavailable.";
+            set((state) => ({ closeErrors: new Map(state.closeErrors).set(entry.paneId, error) }));
+            outcomes.push({ paneId: entry.paneId, status: "failed", error });
+            continue;
+          }
+          try {
+            if (entry.adapter?.cleanup) {
+              const resourceKey = targetKey(entry.target);
+              let cleanup = pendingCleanup.get(resourceKey);
+              if (!cleanup) {
+                cleanup = entry.adapter.cleanup(entry.target);
+                pendingCleanup.set(resourceKey, cleanup);
+              }
+              try {
+                await cleanup;
+              } finally {
+                if (pendingCleanup.get(resourceKey) === cleanup) pendingCleanup.delete(resourceKey);
+              }
+            }
+            if (entry.target.kind === "welcome" && tabId !== undefined) {
+              get().closeTab(entry.tabId);
+            } else if (
+              get().tabs.some(
+                (tab) =>
+                  tab.panes.get(entry.paneId) &&
+                  targetKey(tab.panes.get(entry.paneId)!.target) === targetKey(entry.target),
+              )
+            ) {
+              // Cleanup has committed: even a Pane moved during the RPC cannot
+              // keep presenting a terminated resource.
+              get().closeView(entry.paneId);
+            }
+            set((state) => {
+              const closeErrors = new Map(state.closeErrors);
+              closeErrors.delete(entry.paneId);
+              return { closeErrors };
+            });
+            outcomes.push({ paneId: entry.paneId, status: "closed" });
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            set((state) => ({
+              closeErrors: new Map(state.closeErrors).set(entry.paneId, message),
+            }));
+            outcomes.push({ paneId: entry.paneId, status: "failed", error: message });
+          }
+        }
+        return { outcomes };
+      })();
+      pendingCloses.set(key, operation);
+      const clearPending = () => {
+        if (pendingCloses.get(key) === operation) pendingCloses.delete(key);
+        for (const { paneId } of captured) activePaneRequests.delete(paneId);
+      };
+      void operation.then(clearPending, clearPending);
+      return operation;
+    };
+
     return {
       ...initialSnapshot,
       focusRequestId: 0,
       closingTabIds: new Set<string>(),
+      closeErrors: new Map<string, string>(),
       setLayoutMode: (mode) =>
         set((snapshot) => ({
           ...applySetLayoutMode(snapshot, mode),
@@ -387,26 +595,16 @@ export function createWorkbenchStore(options: WorkbenchStoreOptions = {}) {
           }
         };
       },
-      requestClosePane: async (paneId) => {
-        const guard = closeGuards.get(paneId);
-        if (guard && guard.isDirty()) {
-          const allowed = await guard.confirmClose();
-          if (!allowed) return false;
-        }
-        get().closeView(paneId);
-        return true;
+      registerCloseAdapter: (definitionId, adapter) => {
+        closeAdapters.set(definitionId, adapter);
+        return () => {
+          if (closeAdapters.get(definitionId) === adapter) closeAdapters.delete(definitionId);
+        };
       },
-      canCloseTab: async (tabId) => {
-        const tab = get().tabs.find((t) => t.id === tabId);
-        if (!tab) return true;
-        for (const paneId of tab.panes.keys()) {
-          const guard = closeGuards.get(paneId);
-          if (guard && guard.isDirty()) {
-            const allowed = await guard.confirmClose();
-            if (!allowed) return false;
-          }
-        }
-        return true;
+      requestClosePane: (paneId) => requestClose(`pane:${paneId}`, [paneId]),
+      requestCloseTab: (tabId) => {
+        const tab = get().tabs.find((candidate) => candidate.id === tabId);
+        return requestClose(`tab:${tabId}`, tab ? [...tab.panes.keys()] : [], tabId);
       },
       closeView: (paneId) => {
         runCloseTransition((snapshot) => applyClosePane(snapshot, paneId, generateId), true);
@@ -493,5 +691,6 @@ export function resetWorkbenchStore(): void {
     ...emptyWorkbenchSnapshot(defaultGenerateId),
     focusRequestId: 0,
     closingTabIds: new Set<string>(),
+    closeErrors: new Map<string, string>(),
   });
 }
