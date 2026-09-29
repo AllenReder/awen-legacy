@@ -176,6 +176,86 @@ describe("verifyOpenCodeServerVersion", () => {
 
 describe("OpenCode server output", () => {
   effectIt.live(
+    "waits for a readiness line split across stdout chunks",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const environment = yield* HostProcessEnvironment;
+        const executablePath = yield* HostProcessExecutablePath;
+        const platform = yield* HostProcessPlatform;
+        const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "awen-opencode-split-" });
+        const isWindows = platform === "win32";
+        const binaryPath = path.join(tempDir, isWindows ? "opencode.cmd" : "opencode");
+        const scriptPath = path.join(tempDir, "opencode.mjs");
+        const portPath = path.join(tempDir, "port.txt");
+
+        // The readiness line arrives in two writes with a gap. The first write
+        // parses as an unterminated candidate; resolving it would point the
+        // version check at a truncated URL.
+        yield* fs.writeFileString(
+          scriptPath,
+          `import { createServer } from "node:http";
+import { writeFileSync } from "node:fs";
+const server = createServer((request, response) => {
+  if (request.url.startsWith("/api/info")) {
+    response.setHeader("Content-Type", "application/json");
+    response.end(JSON.stringify({ version: "2.0.12", pid: 1, urls: [], paths: { tmp: "/tmp" } }));
+    return;
+  }
+  response.end("ok");
+});
+server.listen(0, "127.0.0.1", () => {
+  const port = server.address().port;
+  writeFileSync(process.env.AWEN_TEST_PORT_FILE, String(port));
+  process.stdout.write("server listening on http://127.0.0.1:");
+  setTimeout(() => {
+    process.stdout.write(port + "\\n");
+  }, 150);
+});
+`,
+        );
+        yield* fs.writeFileString(
+          binaryPath,
+          [
+            ...(isWindows ? ["@echo off"] : ["#!/bin/sh"]),
+            isWindows
+              ? '"%AWEN_TEST_NODE_BINARY%" "%AWEN_TEST_OPENCODE_SCRIPT%" %*'
+              : 'exec "$AWEN_TEST_NODE_BINARY" "$AWEN_TEST_OPENCODE_SCRIPT" "$@"',
+            "",
+          ].join("\n"),
+        );
+        if (!isWindows) {
+          yield* fs.chmod(binaryPath, 0o755);
+        }
+
+        const runtime = yield* OpenCodeRuntime;
+        const started = yield* runtime.startOpenCodeServerProcess({
+          binaryPath,
+          directory: tempDir,
+          port: 0,
+          environment: {
+            ...environment,
+            AWEN_TEST_NODE_BINARY: executablePath,
+            AWEN_TEST_OPENCODE_SCRIPT: scriptPath,
+            AWEN_TEST_PORT_FILE: portPath,
+          },
+        });
+
+        const port = (yield* fs.readFileString(portPath)).trim();
+        expect(started.url).toBe(`http://127.0.0.1:${port}`);
+        expect(started.version).toBe("2.0.12");
+      }).pipe(
+        Effect.scoped,
+        Effect.provide([
+          OpenCodeRuntimeLive.pipe(Layer.provideMerge(NodeServices.layer)),
+          FetchHttpClient.layer,
+        ]),
+      ),
+    10_000,
+  );
+
+  effectIt.live(
     "drains stdout and stderr after startup so server requests can finish",
     () =>
       Effect.gen(function* () {
