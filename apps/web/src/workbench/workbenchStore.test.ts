@@ -275,6 +275,66 @@ it("does not open a second decision while a Pane close is pending", async () => 
   expect((await first).outcomes).toEqual([{ paneId, status: "closed" }]);
 });
 
+it("keeps a new file draft added while another Pane asks for confirmation", async () => {
+  const store = createWorkbenchStore({ persist: () => {} });
+  const file: ViewTarget = {
+    kind: "workspace",
+    definitionId: "fileView",
+    environmentId: ENV_A,
+    workspaceId: WS_A,
+  };
+  await store.getState().openTarget(file);
+  const filePane = getActiveTab(store.getState()).focusedPaneId;
+  await store.getState().openFromPane(filePane, agent());
+  const agentPane = getActiveTab(store.getState()).focusedPaneId;
+  let decide!: (value: boolean) => void;
+  store.getState().registerCloseAdapter("agentSession", {
+    confirm: () =>
+      new Promise((resolve) => {
+        decide = resolve;
+      }),
+  });
+
+  const closing = store.getState().requestCloseTab(getActiveTab(store.getState()).id);
+  store.getState().setPanePresentation(filePane, {
+    fileDraft: { path: "new.ts", contents: "unsaved" },
+  });
+  decide(true);
+
+  expect((await closing).outcomes).toContainEqual({ paneId: filePane, status: "retained" });
+  expect(getActiveTab(store.getState()).panes.has(filePane)).toBe(true);
+  expect(getActiveTab(store.getState()).panes.has(agentPane)).toBe(false);
+});
+
+it("continues closing independent Panes when one has a pending request", async () => {
+  const store = createWorkbenchStore({ persist: () => {} });
+  await store.getState().openTarget(agent());
+  const agentPane = getActiveTab(store.getState()).focusedPaneId;
+  await store.getState().openFromPane(agentPane, {
+    kind: "workspaceTerminal",
+    environmentId: ENV_A,
+    terminalSessionId: "term" as never,
+  });
+  const terminalPane = getActiveTab(store.getState()).focusedPaneId;
+  let decide!: (value: boolean) => void;
+  store.getState().registerCloseAdapter("agentSession", {
+    confirm: () =>
+      new Promise((resolve) => {
+        decide = resolve;
+      }),
+  });
+  const cleanup = vi.fn(async () => {});
+  store.getState().registerCloseAdapter("workspaceTerminal", { cleanup });
+
+  const closingAgent = store.getState().requestClosePane(agentPane);
+  const tabResult = await store.getState().requestCloseTab(getActiveTab(store.getState()).id);
+  expect(tabResult.outcomes).toContainEqual({ paneId: agentPane, status: "retained" });
+  expect(tabResult.outcomes).toContainEqual({ paneId: terminalPane, status: "closed" });
+  expect(cleanup).toHaveBeenCalledOnce();
+  decide(true);
+  expect((await closingAgent).outcomes).toEqual([{ paneId: agentPane, status: "closed" }]);
+});
+
 it("does not reuse a file decision after another edit, and repeats terminal cleanup once", async () => {
   const store = createWorkbenchStore({ persist: () => {} });
   const file: ViewTarget = {

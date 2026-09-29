@@ -98,9 +98,11 @@ Workspace (`Terminal 1`, `Terminal 2`, ...). A terminal-provided title is
 persisted and restored until the next PTY publishes a title. A manually
 renamed title takes precedence and is equally durable across that boundary.
 
-Closing a View, Pane, or Tab remains distinct from calling `close`; `close` is
-reserved for explicit terminal termination. The Sidebar can create a terminal
-directly under a Workspace, including when it has no Agent Sessions.
+Explicitly closing a Terminal Pane or its enclosing Tab calls `close` with
+history deletion, terminating and removing the Terminal Session. Moving or
+hiding a Pane, switching Tabs, and closing the desktop window only detach the
+client. The Sidebar can create a terminal directly under a Workspace, including
+when it has no Agent Sessions.
 
 ## Following the shell directory
 

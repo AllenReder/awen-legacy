@@ -384,12 +384,8 @@ export function createWorkbenchStore(options: WorkbenchStoreOptions = {}) {
           },
         ];
       });
-      if (captured.some(({ paneId }) => activePaneRequests.has(paneId))) {
-        return Promise.resolve({
-          outcomes: captured.map(({ paneId }) => ({ paneId, status: "retained" as const })),
-        });
-      }
-      for (const { paneId } of captured) activePaneRequests.add(paneId);
+      const available = captured.filter(({ paneId }) => !activePaneRequests.has(paneId));
+      for (const { paneId } of available) activePaneRequests.add(paneId);
       const stillCurrent = (entry: (typeof captured)[number]) => {
         const tab = get().tabs.find((item) => item.id === entry.tabId);
         const view = tab?.panes.get(entry.paneId);
@@ -403,7 +399,7 @@ export function createWorkbenchStore(options: WorkbenchStoreOptions = {}) {
       };
       const operation = (async (): Promise<CloseResult> => {
         // Finish every reversible decision before touching any resource.
-        for (const entry of captured) {
+        for (const entry of available) {
           try {
             if (entry.dirty) {
               const guard = entry.guard ?? (await waitForFileGuard(entry.paneId));
@@ -428,9 +424,18 @@ export function createWorkbenchStore(options: WorkbenchStoreOptions = {}) {
             };
           }
         }
-        const outcomes: CloseOutcome[] = [];
-        for (const entry of captured) {
-          if (!stillCurrent(entry) || (entry.guard?.isDirty() ?? false)) {
+        const outcomes: CloseOutcome[] = captured
+          .filter(({ paneId }) => !available.some((entry) => entry.paneId === paneId))
+          .map(({ paneId }) => ({ paneId, status: "retained" }));
+        for (const entry of available) {
+          const currentView = get()
+            .tabs.find((tab) => tab.id === entry.tabId)
+            ?.panes.get(entry.paneId);
+          if (
+            !stillCurrent(entry) ||
+            entry.guard?.isDirty() ||
+            Boolean(currentView?.presentation?.fileDraft)
+          ) {
             outcomes.push({ paneId: entry.paneId, status: "retained" });
             continue;
           }
@@ -481,12 +486,16 @@ export function createWorkbenchStore(options: WorkbenchStoreOptions = {}) {
             outcomes.push({ paneId: entry.paneId, status: "failed", error: message });
           }
         }
-        return { outcomes };
+        return {
+          outcomes: captured.flatMap(({ paneId }) =>
+            outcomes.filter((outcome) => outcome.paneId === paneId),
+          ),
+        };
       })();
       pendingCloses.set(key, operation);
       const clearPending = () => {
         if (pendingCloses.get(key) === operation) pendingCloses.delete(key);
-        for (const { paneId } of captured) activePaneRequests.delete(paneId);
+        for (const { paneId } of available) activePaneRequests.delete(paneId);
       };
       void operation.then(clearPending, clearPending);
       return operation;
