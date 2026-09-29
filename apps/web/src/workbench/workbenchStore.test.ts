@@ -306,7 +306,7 @@ it("keeps a new file draft added while another Pane asks for confirmation", asyn
   expect(getActiveTab(store.getState()).panes.has(agentPane)).toBe(false);
 });
 
-it("continues closing independent Panes when one has a pending request", async () => {
+it("retains the whole Tab while one of its Panes has a pending decision", async () => {
   const store = createWorkbenchStore({ persist: () => {} });
   await store.getState().openTarget(agent());
   const agentPane = getActiveTab(store.getState()).focusedPaneId;
@@ -329,10 +329,13 @@ it("continues closing independent Panes when one has a pending request", async (
   const closingAgent = store.getState().requestClosePane(agentPane);
   const tabResult = await store.getState().requestCloseTab(getActiveTab(store.getState()).id);
   expect(tabResult.outcomes).toContainEqual({ paneId: agentPane, status: "retained" });
-  expect(tabResult.outcomes).toContainEqual({ paneId: terminalPane, status: "closed" });
-  expect(cleanup).toHaveBeenCalledOnce();
+  expect(tabResult.outcomes).toContainEqual({ paneId: terminalPane, status: "retained" });
+  expect(cleanup).not.toHaveBeenCalled();
   decide(true);
   expect((await closingAgent).outcomes).toEqual([{ paneId: agentPane, status: "closed" }]);
+  expect((await store.getState().requestCloseTab(getActiveTab(store.getState()).id)).outcomes)
+    .toContainEqual({ paneId: terminalPane, status: "closed" });
+  expect(cleanup).toHaveBeenCalledOnce();
 });
 
 it("does not reuse a file decision after another edit, and repeats terminal cleanup once", async () => {
