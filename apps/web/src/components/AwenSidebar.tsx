@@ -16,14 +16,7 @@ import {
   squashAtomCommandFailure,
 } from "@awen/client-runtime/state/runtime";
 import { useAtomValue } from "@effect/atom-react";
-import {
-  ChevronDownIcon,
-  ChevronRightIcon,
-  CloudIcon,
-  FolderIcon,
-  GitBranchIcon,
-  PlusIcon,
-} from "lucide-react";
+import { ChevronRightIcon, CloudIcon, FolderIcon, GitBranchIcon, PlusIcon } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -39,7 +32,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { DraftId, useComposerDraftStore } from "../composerDraftStore";
 import { useUiStateStore } from "../uiStateStore";
 import { openCommandPalette } from "../commandPaletteBus";
-import { newThreadId } from "../lib/utils";
+import { cn, newThreadId } from "../lib/utils";
 import { readLocalApi } from "../localApi";
 import { environmentServerConfigsAtom } from "../state/server";
 import { useEnvironments } from "../state/environments";
@@ -874,11 +867,12 @@ export function AwenSidebar() {
                       handleProjectMenu(project, { x: rect.left + rect.width / 2, y: rect.bottom });
                     })}
                   >
-                    {projectCollapsed ? (
-                      <ChevronRightIcon className="size-3.5 shrink-0" />
-                    ) : (
-                      <ChevronDownIcon className="size-3.5 shrink-0" />
-                    )}
+                    <ChevronRightIcon
+                      className={cn(
+                        "size-3.5 shrink-0 transition-transform [transition-duration:calc(150ms*var(--motion-duration-scale,1))] [transition-timing-function:cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none",
+                        !projectCollapsed && "rotate-90",
+                      )}
+                    />
                     {remoteEnvironmentIds.has(project.environmentId) ? (
                       <CloudIcon
                         aria-label="Remote project"
@@ -899,43 +893,40 @@ export function AwenSidebar() {
                       className="min-w-0 flex-1 truncate"
                     />
                   </button>
-                  {!projectCollapsed ? (
-                    <div className="ms-4 flex flex-col gap-px border-s border-sidebar-border ps-1.5">
-                      {project.workspaces.map((workspace) => {
-                        const workspaceKey = `${project.environmentId}:${workspace.id}`;
-                        const workspaceExpanded = expandedWorkspaces.has(workspaceKey);
-                        const sessionOrder = workspaceSessionOrderById[workspaceKey];
-                        const rawSessions = workspace.sessions ?? [];
-                        const activeSessions =
-                          sessionOrder && sessionOrder.length > 0
-                            ? (() => {
-                                const rank = new Map(sessionOrder.map((id, index) => [id, index]));
-                                return [...rawSessions].sort((a, b) => {
-                                  const rankA = rank.get(a.id) ?? Number.MAX_SAFE_INTEGER;
-                                  const rankB = rank.get(b.id) ?? Number.MAX_SAFE_INTEGER;
-                                  return rankA - rankB;
-                                });
-                              })()
-                            : rawSessions;
-                        const historySessions = workspace.historySessions ?? [];
-                        return (
-                          <div key={workspaceKey} className="flex flex-col gap-px">
-                            <div className="flex items-center gap-1">
-                              <button
-                                type="button"
-                                data-testid="sidebar-workspace-disclosure"
-                                aria-label={
-                                  workspaceExpanded ? "Collapse Workspace" : "Expand Workspace"
-                                }
-                                className="flex size-5 shrink-0 items-center justify-center rounded hover:bg-sidebar-row-hover"
-                                onClick={() => toggleWorkspaceExpanded(workspaceKey)}
-                              >
-                                {workspaceExpanded ? (
-                                  <ChevronDownIcon className="size-3" />
-                                ) : (
-                                  <ChevronRightIcon className="size-3" />
-                                )}
-                              </button>
+                  <div
+                    className={cn(
+                      "grid transition-[grid-template-rows] [transition-duration:calc(150ms*var(--motion-duration-scale,1))] [transition-timing-function:cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none",
+                      !projectCollapsed ? "grid-rows-[1fr]" : "grid-rows-[0fr]",
+                    )}
+                  >
+                    <div
+                      className={cn(
+                        "min-h-0 overflow-hidden transition-opacity [transition-duration:calc(150ms*var(--motion-duration-scale,1))] [transition-timing-function:cubic-bezier(0.16,1,0.3,1)]",
+                        !projectCollapsed ? "opacity-100" : "opacity-0",
+                      )}
+                    >
+                      <div className="ms-4 flex flex-col gap-px border-s border-sidebar-border ps-1.5">
+                        {project.workspaces.map((workspace) => {
+                          const workspaceKey = `${project.environmentId}:${workspace.id}`;
+                          const workspaceExpanded = expandedWorkspaces.has(workspaceKey);
+                          const sessionOrder = workspaceSessionOrderById[workspaceKey];
+                          const rawSessions = workspace.sessions ?? [];
+                          const activeSessions =
+                            sessionOrder && sessionOrder.length > 0
+                              ? (() => {
+                                  const rank = new Map(
+                                    sessionOrder.map((id, index) => [id, index]),
+                                  );
+                                  return [...rawSessions].sort((a, b) => {
+                                    const rankA = rank.get(a.id) ?? Number.MAX_SAFE_INTEGER;
+                                    const rankB = rank.get(b.id) ?? Number.MAX_SAFE_INTEGER;
+                                    return rankA - rankB;
+                                  });
+                                })()
+                              : rawSessions;
+                          const historySessions = workspace.historySessions ?? [];
+                          return (
+                            <div key={workspaceKey} className="flex flex-col gap-px">
                               <button
                                 type="button"
                                 data-testid="sidebar-workspace-row"
@@ -943,7 +934,8 @@ export function AwenSidebar() {
                                   project.environmentId,
                                 )}
                                 role="treeitem"
-                                className="group/rename flex min-h-7 min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 text-left text-xs text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
+                                aria-expanded={workspaceExpanded}
+                                className="group/rename flex min-h-7 min-w-0 w-full items-center gap-1.5 rounded-md px-2 text-left text-xs text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
                                 onClick={() => toggleWorkspaceExpanded(workspaceKey)}
                                 onContextMenu={(event) => {
                                   event.preventDefault();
@@ -960,6 +952,20 @@ export function AwenSidebar() {
                                   });
                                 })}
                               >
+                                <span
+                                  data-testid="sidebar-workspace-disclosure"
+                                  aria-label={
+                                    workspaceExpanded ? "Collapse Workspace" : "Expand Workspace"
+                                  }
+                                  className="flex size-3.5 shrink-0 items-center justify-center"
+                                >
+                                  <ChevronRightIcon
+                                    className={cn(
+                                      "size-3 shrink-0 transition-transform [transition-duration:calc(150ms*var(--motion-duration-scale,1))] [transition-timing-function:cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none",
+                                      workspaceExpanded && "rotate-90",
+                                    )}
+                                  />
+                                </span>
                                 <GitBranchIcon className="size-3 shrink-0" />
                                 <WorkspaceBranchName
                                   environmentId={project.environmentId}
@@ -976,72 +982,103 @@ export function AwenSidebar() {
                                   className="min-w-0 flex-1 text-right text-[10px] text-sidebar-muted-foreground"
                                 />
                               </button>
-                            </div>
-                            {workspaceExpanded ? (
-                              <div className="ms-4 flex flex-col gap-px border-s border-sidebar-border ps-1.5">
-                                <WorkspaceActiveSessions
-                                  project={project}
-                                  workspace={workspace}
-                                  workspaceKey={workspaceKey}
-                                  activeSessions={activeSessions}
-                                  renameAgent={renameAgent}
-                                  renameTerminal={renameTerminal}
-                                  navigate={navigate}
-                                />
-                                {historySessions.length > 0 ? (
-                                  <button
-                                    type="button"
-                                    data-testid="sidebar-history-toggle"
-                                    className="flex min-h-6 items-center gap-1 rounded-md px-2 text-left text-[10px] text-sidebar-muted-foreground hover:bg-sidebar-row-hover"
-                                    onClick={() =>
-                                      setHistoryExpanded((current) => {
-                                        const next = new Set(current);
-                                        if (next.has(workspaceKey)) next.delete(workspaceKey);
-                                        else next.add(workspaceKey);
-                                        return next;
-                                      })
-                                    }
-                                  >
-                                    {historyExpanded.has(workspaceKey) ? (
-                                      <ChevronDownIcon className="size-3" />
-                                    ) : (
-                                      <ChevronRightIcon className="size-3" />
-                                    )}
-                                    History ({historySessions.length})
-                                  </button>
-                                ) : null}
-                                {historyExpanded.has(workspaceKey)
-                                  ? historySessions.map((session) =>
-                                      session.kind === "agent" ? (
-                                        <WorkspaceAgentSessionRow
-                                          key={session.id}
-                                          project={project}
-                                          workspace={workspace}
-                                          session={session}
-                                          isClosed
-                                          renameAgent={renameAgent}
-                                          navigate={navigate}
+                              <div
+                                className={cn(
+                                  "grid transition-[grid-template-rows] [transition-duration:calc(150ms*var(--motion-duration-scale,1))] [transition-timing-function:cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none",
+                                  workspaceExpanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]",
+                                )}
+                              >
+                                <div
+                                  className={cn(
+                                    "min-h-0 overflow-hidden transition-opacity [transition-duration:calc(150ms*var(--motion-duration-scale,1))] [transition-timing-function:cubic-bezier(0.16,1,0.3,1)]",
+                                    workspaceExpanded ? "opacity-100" : "opacity-0",
+                                  )}
+                                >
+                                  <div className="ms-4 flex flex-col gap-px border-s border-sidebar-border ps-1.5">
+                                    <WorkspaceActiveSessions
+                                      project={project}
+                                      workspace={workspace}
+                                      workspaceKey={workspaceKey}
+                                      activeSessions={activeSessions}
+                                      renameAgent={renameAgent}
+                                      renameTerminal={renameTerminal}
+                                      navigate={navigate}
+                                    />
+                                    {historySessions.length > 0 ? (
+                                      <button
+                                        type="button"
+                                        data-testid="sidebar-history-toggle"
+                                        className="flex min-h-6 items-center gap-1 rounded-md px-2 text-left text-[10px] text-sidebar-muted-foreground hover:bg-sidebar-row-hover"
+                                        onClick={() =>
+                                          setHistoryExpanded((current) => {
+                                            const next = new Set(current);
+                                            if (next.has(workspaceKey)) next.delete(workspaceKey);
+                                            else next.add(workspaceKey);
+                                            return next;
+                                          })
+                                        }
+                                      >
+                                        <ChevronRightIcon
+                                          className={cn(
+                                            "size-3 shrink-0 transition-transform [transition-duration:calc(150ms*var(--motion-duration-scale,1))] [transition-timing-function:cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none",
+                                            historyExpanded.has(workspaceKey) && "rotate-90",
+                                          )}
                                         />
-                                      ) : (
-                                        <WorkspaceTerminalSessionRow
-                                          key={session.id}
-                                          project={project}
-                                          workspace={workspace}
-                                          session={session}
-                                          isClosed
-                                          renameTerminal={renameTerminal}
-                                          navigate={navigate}
-                                        />
-                                      ),
-                                    )
-                                  : null}
+                                        History ({historySessions.length})
+                                      </button>
+                                    ) : null}
+                                    {historySessions.length > 0 ? (
+                                      <div
+                                        className={cn(
+                                          "grid transition-[grid-template-rows] [transition-duration:calc(150ms*var(--motion-duration-scale,1))] [transition-timing-function:cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none",
+                                          historyExpanded.has(workspaceKey)
+                                            ? "grid-rows-[1fr]"
+                                            : "grid-rows-[0fr]",
+                                        )}
+                                      >
+                                        <div
+                                          className={cn(
+                                            "min-h-0 overflow-hidden transition-opacity [transition-duration:calc(150ms*var(--motion-duration-scale,1))] [transition-timing-function:cubic-bezier(0.16,1,0.3,1)]",
+                                            historyExpanded.has(workspaceKey)
+                                              ? "opacity-100"
+                                              : "opacity-0",
+                                          )}
+                                        >
+                                          {historySessions.map((session) =>
+                                            session.kind === "agent" ? (
+                                              <WorkspaceAgentSessionRow
+                                                key={session.id}
+                                                project={project}
+                                                workspace={workspace}
+                                                session={session}
+                                                isClosed
+                                                renameAgent={renameAgent}
+                                                navigate={navigate}
+                                              />
+                                            ) : (
+                                              <WorkspaceTerminalSessionRow
+                                                key={session.id}
+                                                project={project}
+                                                workspace={workspace}
+                                                session={session}
+                                                isClosed
+                                                renameTerminal={renameTerminal}
+                                                navigate={navigate}
+                                              />
+                                            ),
+                                          )}
+                                        </div>
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                </div>
                               </div>
-                            ) : null}
-                          </div>
-                        );
-                      })}
+                            </div>
+                          );
+                        })}
+                      </div>
                     </div>
-                  ) : null}
+                  </div>
                 </div>
               );
             })}
