@@ -152,7 +152,7 @@ import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
-import { requiredScopeForRpcMethod } from "./auth/RpcAuthorization.ts";
+import { requiredScopesForRpcMethod } from "./auth/RpcAuthorization.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
@@ -527,19 +527,34 @@ const makeWsRpcLayer = (
   workspaceService: AwenWorkspaceService.AwenWorkspaceService["Service"],
   sessionService: AwenSessionService.AwenSessionService["Service"],
 ) => {
+  const authorizationError = (requiredScope: AuthEnvironmentScope) =>
+    new EnvironmentAuthorizationError({
+      message: `The authenticated token is missing required scope: ${requiredScope}.`,
+      requiredScope,
+    });
+  const authorizeEffect = <A, E, R>(
+    requiredScopes: ReadonlyArray<AuthEnvironmentScope>,
+    effect: Effect.Effect<A, E, R>,
+  ): Effect.Effect<A, E | EnvironmentAuthorizationError, R> => {
+    const missingScope = requiredScopes.find(
+      (requiredScope) => !currentSession.scopes.includes(requiredScope),
+    );
+    return missingScope === undefined ? effect : Effect.fail(authorizationError(missingScope));
+  };
+  const authorizeStream = <A, E, R>(
+    requiredScopes: ReadonlyArray<AuthEnvironmentScope>,
+    stream: Stream.Stream<A, E, R>,
+  ): Stream.Stream<A, E | EnvironmentAuthorizationError, R> => {
+    const missingScope = requiredScopes.find(
+      (requiredScope) => !currentSession.scopes.includes(requiredScope),
+    );
+    return missingScope === undefined ? stream : Stream.fail(authorizationError(missingScope));
+  };
   const observeAwenManagementRpcEffect = <A, E, R>(
     method: string,
     effect: Effect.Effect<A, E, R>,
   ) => {
-    const requiredScope = requiredScopeForRpcMethod(method);
-    const authorizedEffect = currentSession.scopes.includes(requiredScope)
-      ? (effect as Effect.Effect<A, E | EnvironmentAuthorizationError, R>)
-      : (Effect.fail(
-          new EnvironmentAuthorizationError({
-            message: `The authenticated token is missing required scope: ${requiredScope}.`,
-            requiredScope,
-          }),
-        ) as Effect.Effect<A, E | EnvironmentAuthorizationError, R>);
+    const authorizedEffect = authorizeEffect(requiredScopesForRpcMethod(method), effect);
     return instrumentRpcEffect(method, authorizedEffect, { "rpc.aggregate": "workspace" });
   };
 
@@ -774,25 +789,6 @@ const makeWsRpcLayer = (
         const processResourceMonitor = yield* ProcessResourceMonitor.ProcessResourceMonitor;
         const resourceTelemetry = yield* ResourceTelemetry.ResourceTelemetry;
         const usage = yield* UsageService.UsageService;
-        const authorizationError = (requiredScope: AuthEnvironmentScope) =>
-          new EnvironmentAuthorizationError({
-            message: `The authenticated token is missing required scope: ${requiredScope}.`,
-            requiredScope,
-          });
-        const authorizeEffect = <A, E, R>(
-          requiredScope: AuthEnvironmentScope,
-          effect: Effect.Effect<A, E, R>,
-        ): Effect.Effect<A, E | EnvironmentAuthorizationError, R> =>
-          currentSession.scopes.includes(requiredScope)
-            ? effect
-            : Effect.fail(authorizationError(requiredScope));
-        const authorizeStream = <A, E, R>(
-          requiredScope: AuthEnvironmentScope,
-          stream: Stream.Stream<A, E, R>,
-        ): Stream.Stream<A, E | EnvironmentAuthorizationError, R> =>
-          currentSession.scopes.includes(requiredScope)
-            ? stream
-            : Stream.fail(authorizationError(requiredScope));
         const observeRpcEffect = <A, E, R>(
           method: string,
           effect: Effect.Effect<A, E, R>,
@@ -800,7 +796,7 @@ const makeWsRpcLayer = (
         ) =>
           instrumentRpcEffect(
             method,
-            authorizeEffect(requiredScopeForRpcMethod(method), effect),
+            authorizeEffect(requiredScopesForRpcMethod(method), effect),
             traceAttributes,
           );
         const observeRpcStream = <A, E, R>(
@@ -810,7 +806,7 @@ const makeWsRpcLayer = (
         ) =>
           instrumentRpcStream(
             method,
-            authorizeStream(requiredScopeForRpcMethod(method), stream),
+            authorizeStream(requiredScopesForRpcMethod(method), stream),
             traceAttributes,
           );
         const observeRpcStreamEffect = <A, StreamError, StreamContext, EffectError, EffectContext>(
@@ -824,7 +820,7 @@ const makeWsRpcLayer = (
         ) =>
           instrumentRpcStreamEffect(
             method,
-            authorizeEffect(requiredScopeForRpcMethod(method), effect),
+            authorizeEffect(requiredScopesForRpcMethod(method), effect),
             traceAttributes,
           );
         const toDispatchCommandError = (cause: unknown, fallbackMessage: string) =>

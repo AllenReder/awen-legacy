@@ -58,7 +58,9 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.serverRetryResourceTelemetry]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverGetUsageSummary]: AuthOrchestrationReadScope,
   [WS_METHODS.serverRefreshUsageRates]: AuthOrchestrationReadScope,
-  [WS_METHODS.serverSignalProcess]: AuthOrchestrationOperateScope,
+  // Signals can reach terminal-root descendants; orchestration:operate is an
+  // additional required scope declared below so provider-root stays signalable.
+  [WS_METHODS.serverSignalProcess]: AuthTerminalOperateScope,
   [WS_METHODS.serverReportClientActivity]: AuthOrchestrationReadScope,
   [WS_METHODS.serverReportHostPowerState]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverGetBackgroundPolicy]: AuthOrchestrationReadScope,
@@ -167,6 +169,10 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.subscribeBackgroundPolicy]: AuthOrchestrationReadScope,
 } as const satisfies Readonly<Record<WsRpcMethod, AuthEnvironmentScope>>;
 
+export const RPC_ADDITIONAL_REQUIRED_SCOPES = {
+  [WS_METHODS.serverSignalProcess]: [AuthOrchestrationOperateScope],
+} as const satisfies Partial<Record<WsRpcMethod, ReadonlyArray<AuthEnvironmentScope>>>;
+
 export function requiredScopeForRpcMethod(method: string): AuthEnvironmentScope {
   if (!Object.hasOwn(RPC_REQUIRED_SCOPES, method)) {
     throw new Error(`RPC method ${method} has no declared authorization scope.`);
@@ -176,4 +182,14 @@ export function requiredScopeForRpcMethod(method: string): AuthEnvironmentScope 
     throw new Error(`RPC method ${method} has no declared authorization scope.`);
   }
   return requiredScope;
+}
+
+export function requiredScopesForRpcMethod(method: string): ReadonlyArray<AuthEnvironmentScope> {
+  const primary = requiredScopeForRpcMethod(method);
+  const additional = (
+    RPC_ADDITIONAL_REQUIRED_SCOPES as Partial<
+      Record<WsRpcMethod, ReadonlyArray<AuthEnvironmentScope>>
+    >
+  )[method as WsRpcMethod];
+  return additional === undefined ? [primary] : [primary, ...additional];
 }

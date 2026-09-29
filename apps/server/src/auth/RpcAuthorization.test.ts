@@ -1,12 +1,17 @@
 import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
+  AuthTerminalOperateScope,
   WS_METHODS,
   WsRpcGroupAll,
 } from "@awen/contracts";
 import { describe, expect, it } from "@effect/vitest";
 
-import { RPC_REQUIRED_SCOPES, requiredScopeForRpcMethod } from "./RpcAuthorization.ts";
+import {
+  RPC_REQUIRED_SCOPES,
+  requiredScopeForRpcMethod,
+  requiredScopesForRpcMethod,
+} from "./RpcAuthorization.ts";
 
 describe("RPC authorization scopes", () => {
   it("declares exactly one scope for every RPC in the server group", () => {
@@ -43,6 +48,13 @@ describe("RPC authorization scopes", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.agentSessionsImport)).toBe(
       AuthOrchestrationOperateScope,
     );
+  });
+
+  it("requires terminal and orchestration operation permission before signaling", () => {
+    expect(requiredScopesForRpcMethod(WS_METHODS.serverSignalProcess)).toEqual([
+      AuthTerminalOperateScope,
+      AuthOrchestrationOperateScope,
+    ]);
   });
 
   it("reads the reviewer menu under the same scope as the pull request it belongs to", () => {

@@ -2399,6 +2399,57 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("requires both terminal and orchestration scopes to signal processes", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+      const signalProcess = (scopes: ReadonlyArray<string>) =>
+        Effect.gen(function* () {
+          const bearer = yield* createBearerSession(defaultDesktopBootstrapToken, { scopes });
+          assert.equal(bearer.response.status, 200);
+
+          const ticketResponse = yield* HttpClient.post("/api/auth/websocket-ticket", {
+            headers: {
+              authorization: `Bearer ${bearer.body.token ?? ""}`,
+            },
+          });
+          const { ticket } = yield* responseJsonEffect<{ readonly ticket: string }>(ticketResponse);
+          const wsUrl = `${yield* getWsServerUrl("/ws", { authenticated: false })}?wsTicket=${encodeURIComponent(ticket)}`;
+
+          return yield* Effect.scoped(
+            withWsRpcClient(wsUrl, (client) =>
+              client[WS_METHODS.serverSignalProcess]({
+                pid: 4_242,
+                startTimeMs: 2_000,
+                signal: "SIGINT",
+              }),
+            ),
+          );
+        });
+
+      const orchestrationOnly = yield* signalProcess([
+        "orchestration:read",
+        "orchestration:operate",
+      ]).pipe(Effect.flip);
+      assert.equal(orchestrationOnly._tag, "EnvironmentAuthorizationError");
+      if (orchestrationOnly._tag === "EnvironmentAuthorizationError") {
+        assert.equal(orchestrationOnly.requiredScope, "terminal:operate");
+      }
+
+      const terminalOnly = yield* signalProcess(["terminal:operate"]).pipe(Effect.flip);
+      assert.equal(terminalOnly._tag, "EnvironmentAuthorizationError");
+      if (terminalOnly._tag === "EnvironmentAuthorizationError") {
+        assert.equal(terminalOnly.requiredScope, "orchestration:operate");
+      }
+
+      const allowed = yield* signalProcess([
+        "orchestration:read",
+        "orchestration:operate",
+        "terminal:operate",
+      ]);
+      assert.isTrue(allowed.signaled);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("includes CORS headers on remote auth success responses", () =>
     Effect.gen(function* () {
       yield* buildAppUnderTest();
