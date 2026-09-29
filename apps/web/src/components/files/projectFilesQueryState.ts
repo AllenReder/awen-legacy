@@ -57,6 +57,7 @@ export function setProjectFileQueryData(
   cwd: string,
   relativePath: string,
   contents: string,
+  contentHash?: string | undefined,
 ): void {
   appAtomRegistry.set(optimisticFileAtom(environmentId, cwd, relativePath), {
     confirmedAgainst: undefined,
@@ -65,6 +66,7 @@ export function setProjectFileQueryData(
       contents,
       byteLength: new TextEncoder().encode(contents).byteLength,
       truncated: false,
+      ...(contentHash !== undefined ? { contentHash } : {}),
     },
   });
 }
@@ -103,6 +105,26 @@ export function confirmProjectFileQueryData(
     }
   });
   return true;
+}
+
+/**
+ * Makes the query view hold contents the server is known to have — a completed write, or a file
+ * just read back from disk — while the read that will replace the record is in flight.
+ *
+ * The hash travels with the record on purpose: a draft typed before the confirmed read lands
+ * bases itself on this version, and a record without it would carry `undefined` past the
+ * server's conflict check, silently overwriting external edits on the next save. Confirming
+ * retires the record as soon as the query answers instead of letting it outlive that read.
+ */
+export function setConfirmedProjectFileQueryData(
+  environmentId: EnvironmentId,
+  cwd: string,
+  relativePath: string,
+  contents: string,
+  contentHash: string | undefined,
+): void {
+  setProjectFileQueryData(environmentId, cwd, relativePath, contents, contentHash);
+  confirmProjectFileQueryData(environmentId, cwd, relativePath, contents);
 }
 
 export function resolveProjectFileQueryData(

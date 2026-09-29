@@ -107,6 +107,7 @@ import {
 import { useFileSaveCoordinator } from "./useFileSaveCoordinator";
 import {
   getOptimisticProjectFileQueryData,
+  setConfirmedProjectFileQueryData,
   setProjectFileQueryData,
   useProjectFileQuery,
 } from "./projectFilesQueryState";
@@ -1279,10 +1280,24 @@ export default function FilePreviewPanel({
       });
 
       if (result._tag === "Success") {
-        setProjectFileQueryData(environmentId, cwd, relativePath, contentsToSave);
+        // Publish the saved bytes with the hash the server returned, then let the confirmed
+        // read retire the optimistic record. Without that hash the file view would serve a
+        // record the next save cannot be conflict-checked against, and the write after this one
+        // would overwrite whatever happened on disk in between.
+        setConfirmedProjectFileQueryData(
+          environmentId,
+          cwd,
+          relativePath,
+          contentsToSave,
+          result.value.contentHash,
+        );
         // A newer edit made during the write must survive this save.
         const draftUnchanged = draftRevisionRef.current === revisionToSave;
         if (draftUnchanged) resetDraft();
+        // Whatever follows this save is an edit of the contents the server now holds, so the
+        // draft's base hash moves to the one the write returned — resetDraft clears it, and a
+        // later draft seeded from a render that predates the save must not keep the old one.
+        draftHashRef.current = result.value.contentHash;
         setConflict(null);
         file.refresh();
         toastManager.add(
@@ -1337,15 +1352,20 @@ export default function FilePreviewPanel({
   const handleDiscardAndReload = useCallback(async () => {
     if (!relativePath) return;
     let diskText = conflict?.diskContents;
+    let diskHash = conflict?.actualHash;
     if (diskText === undefined) {
       const latest = await readFileCommand({ environmentId, input: { cwd, relativePath } });
       if (latest._tag === "Success") {
         diskText = latest.value.contents;
+        diskHash = latest.value.contentHash;
       }
     }
     if (diskText !== undefined) {
-      setProjectFileQueryData(environmentId, cwd, relativePath, diskText);
+      // The reload made the disk bytes the file's contents: publish them with their hash so a
+      // draft started from here keeps checking against the version it came from.
+      setConfirmedProjectFileQueryData(environmentId, cwd, relativePath, diskText, diskHash);
       resetDraft();
+      draftHashRef.current = diskHash;
       setConflict(null);
       setShowDiffModal(false);
       setReloadKey((k) => k + 1);
