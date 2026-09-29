@@ -5,6 +5,7 @@ import { XIcon } from "lucide-react";
 import type { CSSProperties } from "react";
 import { cn } from "~/lib/utils";
 import { Button } from "~/components/ui/button";
+import { DIALOG_BACKDROP_CLASS } from "~/components/ui/dialog-styles";
 import { ScrollArea } from "~/components/ui/scroll-area";
 
 const Sheet = SheetPrimitive.Root;
@@ -22,10 +23,7 @@ function SheetClose(props: SheetPrimitive.Close.Props) {
 function SheetBackdrop({ className, ...props }: SheetPrimitive.Backdrop.Props) {
   return (
     <SheetPrimitive.Backdrop
-      className={cn(
-        "fixed inset-0 z-50 bg-background/60 backdrop-blur-xs transition-all [transition-duration:calc(200ms*var(--motion-duration-scale,1))] data-ending-style:opacity-0 data-starting-style:opacity-0",
-        className,
-      )}
+      className={cn(DIALOG_BACKDROP_CLASS, className)}
       data-slot="sheet-backdrop"
       {...props}
     />
@@ -98,7 +96,7 @@ function SheetPopup({
       <SheetViewport className={viewportClassName} side={side} variant={variant}>
         <SheetPrimitive.Popup
           className={cn(
-            "relative flex max-h-full min-h-0 w-full min-w-0 flex-col bg-popover not-dark:bg-clip-padding text-popover-foreground shadow-lg/5 transition-[opacity,translate] [transition-duration:calc(200ms*var(--motion-duration-scale,1))] ease-in-out will-change-transform before:pointer-events-none before:absolute before:inset-0 before:shadow-[0_1px_--theme(--color-black/4%)] data-ending-style:opacity-0 data-starting-style:opacity-0 max-sm:before:hidden dark:before:shadow-[0_-1px_--theme(--color-white/6%)]",
+            "relative flex max-h-full min-h-0 w-full min-w-0 flex-col bg-popover not-dark:bg-clip-padding text-popover-foreground shadow-lg/5 transition-[opacity,translate] [transition-duration:calc(170ms*var(--motion-duration-scale,1))] [transition-timing-function:cubic-bezier(0.16,1,0.3,1)] will-change-transform before:pointer-events-none before:absolute before:inset-0 before:shadow-[0_1px_--theme(--color-black/4%)] data-ending-style:opacity-0 data-starting-style:opacity-0 max-sm:before:hidden dark:before:shadow-[0_-1px_--theme(--color-white/6%)]",
             side === "bottom" &&
               "row-start-2 border-t data-ending-style:translate-y-8 data-starting-style:translate-y-8",
             side === "top" &&

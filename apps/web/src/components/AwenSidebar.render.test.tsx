@@ -729,4 +729,44 @@ describe("AwenSidebar", () => {
     );
     expect(sidebarMocks.removeWorkspace).not.toHaveBeenCalled();
   });
+
+  it("unifies workspace chevron and title into a single row item and toggles aria-expanded", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    mockState.projects = [
+      {
+        id: "p1",
+        environmentId: "local",
+        title: "awen",
+        workspaces: [
+          {
+            id: "w1",
+            title: "awen",
+            workspaceRoot: "/code/awen",
+            role: "main",
+            sessions: [],
+            historySessions: [],
+          },
+        ],
+      },
+    ];
+
+    await act(() => {
+      renderer = create(<AwenSidebar />);
+    });
+
+    const workspaceRow = renderer.root.findByProps({ "data-testid": "sidebar-workspace-row" });
+    // The disclosure chevron is housed inside the unified workspace row button
+    const disclosure = workspaceRow.findByProps({ "data-testid": "sidebar-workspace-disclosure" });
+    expect(disclosure).toBeDefined();
+    expect(disclosure.props["aria-label"]).toBe("Expand Workspace");
+    expect(workspaceRow.props["aria-expanded"]).toBe(false);
+
+    // Clicking anywhere on the unified row expands the workspace
+    await act(() => {
+      workspaceRow.props.onClick();
+    });
+
+    expect(workspaceRow.props["aria-expanded"]).toBe(true);
+    expect(disclosure.props["aria-label"]).toBe("Collapse Workspace");
+  });
 });

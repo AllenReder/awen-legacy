@@ -11,6 +11,7 @@ import {
   DIALOG_MEDIA_POPUP_CLASS,
   DIALOG_MOBILE_SHEET_CLASS,
   DIALOG_POPUP_CLASS,
+  DIALOG_POPUP_CONTENT_CLASS,
 } from "~/components/ui/dialog-styles";
 import { ScrollArea } from "~/components/ui/scroll-area";
 
@@ -96,11 +97,16 @@ function DialogPopup({
           {...props}
         >
           {variant !== "media" && <GlassBackdrop />}
-          {children}
+          <div
+            data-slot="dialog-content"
+            className={variant === "media" ? "relative size-full" : DIALOG_POPUP_CONTENT_CLASS}
+          >
+            {children}
+          </div>
           {showCloseButton && (
             <DialogPrimitive.Close
               aria-label="Close"
-              className="absolute end-2 top-2"
+              className="absolute end-2 top-2 z-[2]"
               render={<Button size="icon" variant="ghost" />}
             >
               <XIcon />

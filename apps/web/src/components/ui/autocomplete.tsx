@@ -3,6 +3,8 @@
 import { Autocomplete as AutocompletePrimitive } from "@base-ui/react/autocomplete";
 import { ChevronsUpDownIcon, XIcon } from "lucide-react";
 
+import { POPOVER_CONTENT_MOTION_CLASS } from "~/components/ui/dialog-styles";
+import { GlassBackdrop } from "~/components/ui/GlassBackdrop";
 import { cn } from "~/lib/utils";
 import { Input } from "~/components/ui/input";
 import { ScrollArea } from "~/components/ui/scroll-area";
@@ -104,12 +106,16 @@ function AutocompletePopup({
       >
         <span
           className={cn(
-            "relative flex max-h-full min-w-(--anchor-width) max-w-(--available-width) origin-(--transform-origin) rounded-lg border bg-popover not-dark:bg-clip-padding shadow-lg/5 transition-[scale,opacity] before:pointer-events-none before:absolute before:inset-0 before:rounded-[calc(var(--radius-lg)-1px)] before:shadow-[0_1px_--theme(--color-black/4%)] dark:before:shadow-[0_-1px_--theme(--color-white/6%)]",
+            "relative isolate flex max-h-full min-w-(--anchor-width) max-w-(--available-width) origin-(--transform-origin) overflow-hidden rounded-lg border shadow-xl before:pointer-events-none before:absolute before:inset-0 before:rounded-[calc(var(--radius-lg)-1px)] before:shadow-[0_1px_--theme(--color-black/4%)] dark:before:shadow-[0_-1px_--theme(--color-white/6%)]",
             className,
           )}
         >
+          <GlassBackdrop />
           <AutocompletePrimitive.Popup
-            className="flex max-h-[min(var(--available-height),23rem)] flex-1 flex-col text-foreground"
+            className={cn(
+              "relative z-[1] flex max-h-[min(var(--available-height),23rem)] flex-1 flex-col text-foreground",
+              POPOVER_CONTENT_MOTION_CLASS,
+            )}
             data-slot="autocomplete-popup"
             {...props}
           >
@@ -125,7 +131,7 @@ function AutocompleteItem({ className, children, ...props }: AutocompletePrimiti
   return (
     <AutocompletePrimitive.Item
       className={cn(
-        "flex min-h-8 cursor-default select-none items-center rounded-sm px-2 py-1 text-base outline-none hover:bg-accent data-disabled:pointer-events-none data-selected:bg-accent/50 data-selected:text-foreground data-highlighted:bg-accent data-highlighted:text-accent-foreground [&[data-highlighted][data-selected]]:bg-accent [&[data-highlighted][data-selected]]:text-accent-foreground data-disabled:opacity-64 sm:min-h-7 sm:text-sm [&_svg:not([class*='text-'])]:text-muted-foreground",
+        "flex min-h-8 cursor-default select-none items-center rounded-sm px-2 py-1 text-base outline-none hover:bg-selection-hover data-disabled:pointer-events-none data-selected:bg-selection data-selected:text-foreground data-highlighted:bg-selection-hover data-highlighted:text-accent-foreground [&[data-highlighted][data-selected]]:bg-selection-strong [&[data-highlighted][data-selected]]:text-accent-foreground data-disabled:opacity-64 sm:min-h-7 sm:text-sm [&_svg:not([class*='text-'])]:text-muted-foreground",
         className,
       )}
       data-slot="autocomplete-item"

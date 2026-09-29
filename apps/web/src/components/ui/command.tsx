@@ -15,7 +15,12 @@ import {
   AutocompleteList,
   AutocompleteSeparator,
 } from "~/components/ui/autocomplete";
-import { DIALOG_BACKDROP_CLASS, DIALOG_POPUP_CLASS } from "~/components/ui/dialog-styles";
+import {
+  DIALOG_BACKDROP_CLASS,
+  DIALOG_POPUP_CLASS,
+  DIALOG_POPUP_CONTENT_CLASS,
+} from "~/components/ui/dialog-styles";
+import { GlassBackdrop } from "~/components/ui/GlassBackdrop";
 import { Button } from "~/components/ui/button";
 
 const CommandDialog = CommandDialogPrimitive.Root;
@@ -72,7 +77,10 @@ function CommandDialogPopup({
           data-slot="command-dialog-popup"
           {...props}
         >
-          {children}
+          <GlassBackdrop />
+          <div data-slot="dialog-content" className={DIALOG_POPUP_CONTENT_CLASS}>
+            {children}
+          </div>
         </CommandDialogPrimitive.Popup>
       </CommandDialogViewport>
     </CommandDialogPortal>
@@ -178,7 +186,7 @@ function CommandItem({ className, ...props }: React.ComponentProps<typeof Autoco
   return (
     <AutocompleteItem
       className={cn(
-        "py-1.5 data-selected:bg-foreground/[0.06] data-highlighted:bg-foreground/[0.09] data-highlighted:text-foreground [&[data-highlighted][data-selected]]:bg-foreground/[0.09] [&[data-highlighted][data-selected]]:text-foreground",
+        "py-1.5 data-selected:bg-selection data-highlighted:bg-selection-hover data-highlighted:text-foreground [&[data-highlighted][data-selected]]:bg-selection-strong [&[data-highlighted][data-selected]]:text-foreground",
         className,
       )}
       data-slot="command-item"

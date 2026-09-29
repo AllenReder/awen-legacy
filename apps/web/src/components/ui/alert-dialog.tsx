@@ -2,11 +2,13 @@
 
 import { AlertDialog as AlertDialogPrimitive } from "@base-ui/react/alert-dialog";
 
+import { GlassBackdrop } from "~/components/ui/GlassBackdrop";
 import { cn } from "~/lib/utils";
 import {
   DIALOG_BACKDROP_CLASS,
   DIALOG_MOBILE_SHEET_CLASS,
   DIALOG_POPUP_CLASS,
+  DIALOG_POPUP_CONTENT_CLASS,
 } from "~/components/ui/dialog-styles";
 
 const AlertDialogCreateHandle = AlertDialogPrimitive.createHandle;
@@ -45,6 +47,7 @@ function AlertDialogViewport({ className, ...props }: AlertDialogPrimitive.Viewp
 
 function AlertDialogPopup({
   className,
+  children,
   bottomStickOnMobile = true,
   portalContainer,
   ...props
@@ -67,7 +70,12 @@ function AlertDialogPopup({
           )}
           data-slot="alert-dialog-popup"
           {...props}
-        />
+        >
+          <GlassBackdrop />
+          <div data-slot="dialog-content" className={DIALOG_POPUP_CONTENT_CLASS}>
+            {children}
+          </div>
+        </AlertDialogPrimitive.Popup>
       </AlertDialogViewport>
     </AlertDialogPortal>
   );
