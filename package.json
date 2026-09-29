@@ -14,7 +14,7 @@
     "migrate-dev-db": "node apps/server/scripts/migrate-dev-db.ts",
     "start": "vp run --filter @awen/server start --base-dir ../../.awen",
     "build": "vp run --filter @awen/web --filter @awen/server build",
-    "build:desktop": "pnpm --filter @awen/desktop build",
+    "build:desktop": "vp run --filter @awen/desktop --filter @awen/web build",
     "build:server-package": "node scripts/build-server-package.ts",
     "version:set": "node scripts/version.ts set",
     "version:check": "node scripts/version.ts check",

@@ -16,6 +16,18 @@ export type OtlpProtocol = typeof OtlpProtocol.Type;
 export const otlpSerializationLayer = (protocol: OtlpProtocol) =>
   protocol === "http/protobuf" ? OtlpSerialization.layerProtobuf : OtlpSerialization.layerJson;
 
+export interface SignalExport {
+  readonly protocol: OtlpProtocol;
+  readonly headers: Readonly<Record<string, string>> | undefined;
+  readonly exportIntervalMs: number;
+}
+
+export const DEFAULT_SIGNAL_EXPORT: SignalExport = {
+  protocol: "http/json",
+  headers: undefined,
+  exportIntervalMs: 10_000,
+};
+
 const FLUSH_BUFFER_THRESHOLD = 256;
 const textEncoder = new TextEncoder();
 

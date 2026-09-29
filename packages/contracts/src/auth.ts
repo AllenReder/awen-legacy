@@ -182,6 +182,8 @@ export const AuthBearerSessionResult = Schema.Struct({
   expiresInSeconds: Schema.Number,
 });
 export type AuthBearerSessionResult = typeof AuthBearerSessionResult.Type;
+export const AuthAccessTokenResult = AuthBearerSessionResult;
+export type AuthAccessTokenResult = AuthBearerSessionResult;
 
 export const AuthWebSocketTicketResult = Schema.Struct({
   ticket: TrimmedNonEmptyString,
