@@ -311,6 +311,90 @@ describe("local daemon discovery diagnostics", () => {
     }
   });
 
+  it("verifies the daemon credential without exchanging a session", async () => {
+    const requests: Array<string> = [];
+    const server = await listenForHandshake((request) => {
+      requests.push(request.url ?? "");
+      if (request.url === "/.well-known/awen/daemon") {
+        return {
+          status: 200,
+          body: {
+            protocolVersion: LOCAL_DAEMON_PROTOCOL_VERSION,
+            owner: "awen-local-daemon",
+            daemonId: "check-daemon",
+            pid: process.pid,
+            managed: true,
+          },
+        };
+      }
+      if (request.url === "/api/auth/credential-check") return { status: 204, body: null };
+      return { status: 500, body: {} };
+    });
+    try {
+      const root = await NodeFSP.mkdtemp(NodePath.join("/tmp", "awen-daemon-check-"));
+      const state = makeLocalDaemonDiscovery({
+        daemonId: "check-daemon",
+        pid: process.pid,
+        origin: server.origin,
+        startedAt: "2026-09-18T00:00:00.000Z",
+        workingDirectory: "/check",
+      });
+      const paths = await writeDiscovery(root, state);
+      await NodeFSP.mkdir(NodePath.dirname(paths.credentialPath), { recursive: true });
+      await NodeFSP.writeFile(paths.credentialPath, "desktop-token\n", { mode: 0o600 });
+
+      await expect(inspectLocalDaemon(root)).resolves.toMatchObject({ status: "ready" });
+      expect(requests).toContain("/api/auth/credential-check");
+      // The session exchange mints a browser session per probe, so the
+      // side-effect-free check must be the only credential call.
+      expect(requests).not.toContain("/api/auth/browser-session");
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("falls back to the session exchange for daemons without the credential check", async () => {
+    const requests: Array<string> = [];
+    const server = await listenForHandshake((request) => {
+      requests.push(request.url ?? "");
+      if (request.url === "/.well-known/awen/daemon") {
+        return {
+          status: 200,
+          body: {
+            protocolVersion: LOCAL_DAEMON_PROTOCOL_VERSION,
+            owner: "awen-local-daemon",
+            daemonId: "legacy-daemon",
+            pid: process.pid,
+            managed: true,
+          },
+        };
+      }
+      if (request.url === "/api/auth/credential-check") return { status: 404, body: {} };
+      if (request.url === "/api/auth/browser-session") return { status: 200, body: {} };
+      return { status: 500, body: {} };
+    });
+    try {
+      const root = await NodeFSP.mkdtemp(NodePath.join("/tmp", "awen-daemon-legacy-check-"));
+      const state = makeLocalDaemonDiscovery({
+        daemonId: "legacy-daemon",
+        pid: process.pid,
+        origin: server.origin,
+        startedAt: "2026-09-18T00:00:00.000Z",
+        workingDirectory: "/legacy",
+      });
+      const paths = await writeDiscovery(root, state);
+      await NodeFSP.mkdir(NodePath.dirname(paths.credentialPath), { recursive: true });
+      await NodeFSP.writeFile(paths.credentialPath, "desktop-token\n", { mode: 0o600 });
+
+      // A daemon from a build that predates the check still attaches.
+      await expect(inspectLocalDaemon(root)).resolves.toMatchObject({ status: "ready" });
+      expect(requests).toContain("/api/auth/credential-check");
+      expect(requests).toContain("/api/auth/browser-session");
+    } finally {
+      await server.close();
+    }
+  });
+
   it("resolves credential path under secrets directory", async () => {
     const root = await NodeFSP.mkdtemp(NodePath.join("/tmp", "awen-daemon-paths-"));
     const paths = deriveLocalDaemonPaths(root);
@@ -403,6 +487,11 @@ const server = NodeHttp.createServer((request, response) => {
   if (request.url === "/.well-known/awen/environment") {
     response.writeHead(200);
     response.end(JSON.stringify({ serverVersion: ${JSON.stringify(serverVersion)} }));
+    return;
+  }
+  if (request.url === "/api/auth/credential-check") {
+    response.writeHead(200);
+    response.end("");
     return;
   }
   if (request.url === "/api/auth/browser-session") {

@@ -34,6 +34,9 @@ interface EnvironmentHttpTestScenario {
   readonly descriptor?: () => Effect.Effect<ExecutionEnvironmentDescriptor>;
   readonly session?: () => Effect.Effect<AuthSessionState>;
   readonly browserSession?: BrowserSessionHandler;
+  readonly credentialCheck?: (
+    payload: AuthBrowserSessionRequest,
+  ) => Effect.Effect<void, EnvironmentAuthInvalidError>;
   readonly bearerSession?: (
     payload: AuthBearerSessionRequest,
   ) => Effect.Effect<AuthBearerSessionResult, EnvironmentAuthInvalidError>;
@@ -46,6 +49,7 @@ export interface EnvironmentHttpTestCalls {
   descriptor: number;
   session: number;
   browserSession: Array<AuthBrowserSessionRequest>;
+  credentialCheck: Array<AuthBrowserSessionRequest>;
   bearerSession: Array<AuthBearerSessionRequest>;
   pairingCredential: Array<AuthCreatePairingCredentialInput>;
 }
@@ -71,6 +75,7 @@ export async function installEnvironmentHttpTest(scenario: EnvironmentHttpTestSc
     descriptor: 0,
     session: 0,
     browserSession: [],
+    credentialCheck: [],
     bearerSession: [],
     pairingCredential: [],
   };
@@ -103,6 +108,15 @@ export async function installEnvironmentHttpTest(scenario: EnvironmentHttpTestSc
                 calls.browserSession.push(payload);
                 return yield* (
                   scenario.browserSession?.(payload) ?? unexpectedEndpoint("auth.browserSession")
+                );
+              }),
+            )
+            .handle(
+              "credentialCheck",
+              Effect.fn("test.environment.auth.credentialCheck")(function* ({ payload }) {
+                calls.credentialCheck.push(payload);
+                return yield* (
+                  scenario.credentialCheck?.(payload) ?? unexpectedEndpoint("auth.credentialCheck")
                 );
               }),
             )

@@ -170,6 +170,27 @@ it.layer(NodeServices.layer)("PairingGrantStore.layer", (it) => {
     ),
   );
 
+  it.effect("verifies seeded credentials without spending or issuing anything", () =>
+    Effect.gen(function* () {
+      const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
+
+      yield* bootstrapCredentials.verify("desktop-bootstrap-token");
+
+      // Verification is read-only: the same grant keeps working afterwards.
+      const consumed = yield* bootstrapCredentials.consume("desktop-bootstrap-token");
+      expect(consumed.method).toBe("desktop-bootstrap");
+
+      const unknown = yield* Effect.flip(bootstrapCredentials.verify("not-a-seeded-credential"));
+      expect(unknown._tag).toBe("UnknownBootstrapCredentialError");
+    }).pipe(
+      Effect.provide(
+        makePairingGrantStoreLayer({
+          desktopBootstrapToken: "desktop-bootstrap-token",
+        }),
+      ),
+    ),
+  );
+
   it.effect("keeps credentials out of pairing lists and change events", () =>
     Effect.gen(function* () {
       const grants = yield* PairingGrantStore.PairingGrantStore;

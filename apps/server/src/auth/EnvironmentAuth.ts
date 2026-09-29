@@ -307,6 +307,15 @@ export class EnvironmentAuth extends Context.Service<
       },
       ServerAuthInvalidCredentialError | ServerAuthInternalError
     >;
+    /**
+     * Reports whether a launcher-held credential (a dev token or the seeded
+     * desktop bootstrap grant) is still live, without consuming it or issuing
+     * anything. Local daemon health checks use this so probing a running
+     * daemon leaves no sessions behind.
+     */
+    readonly verifyCredential: (
+      credential: string,
+    ) => Effect.Effect<void, ServerAuthInvalidCredentialError | ServerAuthInternalError>;
     readonly createBearerSession: (
       credential: string,
       requestedScopes: ReadonlyArray<AuthEnvironmentScope> | undefined,
@@ -527,6 +536,18 @@ export const make = Effect.gen(function* () {
       ),
       Effect.withSpan("EnvironmentAuth.getSessionState"),
     );
+
+  const verifyCredential: EnvironmentAuth["Service"]["verifyCredential"] = (credential) => {
+    if (devAuth?.matches(credential)) {
+      return Effect.void;
+    }
+    return bootstrapCredentials
+      .verify(credential)
+      .pipe(
+        Effect.mapError(toBootstrapExchangeError),
+        Effect.withSpan("EnvironmentAuth.verifyCredential"),
+      );
+  };
 
   const createBrowserSession: EnvironmentAuth["Service"]["createBrowserSession"] = (
     credential,
@@ -904,6 +925,7 @@ export const make = Effect.gen(function* () {
     getDescriptor: () =>
       Effect.succeed(descriptor).pipe(Effect.withSpan("EnvironmentAuth.getDescriptor")),
     getSessionState,
+    verifyCredential,
     createBrowserSession,
     createBearerSession,
     createPairingLink,
