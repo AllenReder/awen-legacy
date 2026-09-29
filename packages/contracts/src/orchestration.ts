@@ -618,7 +618,7 @@ export function isOrchestrationSessionExecuting(
   return (
     session !== null &&
     (session.status === "running" ||
-      (session.status === "starting" && session.providerName !== null) ||
+      (session.status === "starting" && session.providerName != null) ||
       session.activeTurnId !== null)
   );
 }
