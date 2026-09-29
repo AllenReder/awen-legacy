@@ -5,6 +5,10 @@ import { SourceControlProviderError, SourceControlProviderInfo } from "./sourceC
 import { VcsDriverKind } from "./vcs.ts";
 
 const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
+// Git parses a leading dash as an option, so a ref name like `-f` would turn a
+// command argument into a flag (`git checkout -f` resets the checkout). Reject
+// such names wherever a caller supplies a ref name.
+const NonOptionLikeRefNameSchema = TrimmedNonEmptyStringSchema.check(Schema.isPattern(/^(?!-)/));
 const GIT_LIST_BRANCHES_MAX_LIMIT = 200;
 
 // Domain Types
@@ -183,7 +187,7 @@ export type VcsCreateRefResult = typeof VcsCreateRefResult.Type;
 
 export const VcsSwitchRefInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
-  refName: TrimmedNonEmptyStringSchema,
+  refName: NonOptionLikeRefNameSchema,
 });
 export type VcsSwitchRefInput = typeof VcsSwitchRefInput.Type;
 

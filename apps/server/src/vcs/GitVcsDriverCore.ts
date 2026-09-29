@@ -3459,6 +3459,18 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
   const switchRef: GitVcsDriver.GitVcsDriver["Service"]["switchRef"] = Effect.fn("switchRef")(
     function* (input) {
+      // `git checkout` has no `--` form for a branch argument, and git parses a
+      // leading dash as an option: `-f` would force a reset of the checkout. The
+      // contract rejects these names too, but the driver must not hand one to git.
+      if (input.refName.startsWith("-")) {
+        return yield* new GitCommandError({
+          operation: "GitVcsDriver.switchRef.optionLikeRefName",
+          command: "git",
+          cwd: input.cwd,
+          detail: `Refusing to switch to ref '${input.refName}': git would parse it as a command-line option.`,
+        });
+      }
+
       const [localInputExists, remoteExists] = yield* Effect.all(
         [
           executeGit(
