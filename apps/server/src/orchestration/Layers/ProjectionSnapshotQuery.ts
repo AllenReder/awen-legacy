@@ -1505,6 +1505,22 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     `,
   });
 
+  const listThreadActivitiesByKinds: ProjectionSnapshotQueryShape["listThreadActivitiesByKinds"] = (
+    input,
+  ) =>
+    listAllThreadActivityRowsByThreadAndKinds({
+      threadId: input.threadId,
+      activityKinds: input.kinds,
+    }).pipe(
+      Effect.map((rows) => rows.map(mapThreadActivityRow)),
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "ProjectionSnapshotQuery.listThreadActivitiesByKinds:query",
+          "ProjectionSnapshotQuery.listThreadActivitiesByKinds:decodeRow",
+        ),
+      ),
+    );
+
   const listActivitiesByKind: ProjectionSnapshotQueryShape["listActivitiesByKind"] = (kind) =>
     listActivityRowsByKind({ kind }).pipe(
       Effect.map((rows) => rows.map(mapThreadActivityRow)),
@@ -1589,6 +1605,33 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             activity_id DESC
           LIMIT ${THREAD_DETAIL_ACTIVITY_LIMIT}
         ) AS recent_activities
+        ORDER BY
+          sequence ASC,
+          created_at ASC,
+          activity_id ASC
+      `,
+  });
+
+  // Same kind filter as the detail window, but complete: pending-request
+  // decisions must not lose an old unresolved request to the activity cap.
+  const listAllThreadActivityRowsByThreadAndKinds = SqlSchema.findAll({
+    Request: ThreadActivityKindsLookupInput,
+    Result: ProjectionThreadActivityDbRowSchema,
+    execute: ({ threadId, activityKinds }) =>
+      sql`
+        SELECT
+          activity_id AS "activityId",
+          thread_id AS "threadId",
+          turn_id AS "turnId",
+          tone,
+          kind,
+          summary,
+          payload_json AS "payload",
+          sequence,
+          created_at AS "createdAt"
+        FROM projection_thread_activities
+        WHERE thread_id = ${threadId}
+          AND ${sql.in("kind", activityKinds)}
         ORDER BY
           sequence ASC,
           created_at ASC,
@@ -3775,6 +3818,7 @@ pending_approval_requests AS (
     getCommandReadModel,
     getUserInputActivity,
     getPendingApproval,
+    listThreadActivitiesByKinds,
     listActivitiesByKind,
     getSnapshot,
     getShellSnapshot,

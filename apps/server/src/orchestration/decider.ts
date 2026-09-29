@@ -80,12 +80,50 @@ function isStaleRequestFailureDetail(payload: Record<string, unknown> | null): b
   );
 }
 
-// Scans the read model's activities, which the projector caps at the most
-// recent 500 plus pending async questions. Async questions remain actionable
-// while the agent works, so they must not expire with the activity window.
-function openRequests(thread: Pick<OrchestrationThread, "activities">) {
+/**
+ * Activity kinds that take part in request-lifecycle accounting. Callers that
+ * decide on pending requests must read these durably: the command read model
+ * boots with an empty activity window (a deliberate cost tradeoff), so a
+ * post-restart decision that only looks at `thread.activities` sees no open
+ * request.
+ */
+/**
+ * Commands whose decision reads the thread's open approval / user-input
+ * requests. Callers loading a durable read model must hydrate
+ * {@link REQUEST_LIFECYCLE_ACTIVITY_KINDS} for these commands: the command read
+ * model boots without activities, so an un-hydrated decision sees no open
+ * request and settles or snoozes past work the agent is waiting on.
+ */
+export function commandDecidesOnOpenRequests(
+  command: OrchestrationCommand,
+): command is Extract<
+  OrchestrationCommand,
+  { type: "thread.settle" | "thread.auto-settle" | "thread.snooze" | "thread.history.import" }
+> {
+  return (
+    command.type === "thread.settle" ||
+    command.type === "thread.auto-settle" ||
+    command.type === "thread.snooze" ||
+    command.type === "thread.history.import"
+  );
+}
+
+export const REQUEST_LIFECYCLE_ACTIVITY_KINDS = [
+  "approval.requested",
+  "approval.resolved",
+  "approval.respond.already-resolved",
+  "provider.approval.respond.failed",
+  "user-input.requested",
+  "user-input.resolved",
+  "provider.user-input.respond.failed",
+] as const;
+
+// Scans a thread's request-lifecycle activities, ordered by event sequence, and
+// keeps the most recent request per id. Async questions remain actionable while
+// the agent works, so they must not expire with the read model's activity window.
+function openRequests(activities: ReadonlyArray<OrchestrationThreadActivity>) {
   const requests = new Map<string, OrchestrationThreadActivity>();
-  for (const activity of thread.activities) {
+  for (const activity of activities) {
     const payload =
       typeof activity.payload === "object" && activity.payload !== null
         ? (activity.payload as Record<string, unknown>)
@@ -109,6 +147,18 @@ function openRequests(thread: Pick<OrchestrationThread, "activities">) {
     }
   }
   return requests;
+}
+
+/** Apply the shared shell-level rule to the detailed command read model. */
+/**
+ * The request window a decision reads: the caller's durable rows when it
+ * hydrated them, otherwise the command read model's own activity window.
+ */
+function requestActivityWindow(
+  thread: Pick<OrchestrationThread, "activities">,
+  requestActivities: ReadonlyArray<OrchestrationThreadActivity> | undefined,
+): ReadonlyArray<OrchestrationThreadActivity> {
+  return requestActivities ?? thread.activities;
 }
 
 /** Apply the shared shell-level rule to the detailed command read model. */
@@ -217,10 +267,17 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
   command,
   readModel,
   userInputActivity,
+  requestActivities,
 }: {
   readonly command: OrchestrationCommand;
   readonly readModel: OrchestrationReadModel;
   readonly userInputActivity?: OrchestrationThreadActivity;
+  /**
+   * Durable request-lifecycle activities for this thread, in sequence order.
+   * Required reading for commands whose decision depends on pending requests;
+   * absent means the caller vouched for the in-memory activity window.
+   */
+  readonly requestActivities?: ReadonlyArray<OrchestrationThreadActivity>;
 }): Effect.fn.Return<
   DecideOrchestrationCommandResult,
   OrchestrationCommandRejection | PlatformError.PlatformError,
@@ -503,7 +560,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       if (thread.session?.status === "starting" || thread.session?.status === "running") {
         return yield* new OrchestrationThreadSettleBlockedError({ threadId: command.threadId });
       }
-      const pendingRequests = openRequests(thread);
+      const pendingRequests = openRequests(requestActivityWindow(thread, requestActivities));
       // Manual settlement dismisses async questions without answering them.
       // Native callbacks and approvals still need a response or interruption.
       if (
@@ -659,7 +716,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       // user-input request is the agent waiting on the user, and hiding it
       // defeats the request. (A running session IS snoozable — snooze only
       // affects visibility, never the agent.)
-      if (openRequests(thread).size > 0) {
+      if (openRequests(requestActivityWindow(thread, requestActivities)).size > 0) {
         return yield* Effect.fail(
           new OrchestrationCommandInvariantError({
             commandType: command.type,
@@ -2026,7 +2083,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         thread.messages.length > 0 ||
         thread.latestTurn !== null ||
         thread.session !== null ||
-        openRequests(thread).size > 0
+        openRequests(requestActivityWindow(thread, requestActivities)).size > 0
       ) {
         return yield* new OrchestrationCommandInvariantError({
           commandType: command.type,

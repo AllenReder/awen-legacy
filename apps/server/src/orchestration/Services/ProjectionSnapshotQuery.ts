@@ -92,6 +92,19 @@ export interface ProjectionSnapshotQueryShape {
   }) => Effect.Effect<Option.Option<ProjectionPendingApproval>, ProjectionRepositoryError>;
 
   /**
+   * Read every one of a thread's activities of the given kinds, ordered by
+   * event sequence. Command decisions that depend on pending requests use this
+   * instead of the command read model's activity window, which is empty at
+   * startup. No recent-activity window is applied: an unresolved request older
+   * than the newest rows is still pending, the same reason the read model pins
+   * async questions past its activity cap.
+   */
+  readonly listThreadActivitiesByKinds?: (input: {
+    readonly threadId: ThreadId;
+    readonly kinds: ReadonlyArray<string>;
+  }) => Effect.Effect<ReadonlyArray<OrchestrationThreadActivity>, ProjectionRepositoryError>;
+
+  /**
    * Read every activity of one kind across active (not deleted, not archived)
    * threads, without hydrating the threads. Used at startup to find state a
    * crashed process left behind.

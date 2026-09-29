@@ -891,6 +891,163 @@ describe("OrchestrationEngine", () => {
     await runtime.dispose();
   });
 
+  it("keeps settle and snooze blocked by a durable pending request after a restart", async () => {
+    const directory = await NodeFSP.mkdtemp(
+      NodePath.join(NodeOS.tmpdir(), "awen-pending-restart-"),
+    );
+    const databasePath = NodePath.join(directory, "state.sqlite");
+    const createdAt = now();
+    const projectId = ProjectId.make("project-pending-restart");
+    const threadId = ThreadId.make("thread-pending-restart");
+    const requestId = ApprovalRequestId.make("approval-pending-restart");
+
+    const first = await createOrchestrationSystem(databasePath);
+    try {
+      await first.run(
+        first.engine.dispatch({
+          type: "project.create",
+          commandId: CommandId.make("cmd-pending-restart-project"),
+          projectId,
+          title: "Pending restart",
+          workspaceRoot: "/tmp/project-pending-restart",
+          defaultModelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          createdAt,
+        }),
+      );
+      await first.run(
+        first.engine.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("cmd-pending-restart-thread"),
+          threadId,
+          projectId,
+          title: "Pending restart",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          branch: null,
+          worktreePath: null,
+          createdAt,
+        }),
+      );
+      await first.run(
+        first.engine.dispatch({
+          type: "thread.activity.append",
+          commandId: CommandId.make("cmd-pending-restart-approval"),
+          threadId,
+          createdAt,
+          activity: {
+            id: EventId.make("activity-pending-restart-approval"),
+            tone: "info",
+            kind: "approval.requested",
+            summary: "Approval requested",
+            payload: { requestId },
+            turnId: null,
+            createdAt,
+          },
+        }),
+      );
+    } finally {
+      await first.dispose();
+    }
+
+    const reopened = await createOrchestrationSystem(databasePath);
+    try {
+      // The command read model boots without activities, so the durable
+      // lifecycle is the only proof this thread is still waiting on the user.
+      const settleError = await reopened.run(
+        reopened.engine
+          .dispatch({
+            type: "thread.settle",
+            commandId: CommandId.make("cmd-pending-restart-settle"),
+            threadId,
+          })
+          .pipe(Effect.flip),
+      );
+      expect(settleError).toMatchObject({
+        _tag: "OrchestrationThreadSettleBlockedError",
+        threadId,
+      });
+
+      const snoozeError = await reopened.run(
+        reopened.engine
+          .dispatch({
+            type: "thread.snooze",
+            commandId: CommandId.make("cmd-pending-restart-snooze"),
+            threadId,
+            // Must be in the real future: the decider compares the wake time
+            // against the clock, not against the command timestamp.
+            snoozedUntil: "2100-01-01T00:00:00.000Z",
+          })
+          .pipe(Effect.flip),
+      );
+      expect(snoozeError).toMatchObject({
+        _tag: "OrchestrationCommandInvariantError",
+        commandType: "thread.snooze",
+      });
+
+      // The user-input family is durable too: resolving the approval must not
+      // let settle through while a question is still open.
+      await reopened.run(
+        reopened.engine.dispatch({
+          type: "thread.activity.append",
+          commandId: CommandId.make("cmd-pending-restart-approval-resolved"),
+          threadId,
+          createdAt,
+          activity: {
+            id: EventId.make("activity-pending-restart-approval-resolved"),
+            tone: "info",
+            kind: "approval.resolved",
+            summary: "Approval resolved",
+            payload: { requestId, decision: "accept" },
+            turnId: null,
+            createdAt,
+          },
+        }),
+      );
+      await reopened.run(
+        reopened.engine.dispatch({
+          type: "thread.activity.append",
+          commandId: CommandId.make("cmd-pending-restart-user-input"),
+          threadId,
+          createdAt,
+          activity: {
+            id: EventId.make("activity-pending-restart-user-input"),
+            tone: "info",
+            kind: "user-input.requested",
+            summary: "User input requested",
+            payload: { requestId: "question-pending-restart" },
+            turnId: null,
+            createdAt,
+          },
+        }),
+      );
+      const userInputSettleError = await reopened.run(
+        reopened.engine
+          .dispatch({
+            type: "thread.settle",
+            commandId: CommandId.make("cmd-pending-restart-settle-user-input"),
+            threadId,
+          })
+          .pipe(Effect.flip),
+      );
+      expect(userInputSettleError).toMatchObject({
+        _tag: "OrchestrationThreadSettleBlockedError",
+        threadId,
+      });
+
+      const thread = await reopened.readThread(threadId);
+      expect(thread.pipe(Option.getOrNull)?.settledOverride ?? null).toBeNull();
+    } finally {
+      await reopened.dispose();
+    }
+  });
+
   effectIt.effect("preserves the blocked-settle error and persists its rejected receipt", () =>
     Effect.gen(function* () {
       const engine = yield* OrchestrationEngineService;

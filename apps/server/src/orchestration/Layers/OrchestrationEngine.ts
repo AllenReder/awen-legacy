@@ -41,7 +41,11 @@ import {
   type OrchestrationDispatchError,
   type OrchestrationProjectorDecodeError,
 } from "../Errors.ts";
-import { decideOrchestrationCommand } from "../decider.ts";
+import {
+  commandDecidesOnOpenRequests,
+  decideOrchestrationCommand,
+  REQUEST_LIFECYCLE_ACTIVITY_KINDS,
+} from "../decider.ts";
 import { createEmptyReadModel, projectEvent } from "../projector.ts";
 import { OrchestrationProjectionPipeline } from "../Services/ProjectionPipeline.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
@@ -237,6 +241,17 @@ const makeOrchestrationEngine = Effect.gen(function* () {
         }
 
         // Command snapshots omit activities at startup and cap them while running.
+        // Read this command's durable request lifecycle before deciding whether
+        // the thread is still waiting on the user.
+        const listThreadActivitiesByKinds = projectionSnapshotQuery.listThreadActivitiesByKinds;
+        const requestActivities =
+          commandDecidesOnOpenRequests(envelope.command) &&
+          listThreadActivitiesByKinds !== undefined
+            ? yield* listThreadActivitiesByKinds({
+                threadId: envelope.command.threadId,
+                kinds: REQUEST_LIFECYCLE_ACTIVITY_KINDS,
+              })
+            : undefined;
         // Read this request's durable state before deciding how to send the answer.
         const userInputActivity =
           envelope.command.type === "thread.user-input.respond" ||
@@ -249,6 +264,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
           ...(Option.isSome(userInputActivity)
             ? { userInputActivity: userInputActivity.value }
             : {}),
+          ...(requestActivities !== undefined ? { requestActivities } : {}),
         }).pipe(
           Effect.provideService(Crypto.Crypto, crypto),
           Effect.mapError((cause) =>
