@@ -28,6 +28,7 @@ import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as Schedule from "effect/Schedule";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -2344,6 +2345,114 @@ it.layer(
       expect(ptyAdapter.spawnInputs[0]?.env.AWEN_SECRET).toBeUndefined();
       expect(snapshot).not.toHaveProperty("env");
       expect(snapshot).not.toHaveProperty("providerInstanceId");
+    }),
+  );
+
+  it.effect("persists runtime env names without the provider secret values", () =>
+    Effect.gen(function* () {
+      const providerInstanceId = ProviderInstanceId.make("codex_secret");
+      const secret = "sk-awen-terminal-secret";
+      const { join } = yield* Path.Path;
+      const { manager, ptyAdapter, logsDir } = yield* createManager(5, {
+        resolveProviderInstanceEnvironment: () =>
+          Effect.succeed({
+            CODEX_HOME: "/accounts/codex-secret",
+            PROVIDER_SECRET: secret,
+          }),
+      });
+
+      yield* manager.open(openInput({ providerInstanceId }));
+
+      // The running PTY needs the materialized value...
+      expect(ptyAdapter.spawnInputs[0]?.env.PROVIDER_SECRET).toBe(secret);
+      // ...but the durable session index must not keep it.
+      const persisted = yield* readFileString(join(logsDir, "sessions.json"));
+      assert.ok(!persisted.includes(secret));
+      assert.ok(persisted.includes("PROVIDER_SECRET"));
+      assert.ok(persisted.includes("CODEX_HOME"));
+    }),
+  );
+
+  it.effect("scrubs a legacy plaintext runtime env when the index is rewritten", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { join } = yield* Path.Path;
+      const logsDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "awen-terminal-legacy-index-",
+      });
+      yield* fs.makeDirectory(logsDir, { recursive: true });
+      // Shape written by Awen versions before runtime env values were redacted.
+      const legacySecret = "legacy-plaintext-secret";
+      yield* fs.writeFileString(
+        join(logsDir, "sessions.json"),
+        yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))([
+          {
+            terminalId: "legacy-terminal",
+            cwd: process.cwd(),
+            worktreePath: null,
+            status: "exited",
+            exitCode: 0,
+            exitSignal: null,
+            updatedAt: "2026-01-01T00:00:00.000Z",
+            eventSequence: 3,
+            generation: 1,
+            cols: 80,
+            rows: 24,
+            runtimeEnv: { PROVIDER_SECRET: legacySecret },
+          },
+        ]),
+      );
+
+      const { manager } = yield* createManager(5, { logsDir });
+      expect((yield* manager.getMetadata()).map((entry) => entry.terminalId)).toContain(
+        "legacy-terminal",
+      );
+
+      const rewritten = yield* readFileString(join(logsDir, "sessions.json"));
+      assert.ok(!rewritten.includes(legacySecret));
+      // The restored Session survives the rewrite, keeping the override name
+      // while its value must be resolved again rather than read back.
+      assert.ok(rewritten.includes("legacy-terminal"));
+      assert.ok(rewritten.includes("PROVIDER_SECRET"));
+    }),
+  );
+
+  it.effect("re-resolves provider secrets when reopening a persisted session", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { join } = yield* Path.Path;
+      const providerInstanceId = ProviderInstanceId.make("codex_secret");
+      const logsDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "awen-terminal-secret-reopen-",
+      });
+      let secret = "first-terminal-secret";
+
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const first = yield* createManager(5, {
+            logsDir,
+            resolveProviderInstanceEnvironment: () => Effect.succeed({ PROVIDER_SECRET: secret }),
+          });
+          yield* first.manager.open(openInput({ providerInstanceId }));
+        }),
+      );
+
+      secret = "second-terminal-secret";
+      const second = yield* createManager(5, {
+        logsDir,
+        resolveProviderInstanceEnvironment: () => Effect.succeed({ PROVIDER_SECRET: secret }),
+      });
+      // The restart rewrites the index: the override name survives while the
+      // value stays out of it until the secret store is asked again.
+      const restoredIndex = yield* readFileString(join(logsDir, "sessions.json"));
+      assert.ok(restoredIndex.includes("PROVIDER_SECRET"));
+      assert.ok(!restoredIndex.includes("first-terminal-secret"));
+      yield* second.manager.open(openInput({ providerInstanceId }));
+
+      expect(second.ptyAdapter.spawnInputs[0]?.env.PROVIDER_SECRET).toBe("second-terminal-secret");
+      const persisted = yield* readFileString(join(logsDir, "sessions.json"));
+      assert.ok(!persisted.includes("first-terminal-secret"));
+      assert.ok(!persisted.includes("second-terminal-secret"));
     }),
   );
 

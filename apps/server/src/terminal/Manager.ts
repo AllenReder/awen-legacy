@@ -379,7 +379,16 @@ interface TerminalSessionState {
    * projects the Sidebar assignment.
    */
   observedDirectory: string | null;
+  /**
+   * Materialized runtime env values for the current PTY. They stay in memory:
+   * provider secrets must never reach the durable Session index.
+   */
   runtimeEnv: Record<string, string> | null;
+  /**
+   * Names of those overrides, which are safe to persist. A restored Session has
+   * no values until the client (or the secret store) supplies them again.
+   */
+  runtimeEnvKeys: ReadonlyArray<string>;
 }
 
 interface PersistHistoryRequest {
@@ -1307,7 +1316,10 @@ function terminalDisplayTitle(
 }
 
 function nextDefaultTerminalTitle(
-  sessions: Iterable<{ readonly workspaceId?: string | null; readonly defaultTitle?: string }>,
+  sessions: Iterable<{
+    readonly workspaceId?: string | null | undefined;
+    readonly defaultTitle?: string | undefined;
+  }>,
   workspaceId: string | null,
 ): string {
   let highest = 0;
@@ -1649,6 +1661,20 @@ function createTerminalSpawnEnv(
   return stripAppImageRuntimeEnv(spawnEnv);
 }
 
+const sortedRuntimeEnvKeys = (env: Record<string, string>): ReadonlyArray<string> =>
+  Object.keys(env).toSorted();
+
+/**
+ * The in-memory values and the persistable names of one runtime env, so a
+ * session can never keep one without the other in sync.
+ */
+function runtimeEnvFields(env: Record<string, string> | null): {
+  readonly runtimeEnv: Record<string, string> | null;
+  readonly runtimeEnvKeys: ReadonlyArray<string>;
+} {
+  return { runtimeEnv: env, runtimeEnvKeys: env === null ? [] : sortedRuntimeEnvKeys(env) };
+}
+
 function normalizedRuntimeEnv(
   env: Record<string, string> | undefined,
 ): Record<string, string> | null {
@@ -1718,23 +1744,29 @@ interface TerminalManagerOptions {
 }
 
 interface PersistedTerminalSessionRecord {
-  readonly workspaceId?: string;
+  readonly workspaceId?: string | undefined;
   readonly terminalId: string;
-  readonly defaultTitle?: string;
-  readonly title?: string;
-  readonly titleSource?: "default" | "terminal" | "manual";
+  readonly defaultTitle?: string | undefined;
+  readonly title?: string | undefined;
+  readonly titleSource?: "default" | "terminal" | "manual" | undefined;
   readonly cwd: string;
   readonly worktreePath: string | null;
   readonly status: TerminalSessionStatus;
   readonly exitCode: number | null;
   readonly exitSignal: number | null;
-  readonly createdAt?: string;
+  readonly createdAt?: string | undefined;
   readonly updatedAt: string;
   readonly eventSequence: number;
   readonly generation: number;
   readonly cols: number;
   readonly rows: number;
-  readonly runtimeEnv: Record<string, string> | null;
+  /**
+   * Names of the runtime environment overrides this PTY was launched with.
+   * Values are deliberately never persisted: `resolveProviderInstanceEnvironment`
+   * materializes `sensitive` provider variables from the secret store, so a
+   * durable copy of the values would leak provider credentials at rest.
+   */
+  readonly runtimeEnvKeys?: ReadonlyArray<string> | undefined;
 }
 
 const PersistedTerminalSessionRecordSchema = Schema.Struct({
@@ -1754,14 +1786,35 @@ const PersistedTerminalSessionRecordSchema = Schema.Struct({
   generation: Schema.Int,
   cols: Schema.Int,
   rows: Schema.Int,
-  runtimeEnv: Schema.NullOr(Schema.Record(Schema.String, Schema.String)),
+  runtimeEnvKeys: Schema.optional(Schema.Array(Schema.String)),
+  /**
+   * Legacy field. Indexes written before runtime env values were redacted carry
+   * the plaintext `runtimeEnv`; it is accepted so an old index still decodes,
+   * then normalized to key names and never re-encoded.
+   */
+  runtimeEnv: Schema.optional(Schema.NullOr(Schema.Record(Schema.String, Schema.String))),
 });
-const decodePersistedTerminalSessionIndex = Schema.decodeUnknownOption(
+const decodePersistedTerminalSessionIndexJson = Schema.decodeUnknownOption(
   Schema.fromJsonString(Schema.Array(PersistedTerminalSessionRecordSchema)),
 );
+const decodePersistedTerminalSessionIndex = (
+  raw: string,
+): Option.Option<ReadonlyArray<PersistedTerminalSessionRecord>> =>
+  decodePersistedTerminalSessionIndexJson(raw).pipe(
+    Option.map((records) => records.map(upgradePersistedTerminalSessionRecord)),
+  );
 const encodePersistedTerminalSessionIndex = Schema.encodeSync(
   Schema.fromJsonString(Schema.Array(PersistedTerminalSessionRecordSchema)),
 );
+
+/** Drops any legacy plaintext values and keeps only the override names. */
+function upgradePersistedTerminalSessionRecord(
+  record: Schema.Schema.Type<typeof PersistedTerminalSessionRecordSchema>,
+): PersistedTerminalSessionRecord {
+  const { runtimeEnv, runtimeEnvKeys: names, ...rest } = record;
+  const keys = names ?? (runtimeEnv ? sortedRuntimeEnvKeys(runtimeEnv) : undefined);
+  return keys && keys.length > 0 ? { ...rest, runtimeEnvKeys: keys } : rest;
+}
 
 function persistedTerminalSessionRecord(
   session: TerminalSessionState,
@@ -1783,7 +1836,7 @@ function persistedTerminalSessionRecord(
     generation: session.generation,
     cols: session.cols,
     rows: session.rows,
-    runtimeEnv: session.runtimeEnv,
+    ...(session.runtimeEnvKeys.length > 0 ? { runtimeEnvKeys: session.runtimeEnvKeys } : {}),
   };
 }
 
@@ -2428,7 +2481,10 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         generation: record.generation,
         childCommandLabel: null,
         observedDirectory: null,
-        runtimeEnv: record.runtimeEnv,
+        // Persisted records keep env names only; the values must be resolved
+        // again (e.g. from the secret store) when this Session is reopened.
+        runtimeEnv: null,
+        runtimeEnvKeys: record.runtimeEnvKeys ?? [],
       });
     }
     yield* SynchronizedRef.set(managerStateRef, { sessions: restored, killFibers: new Map() });
@@ -2510,7 +2566,9 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       generation: record.generation,
       childCommandLabel: null,
       observedDirectory: null,
-      runtimeEnv: record.runtimeEnv,
+      // Persisted records keep env names only; see the restore above.
+      runtimeEnv: null,
+      runtimeEnvKeys: record.runtimeEnvKeys ?? [],
     };
 
     yield* modifyManagerState((currentState) => {
@@ -3388,7 +3446,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         generation: 0,
         childCommandLabel: null,
         observedDirectory: null,
-        runtimeEnv: normalizedRuntimeEnv(input.env),
+        ...runtimeEnvFields(normalizedRuntimeEnv(input.env)),
       };
 
       const createdSession = session;
@@ -3437,14 +3495,14 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       yield* stopProcess(liveSession);
       liveSession.cwd = input.cwd;
       liveSession.worktreePath = nextWorktreePath;
-      liveSession.runtimeEnv = nextRuntimeEnv;
+      Object.assign(liveSession, runtimeEnvFields(nextRuntimeEnv));
       liveSession.pendingHistoryControlSequence = "";
       liveSession.pendingProcessEvents = [];
       liveSession.pendingProcessEventIndex = 0;
       liveSession.processEventDrainRunning = false;
       yield* persistHistory(liveSession.terminalId, liveSession.history);
     } else if (liveSession.status === "exited" || liveSession.status === "error") {
-      liveSession.runtimeEnv = nextRuntimeEnv;
+      Object.assign(liveSession, runtimeEnvFields(nextRuntimeEnv));
       liveSession.worktreePath = nextWorktreePath;
       liveSession.pendingHistoryControlSequence = "";
       liveSession.pendingProcessEvents = [];
@@ -3882,7 +3940,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           generation: 0,
           childCommandLabel: null,
           observedDirectory: null,
-          runtimeEnv: normalizedRuntimeEnv(input.env),
+          ...runtimeEnvFields(normalizedRuntimeEnv(input.env)),
         };
         const createdSession = session;
         yield* modifyManagerState((state) => {
@@ -3896,7 +3954,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         yield* stopProcess(session);
         session.cwd = input.cwd;
         session.worktreePath = input.worktreePath ?? null;
-        session.runtimeEnv = normalizedRuntimeEnv(input.env);
+        Object.assign(session, runtimeEnvFields(normalizedRuntimeEnv(input.env)));
         session.pendingTitleSequence = "";
       }
 
