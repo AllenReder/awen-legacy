@@ -1,7 +1,11 @@
 import type { FileDiffMetadata } from "@pierre/diffs";
 import { describe, expect, it } from "vite-plus/test";
 
-import { isFileDiffCollapsed, isLineInFileDiff } from "./pullRequestDiff.logic";
+import {
+  evictStaleCacheEntries,
+  isFileDiffCollapsed,
+  isLineInFileDiff,
+} from "./pullRequestDiff.logic";
 
 /** Only the hunk ranges matter here; the viewer fills the rest in when it renders. */
 function fileWithHunks(
@@ -77,5 +81,27 @@ describe("isFileDiffCollapsed", () => {
   it("still answers to a toggle after either toolbar press", () => {
     expect(isFileDiffCollapsed("a.ts", "expanded", new Set(["a.ts"]))).toBe(true);
     expect(isFileDiffCollapsed("a.ts", "folded", new Set(["a.ts"]))).toBe(false);
+  });
+});
+
+describe("evictStaleCacheEntries", () => {
+  it("drops parsed entries whose slices are gone and keeps the live ones", () => {
+    const cache = new Map<string, string>([
+      ["first:previous", "the parse of the page a refresh replaced"],
+      ["first:current", "the parse of the page on screen now"],
+      ["second", "the parse of the second page"],
+    ]);
+
+    evictStaleCacheEntries(cache, new Set(["first:current", "second"]));
+
+    expect([...cache.keys()]).toEqual(["first:current", "second"]);
+  });
+
+  it("empties the cache when nothing on screen is parsed from it", () => {
+    const cache = new Map([["stale", "parsed page"]]);
+
+    evictStaleCacheEntries(cache, new Set());
+
+    expect(cache.size).toBe(0);
   });
 });

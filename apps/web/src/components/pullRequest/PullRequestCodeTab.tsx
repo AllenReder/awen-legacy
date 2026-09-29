@@ -76,6 +76,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { PendingReviewCommentCard, ReviewThreadCard } from "./PullRequestReviewAnnotation";
 import { PullRequestReviewBar } from "./PullRequestReviewBar";
 import {
+  evictStaleCacheEntries,
   isFileDiffCollapsed,
   isLineInFileDiff,
   type DiffFoldOverride,
@@ -385,22 +386,27 @@ function PullRequestCodeTab({
   // Every slice is parsed on its own and the result held, so a slice arriving costs one parse
   // rather than one per slice already on screen. Its cache key carries the theme, which is what
   // the tokenizer caches against, so a theme change is still a fresh parse.
-  const parsedSlices = useMemo(
-    () =>
-      loadedSlices.map((slice) => {
-        // The patch's own hash is part of the key: a refreshed page reuses its cursor, and a
-        // key of position alone would keep handing back the parse of the patch it replaced.
-        const cacheKey = `pull-request:${scopeKey}:${resolvedTheme}:${slice.cursor ?? "first"}:${fnv1a32(slice.patch)}`;
-        const cached = parseCache.current.get(cacheKey);
-        if (cached) return cached;
-        const parsed = getRenderablePatch(slice.patch, cacheKey, {
-          compactPartialHunkOffsets: true,
-        });
-        if (parsed) parseCache.current.set(cacheKey, parsed);
-        return parsed;
-      }),
-    [loadedSlices, resolvedTheme, scopeKey],
-  );
+  const parsedSlices = useMemo(() => {
+    // The keys this render draws from. Everything else in the cache belongs to a slice a
+    // refresh replaced, and holding those parses is what used to grow the cache without bound
+    // for the life of one pull request and commit.
+    const liveKeys = new Set<string>();
+    const parsed = loadedSlices.map((slice) => {
+      // The patch's own hash is part of the key: a refreshed page reuses its cursor, and a
+      // key of position alone would keep handing back the parse of the patch it replaced.
+      const cacheKey = `pull-request:${scopeKey}:${resolvedTheme}:${slice.cursor ?? "first"}:${fnv1a32(slice.patch)}`;
+      liveKeys.add(cacheKey);
+      const cached = parseCache.current.get(cacheKey);
+      if (cached) return cached;
+      const renderable = getRenderablePatch(slice.patch, cacheKey, {
+        compactPartialHunkOffsets: true,
+      });
+      if (renderable) parseCache.current.set(cacheKey, renderable);
+      return renderable;
+    });
+    evictStaleCacheEntries(parseCache.current, liveKeys);
+    return parsed;
+  }, [loadedSlices, resolvedTheme, scopeKey]);
   // Ordered within a slice rather than across them: ordering the accumulated set would let a late
   // slice push a file the reader is part way through further down the page.
   const files = useMemo(
