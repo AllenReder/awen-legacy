@@ -638,7 +638,8 @@ export function applyClosePane(
   paneId: string,
   generateId: () => string,
 ): WorkbenchSnapshot | null {
-  const tab = getActiveTab(snapshot);
+  const tab = snapshot.tabs.find((candidate) => candidate.panes.has(paneId));
+  if (!tab) return null;
   const view = tab.panes.get(paneId);
   if (view === undefined) return null;
   const next = closeLeaf(tab, paneId);

@@ -47,8 +47,7 @@ export function WorkbenchWindowChrome({ snapshot, projects }: WorkbenchWindowChr
   const activeTab = snapshot.tabs.find((tab) => tab.id === snapshot.activeTabId)!;
   const createTab = useWorkbenchStore((state) => state.createTab);
   const activateTab = useWorkbenchStore((state) => state.activateTab);
-  const closeTab = useWorkbenchStore((state) => state.closeTab);
-  const canCloseTab = useWorkbenchStore((state) => state.canCloseTab);
+  const requestCloseTab = useWorkbenchStore((state) => state.requestCloseTab);
   const closingTabIds = useWorkbenchStore((state) => state.closingTabIds);
   const renameTab = useWorkbenchStore((state) => state.renameTab);
   const dragState = useWorkbenchDragState();
@@ -62,15 +61,9 @@ export function WorkbenchWindowChrome({ snapshot, projects }: WorkbenchWindowChr
       if (snapshot.tabs.length - closingTabIds.size <= 1) return;
       if (closingTabIds.has(tabId)) return;
 
-      const canClose = canCloseTab ? await canCloseTab(tabId) : true;
-      if (!canClose) return;
-
-      // The store owns the full close lifecycle: it marks the Tab as closing,
-      // switches the active context immediately, and removes the Tab once the
-      // fluid collapse has settled (ADR-0013).
-      closeTab(tabId);
+      await requestCloseTab(tabId);
     },
-    [canCloseTab, closeTab, closingTabIds, snapshot.tabs],
+    [requestCloseTab, closingTabIds, snapshot.tabs],
   );
 
   const isAnyTabDragged = dragState?.phase === "dragging" && dragState.source.kind === "tab";

@@ -82,8 +82,11 @@ beforeEach(() => {
   useWorkbenchStore.setState({
     activateTab: () => {},
     closeTab: () => {},
-    canCloseTab: () => Promise.resolve(true),
+    requestCloseTab: realRequestCloseTab,
   });
+  useWorkbenchStore
+    .getState()
+    .registerCloseAdapter("workspaceTerminal", { cleanup: async () => {} });
   if (typeof window !== "undefined") {
     window.matchMedia = vi.fn().mockImplementation((query) => ({
       matches: false,
@@ -112,6 +115,7 @@ function createTestSnapshot() {
 // beforeEach hook replaces them with mocks. Tests that need the real closing
 // lifecycle re-install this reference.
 const realCloseTab = useWorkbenchStore.getState().closeTab;
+const realRequestCloseTab = useWorkbenchStore.getState().requestCloseTab;
 
 it("renders the selected compact Topbar Surface with real titles and a new-tab action", () => {
   const snapshot = createTestSnapshot();
@@ -401,12 +405,12 @@ it("renders the closing attribute while a Session close animates its emptied Tab
   vi.useRealTimers();
 });
 
-it("aborts tab collapse if canCloseTab rejects closure", async () => {
+it("aborts tab collapse when the close request is cancelled", async () => {
   const snapshot = createTestSnapshot();
   const activateTab = vi.fn();
   const closeTab = vi.fn();
-  const canCloseTab = vi.fn().mockResolvedValue(false);
-  useWorkbenchStore.setState({ activateTab, closeTab, canCloseTab });
+  const requestCloseTab = vi.fn().mockResolvedValue({ outcomes: [] });
+  useWorkbenchStore.setState({ activateTab, closeTab, requestCloseTab });
 
   const { create, act } = await import("react-test-renderer");
   let renderer: any;
@@ -426,7 +430,7 @@ it("aborts tab collapse if canCloseTab rejects closure", async () => {
     await closeButton.props.onClick({ stopPropagation: () => {} });
   });
 
-  expect(canCloseTab).toHaveBeenCalledWith(snapshot.tabs[1]!.id);
+  expect(requestCloseTab).toHaveBeenCalledWith(snapshot.tabs[1]!.id);
   expect(activateTab).not.toHaveBeenCalled();
   expect(activeTabElement.props["data-tab-closing"]).toBeUndefined();
   expect(closeTab).not.toHaveBeenCalled();

@@ -68,9 +68,8 @@ export type LayoutSash = {
  *
  * A leaf id maps 1:1 to a Pane View specification held outside this module; the workbench
  * store keeps a `Map<leafId, PaneView>`. Closing a leaf drops it from both
- * the layout and the store; the underlying Agent/Terminal Session is never
- * terminated by `closePane` (D3: "Closing a View/Pane/Tab does not by itself
- * terminate a Session").
+ * the layout and the store. Resource cleanup for explicit close belongs to
+ * the Workbench coordinator before this pure layout operation runs.
  */
 export type AwenTab = {
   id: string;

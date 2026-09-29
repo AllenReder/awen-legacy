@@ -7,6 +7,8 @@ import { useEnvironmentCatalogSnapshot } from "../state/environmentCatalogSnapsh
 import { useEnvironments } from "../state/environments";
 import { useEnvironmentQuery } from "../state/query";
 import { terminalEnvironment } from "../state/terminal";
+import { useAtomCommand } from "../state/use-atom-command";
+import { squashAtomCommandFailure } from "@awen/client-runtime/state/runtime";
 import { PaneTree } from "./PaneTree";
 import { TabTransitionController } from "./tabTransitionReact";
 import { installTabSwitchProfiler } from "./transitionProfiler";
@@ -17,6 +19,7 @@ import { deepLinkInputFromParams, resolveDeepLink, type DeepLinkResolution } fro
 import { targetKey, type ViewTarget } from "./viewRegistry";
 import "./viewDefinitions";
 import { useWorkbenchStore } from "./workbenchStore";
+import { runtimeTerminalIdForTarget } from "./sessionTarget";
 
 // Opt-in tab-switch profiler; no-op unless `?profileTabSwitch` or the localStorage flag is set.
 installTabSwitchProfiler();
@@ -26,6 +29,21 @@ export function Workbench() {
   const snapshot = useWorkbenchStore();
   const openDeepLinkTarget = useWorkbenchStore((s) => s.openDeepLinkTarget);
   const pruneWorkspaceViews = useWorkbenchStore((s) => s.pruneWorkspaceViews);
+  const closeTerminal = useAtomCommand(terminalEnvironment.close, { reportFailure: false });
+  useEffect(
+    () =>
+      useWorkbenchStore.getState().registerCloseAdapter("workspaceTerminal", {
+        cleanup: async (target) => {
+          if (target.kind !== "workspaceTerminal") return;
+          const result = await closeTerminal({
+            environmentId: target.environmentId,
+            input: { terminalId: runtimeTerminalIdForTarget(target), deleteHistory: true },
+          });
+          if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+        },
+      }),
+    [closeTerminal],
+  );
   const reconcileDraftWorkspaceBindings = useComposerDraftStore(
     (state) => state.reconcileDraftWorkspaceBindings,
   );

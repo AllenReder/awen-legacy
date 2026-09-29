@@ -115,48 +115,204 @@ it("intercepts pane closure with registered close guard when dirty", async () =>
   let confirmResult = false;
   const unregister = store.getState().registerCloseGuard(paneId, {
     isDirty: () => isDirty,
-    confirmClose: async () => confirmResult,
+    confirmClose: async () => {
+      if (confirmResult) isDirty = false;
+      return confirmResult;
+    },
   });
 
   // When dirty and user cancels confirmation -> pane is NOT closed
   const closed1 = await store.getState().requestClosePane(paneId);
-  expect(closed1).toBe(false);
+  expect(closed1.outcomes).toEqual([{ paneId, status: "retained" }]);
   expect(getActiveTab(store.getState()).panes.has(paneId)).toBe(true);
 
   // When dirty and user confirms -> pane IS closed
   confirmResult = true;
   const closed2 = await store.getState().requestClosePane(paneId);
-  expect(closed2).toBe(true);
+  expect(closed2.outcomes).toEqual([{ paneId, status: "closed" }]);
   expect(getActiveTab(store.getState()).panes.has(paneId)).toBe(false);
 });
 
-it("canCloseTab checks close guards for all panes in the tab", async () => {
-  const ids = makeIds();
-  const initial = applyOpenTarget(emptyWorkbenchSnapshot(ids), agent(), ids);
-  const tab = getActiveTab(initial);
-  const paneId = tab.focusedPaneId;
-  const store = createWorkbenchStore({ initialSnapshot: initial, generateId: ids });
+it("closes a mixed Tab only after decisions, keeping failed resources usable", async () => {
+  const store = createWorkbenchStore({ persist: () => {} });
+  await store.getState().openTarget(agent());
+  const tab = getActiveTab(store.getState());
+  const agentPane = tab.focusedPaneId;
+  const terminal: ViewTarget = {
+    kind: "workspaceTerminal",
+    environmentId: ENV_A,
+    terminalSessionId: "terminal-a" as never,
+  };
+  await store.getState().openFromPane(agentPane, terminal);
+  const terminalPane = getActiveTab(store.getState()).focusedPaneId;
+  const cleanup = vi.fn(async () => {
+    throw new Error("PTY unavailable");
+  });
+  store.getState().registerCloseAdapter("workspaceTerminal", { cleanup });
 
-  let isDirty = true;
-  let confirmResult = false;
-  store.getState().registerCloseGuard(paneId, {
-    isDirty: () => isDirty,
-    confirmClose: async () => confirmResult,
+  const result = await store.getState().requestCloseTab(tab.id);
+
+  expect(result.outcomes).toEqual([
+    { paneId: agentPane, status: "closed" },
+    { paneId: terminalPane, status: "failed", error: "PTY unavailable" },
+  ]);
+  expect(cleanup).toHaveBeenCalledOnce();
+  expect(
+    store
+      .getState()
+      .tabs.find((item) => item.id === tab.id)
+      ?.panes.has(agentPane),
+  ).toBe(false);
+  expect(
+    store
+      .getState()
+      .tabs.find((item) => item.id === tab.id)
+      ?.panes.has(terminalPane),
+  ).toBe(true);
+});
+
+it("cancels a mixed Tab before terminal cleanup", async () => {
+  const store = createWorkbenchStore({ persist: () => {} });
+  const file: ViewTarget = {
+    kind: "workspace",
+    definitionId: "fileView",
+    environmentId: ENV_A,
+    workspaceId: WS_A,
+  };
+  await store.getState().openTarget(file);
+  const tab = getActiveTab(store.getState());
+  const filePane = tab.focusedPaneId;
+  await store.getState().openFromPane(filePane, {
+    kind: "workspaceTerminal",
+    environmentId: ENV_A,
+    terminalSessionId: "term" as never,
+  });
+  store.getState().setPanePresentation(filePane, {
+    fileDraft: { path: "a.ts", contents: "edit" },
+  });
+  store.getState().registerCloseGuard(filePane, {
+    isDirty: () => true,
+    confirmClose: async () => false,
+  });
+  const cleanup = vi.fn(async () => {});
+  store.getState().registerCloseAdapter("workspaceTerminal", { cleanup });
+
+  const result = await store.getState().requestCloseTab(tab.id);
+
+  expect(result.outcomes.every((outcome) => outcome.status === "retained")).toBe(true);
+  expect(cleanup).not.toHaveBeenCalled();
+  expect(store.getState().tabs.find((item) => item.id === tab.id)?.panes.size).toBe(2);
+});
+
+it("does not close a Pane moved out of the requested Tab during confirmation", async () => {
+  const store = createWorkbenchStore({ persist: () => {} });
+  await store.getState().openTarget(agent());
+  const tab = getActiveTab(store.getState());
+  const paneId = tab.focusedPaneId;
+  let decide!: (value: boolean) => void;
+  store.getState().registerCloseAdapter("agentSession", {
+    confirm: () =>
+      new Promise((resolve) => {
+        decide = resolve;
+      }),
+  });
+  const closing = store.getState().requestCloseTab(tab.id);
+  const drop = store
+    .getState()
+    .previewDrop({ kind: "pane", tabId: tab.id, paneId }, { kind: "newTab", index: 1 });
+  expect(drop).not.toBeNull();
+  store.getState().commitDrop(drop!);
+  decide(true);
+
+  expect((await closing).outcomes).toEqual([{ paneId, status: "retained" }]);
+  expect(store.getState().tabs.some((item) => item.panes.has(paneId))).toBe(true);
+});
+
+it("invalidates an adapter decision when its resource revision changes", async () => {
+  const store = createWorkbenchStore({ persist: () => {} });
+  await store.getState().openTarget(agent());
+  const paneId = getActiveTab(store.getState()).focusedPaneId;
+  let revision = 1;
+  let decide!: (value: boolean) => void;
+  const cleanup = vi.fn(async () => {});
+  store.getState().registerCloseAdapter("agentSession", {
+    revision: () => revision,
+    confirm: () =>
+      new Promise((resolve) => {
+        decide = resolve;
+      }),
+    cleanup,
   });
 
-  // When dirty and user cancels confirmation -> canCloseTab returns false
-  const canClose1 = await store.getState().canCloseTab(tab.id);
-  expect(canClose1).toBe(false);
+  const closing = store.getState().requestClosePane(paneId);
+  revision = 2;
+  decide(true);
 
-  // When dirty and user confirms -> canCloseTab returns true
-  confirmResult = true;
-  const canClose2 = await store.getState().canCloseTab(tab.id);
-  expect(canClose2).toBe(true);
+  expect((await closing).outcomes).toEqual([{ paneId, status: "retained" }]);
+  expect(cleanup).not.toHaveBeenCalled();
+  expect(getActiveTab(store.getState()).panes.has(paneId)).toBe(true);
+});
 
-  // When clean -> canCloseTab returns true without confirmation
-  isDirty = false;
-  const canClose3 = await store.getState().canCloseTab(tab.id);
-  expect(canClose3).toBe(true);
+it("does not open a second decision while a Pane close is pending", async () => {
+  const store = createWorkbenchStore({ persist: () => {} });
+  await store.getState().openTarget(agent());
+  const tab = getActiveTab(store.getState());
+  const paneId = tab.focusedPaneId;
+  let decide!: (value: boolean) => void;
+  const confirm = vi.fn(
+    () =>
+      new Promise<boolean>((resolve) => {
+        decide = resolve;
+      }),
+  );
+  store.getState().registerCloseAdapter("agentSession", { confirm });
+
+  const first = store.getState().requestClosePane(paneId);
+  const overlapping = await store.getState().requestCloseTab(tab.id);
+  expect(overlapping.outcomes).toEqual([{ paneId, status: "retained" }]);
+  expect(confirm).toHaveBeenCalledOnce();
+  decide(true);
+  expect((await first).outcomes).toEqual([{ paneId, status: "closed" }]);
+});
+
+it("does not reuse a file decision after another edit, and repeats terminal cleanup once", async () => {
+  const store = createWorkbenchStore({ persist: () => {} });
+  const file: ViewTarget = {
+    kind: "workspace",
+    definitionId: "fileView",
+    environmentId: ENV_A,
+    workspaceId: WS_A,
+  };
+  await store.getState().openTarget(file);
+  const filePane = getActiveTab(store.getState()).focusedPaneId;
+  await store.getState().openFromPane(filePane, {
+    kind: "workspaceTerminal",
+    environmentId: ENV_A,
+    terminalSessionId: "term" as never,
+  });
+  const terminalPane = getActiveTab(store.getState()).focusedPaneId;
+  let dirty = true;
+  let decide!: (value: boolean) => void;
+  store.getState().registerCloseGuard(filePane, {
+    isDirty: () => dirty,
+    confirmClose: () =>
+      new Promise((resolve) => {
+        decide = resolve;
+      }),
+  });
+  const cleanup = vi.fn(async () => {});
+  store.getState().registerCloseAdapter("workspaceTerminal", { cleanup });
+  const tabId = getActiveTab(store.getState()).id;
+  const closing = store.getState().requestCloseTab(tabId);
+  dirty = false;
+  decide(true);
+  dirty = true;
+  const result = await closing;
+  expect(result.outcomes).toContainEqual({ paneId: filePane, status: "retained" });
+  expect(result.outcomes).toContainEqual({ paneId: terminalPane, status: "closed" });
+  expect(cleanup).toHaveBeenCalledOnce();
+  expect((await store.getState().requestClosePane(terminalPane)).outcomes).toEqual([]);
+  expect(cleanup).toHaveBeenCalledOnce();
 });
 
 it("splits relative to a specific pane and focuses existing targets if already present", () => {
