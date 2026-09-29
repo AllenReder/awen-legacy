@@ -26,6 +26,7 @@ import { findAgentSession } from "./agentSessionLookup";
 import {
   allEnvironmentProjectSnapshotsReadyAtom,
   allEnvironmentShellsBootstrappedAtom,
+  authoritativeProjectEnvironmentIdsAtom,
   environmentShell,
 } from "./shell";
 import type { EnvironmentShellState } from "@awen/client-runtime/state/shell";
@@ -125,6 +126,11 @@ export function useAllEnvironmentShellsBootstrapped(): boolean {
 
 export function useAllEnvironmentProjectSnapshotsReady(): boolean {
   return useAtomValue(allEnvironmentProjectSnapshotsReadyAtom);
+}
+
+/** Environments whose live snapshot can prove that a saved entity is gone. */
+export function useAuthoritativeProjectEnvironmentIds(): ReadonlySet<EnvironmentId> {
+  return useAtomValue(authoritativeProjectEnvironmentIdsAtom);
 }
 
 export function useThreadShellsForProjectRefs(

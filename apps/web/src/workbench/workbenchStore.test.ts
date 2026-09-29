@@ -5,6 +5,7 @@ import { targetKey, type ViewTarget } from "./viewRegistry";
 import {
   applyCreateTab,
   applyOpenTarget,
+  applySplitFocused,
   emptyWorkbenchSnapshot,
   getActiveTab,
   type WorkbenchSnapshot,
@@ -58,6 +59,25 @@ it("restores a snapshot and persists later Tab transitions", () => {
   expect(writes[1]?.tabs).toHaveLength(2);
   expect(writes[1]?.tabs[1]?.titleMode).toBe("manual");
   expect(writes[1]?.tabs[1]?.titleOverride).toBe("Manual title");
+});
+
+it("reports the Session Views restored from the initial snapshot", () => {
+  const ids = makeIds();
+  const file: ViewTarget = {
+    kind: "workspace",
+    definitionId: "fileView",
+    environmentId: ENV_A,
+    workspaceId: WS_A,
+  };
+  let initial = applyOpenTarget(emptyWorkbenchSnapshot(ids), agent(), ids);
+  initial = applySplitFocused(initial, file, "right", ids);
+
+  const store = createWorkbenchStore({ initialSnapshot: initial, generateId: ids });
+  expect(store.getState().restoredSessionTargets).toEqual([agent()]);
+
+  // Views opened later are not restored Views.
+  store.getState().createTab();
+  expect(store.getState().restoredSessionTargets).toEqual([agent()]);
 });
 
 it("opens a deep link without replacing restored layout", () => {
