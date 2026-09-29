@@ -16,6 +16,12 @@ export interface CodexHomeLayout {
   readonly continuationKey: string;
 }
 
+/**
+ * Directories under the shared Codex home that hold rollout transcripts:
+ * active sessions and the archive Codex moves finished rollouts into.
+ */
+export const CODEX_ROLLOUT_DIRECTORIES = ["sessions", "archived_sessions"] as const;
+
 const KNOWN_SHARED_DIRECTORIES = [
   "sessions",
   "archived_sessions",
