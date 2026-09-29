@@ -84,6 +84,7 @@ import { useProjects, useServerConfigs } from "~/state/entities";
 import { useEnvironments, usePrimaryEnvironmentId } from "~/state/environments";
 import { useEnvironmentQuery } from "~/state/query";
 import { useLiveRefresh } from "~/hooks/useLiveRefresh";
+import { createHandoffPromptCache } from "./handoffPromptCache";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { threadEnvironment } from "~/state/threads";
 import { usePullRequestTurnRefresh, useSharedPullRequestSummary } from "~/state/pullRequests";
@@ -254,12 +255,9 @@ const TABS: ReadonlyArray<{ value: DetailTab; label: string }> = [
 const loadCodeTab = () => import("./PullRequestCodeTab");
 const PullRequestCodeTab = lazy(loadCodeTab);
 
-/**
- * What the last hand-off wrote into each draft, kept outside React because the panel that wrote it
- * is closed by the time the next one opens. It is how a prompt the reader has since edited is told
- * apart from the one they were handed: only the sentence still exactly as written may be replaced.
- */
-const lastHandoffPromptByDraft = new Map<string, string>();
+// Kept outside React on purpose: the panel that wrote an entry is closed by the time the next
+// one opens, and a bounded cache keeps whole generated prompts from accumulating with it.
+const lastHandoffPromptByDraft = createHandoffPromptCache();
 
 const composerTargetKey = (target: ScopedThreadRef | DraftId): string =>
   typeof target === "string" ? target : scopedThreadKey(target);
@@ -1095,7 +1093,7 @@ export function PullRequestDetailPanel({
       },
       task.prompt,
     );
-    lastHandoffPromptByDraft.set(key, task.prompt);
+    lastHandoffPromptByDraft.remember(key, task.prompt);
     store.setPrompt(target, prompt);
     store.setReviewComments(
       target,
