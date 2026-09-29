@@ -2107,7 +2107,27 @@ const makeWsRpcLayer = (
               ORCHESTRATION_WS_METHODS.dispatchCommand,
               Effect.gen(function* () {
                 yield* ProjectCloneTracker.rejectCommandsDuringClone(projectCloneTracker, command);
-                const normalizedCommand = yield* normalizeDispatchCommand(command);
+                // Read the operation receipt before the normalizer touches the
+                // file system. A repeated operationId is answered from that
+                // receipt, so claiming its attachments again would leak an
+                // unreferenced copy of every pending upload on each retry.
+                const carriesAttachments =
+                  command.type === "thread.turn.start" ||
+                  command.type === "thread.user-input.respond";
+                const existingOperationResult = carriesAttachments
+                  ? yield* (
+                      orchestrationEngine.getOperationResult?.(command.commandId) ??
+                        Effect.succeed({
+                          _tag: "unknown" as const,
+                          operationId: command.commandId,
+                        })
+                    )
+                  : undefined;
+                const normalizedCommand = yield* normalizeDispatchCommand(command, {
+                  // Any durable receipt (accepted or rejected) answers the
+                  // replay, so neither may write attachment files again.
+                  materializeAttachments: existingOperationResult?._tag === "unknown",
+                });
                 // Archive removes the thread from the client, so this transport
                 // closes its session and terminals after the command lands.
                 // Settlement cleanup is driven by thread.settled events in the

@@ -5410,15 +5410,24 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const workspaceRoot = yield* fs.makeTempDirectoryScoped({
+      const baseDir = yield* fs.makeTempDirectoryScoped({
         prefix: "awen-ws-operation-result-",
       });
+      const workspaceRoot = yield* fs.makeTempDirectoryScoped({
+        prefix: "awen-ws-operation-result-workspace-",
+      });
+      const { attachmentsDir } = yield* ServerConfig.deriveServerPaths(baseDir, undefined);
+      yield* fs.makeDirectory(attachmentsDir, { recursive: true });
+      const pendingAttachmentId = "pending-00000000-0000-4000-8000-0000000000cc.png";
+      const pendingAttachmentBytes = Buffer.from("pixels");
+      yield* fs.writeFile(path.join(attachmentsDir, pendingAttachmentId), pendingAttachmentBytes);
       let nextSequence = 0;
       const receipts = new Map<
         CommandId,
         { readonly sequence: number; readonly command: OrchestrationCommand }
       >();
       yield* buildAppUnderTest({
+        config: { baseDir },
         layers: {
           orchestrationEngine: {
             dispatch: (command) =>
@@ -5487,7 +5496,15 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                 messageId: MessageId.make("msg-ws-operation-result"),
                 role: "user" as const,
                 text: "hello",
-                attachments: [],
+                attachments: [
+                  {
+                    type: "image" as const,
+                    id: pendingAttachmentId.replace(/\.png$/, ""),
+                    name: "upload.png",
+                    mimeType: "image/png",
+                    sizeBytes: pendingAttachmentBytes.byteLength,
+                  },
+                ],
               },
               runtimeMode: "full-access" as const,
               interactionMode: "default" as const,
@@ -5495,6 +5512,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             };
             const first = yield* client[ORCHESTRATION_WS_METHODS.dispatchCommand](turn);
             const replay = yield* client[ORCHESTRATION_WS_METHODS.dispatchCommand](turn);
+            // Sampled before the second (different-operation) turn so the
+            // replay's side effects are isolated from that legitimate claim.
+            const attachmentFilesAfterReplay = yield* fs.readDirectory(attachmentsDir);
             const accepted = yield* client[ORCHESTRATION_WS_METHODS.getOperationResult]({
               operationId,
             });
@@ -5511,12 +5531,22 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               },
               createdAt: "2026-01-01T00:00:01.000Z",
             });
-            return { first, replay, accepted, unknown, secondTurn };
+            return { first, replay, accepted, unknown, secondTurn, attachmentFilesAfterReplay };
           }),
         ),
       );
 
       assert.deepEqual(result.replay, result.first);
+      // The first dispatch claims one final copy; the replay is answered from
+      // its receipt and must not claim another, which would be unreferenced.
+      const claimedAfterReplay = result.attachmentFilesAfterReplay.filter((entry) =>
+        entry.startsWith("thread-ws-operation-result-"),
+      );
+      assert.equal(claimedAfterReplay.length, 1);
+      assert.deepEqual(
+        result.attachmentFilesAfterReplay.toSorted(),
+        [pendingAttachmentId, claimedAfterReplay[0]].toSorted(),
+      );
       assert.deepEqual(result.accepted, {
         _tag: "accepted",
         operationId,

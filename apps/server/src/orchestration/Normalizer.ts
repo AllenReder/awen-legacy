@@ -74,7 +74,22 @@ const removeClaimedAttachmentPaths = Effect.fn("Normalizer.removeClaimedAttachme
   },
 );
 
-export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
+export interface NormalizeDispatchCommandOptions {
+  /**
+   * Skip every attachment side effect: claiming pending uploads, validating
+   * them and persisting inline data URLs. Callers pass `false` when the
+   * operation identity already has a durable receipt: the engine answers such
+   * a replay from that receipt before it reads the command body, so writing
+   * the attachments again would leave an unreferenced copy behind on every
+   * retry while the pending upload stays the retry source.
+   */
+  readonly materializeAttachments?: boolean;
+}
+
+export const normalizeDispatchCommand = (
+  command: ClientOrchestrationCommand,
+  options?: NormalizeDispatchCommandOptions,
+) =>
   Effect.gen(function* () {
     const receivedAt = DateTime.formatIso(yield* DateTime.now);
     const canonicalCommand = canonicalizeClientCommandTimestamps(command, receivedAt);
@@ -151,6 +166,10 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
       canonicalCommand.type !== "thread.turn.start" &&
       canonicalCommand.type !== "thread.user-input.respond"
     ) {
+      return canonicalCommand as OrchestrationCommand;
+    }
+
+    if (options?.materializeAttachments === false) {
       return canonicalCommand as OrchestrationCommand;
     }
 
