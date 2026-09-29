@@ -66,7 +66,12 @@ function MenuPopup({
           {...props}
         >
           <GlassBackdrop />
-          <div className={cn("relative z-[1] max-h-(--available-height) w-full overflow-y-auto p-1", POPOVER_CONTENT_MOTION_CLASS)}>
+          <div
+            className={cn(
+              "relative z-[1] max-h-(--available-height) w-full overflow-y-auto p-1",
+              POPOVER_CONTENT_MOTION_CLASS,
+            )}
+          >
             {children}
           </div>
         </MenuPrimitive.Popup>

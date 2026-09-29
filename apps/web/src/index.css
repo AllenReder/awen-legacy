@@ -145,11 +145,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(awen-mob
     var(--foreground) var(--selection-subtle-strength),
     transparent
   );
-  --selection: color-mix(
-    in srgb,
-    var(--foreground) var(--selection-strength),
-    transparent
-  );
+  --selection: color-mix(in srgb, var(--foreground) var(--selection-strength), transparent);
   --selection-strong: color-mix(
     in srgb,
     var(--foreground) var(--selection-strong-strength),
