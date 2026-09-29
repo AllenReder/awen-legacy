@@ -9640,6 +9640,108 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect(
+    "resolves the owning Awen Project when bootstrapping from an existing worktree workspace",
+    () =>
+      Effect.gen(function* () {
+        const dispatchedCommands: Array<OrchestrationCommand> = [];
+        const registration = makeBootstrapWorkspaceRegistration({
+          projectId: defaultProjectId,
+          mainRoot: "/tmp/project",
+        });
+        const wtProjectId = ProjectId.make("awen-workspace:wt-existing");
+        (registration.project.workspaces as Array<AwenWorkspaceShell>).push({
+          id: workspaceIdForAwenProject(wtProjectId),
+          projectId: registration.project.id,
+          awenProjectId: wtProjectId,
+          title: "worktree-1",
+          workspaceRoot: "/tmp/project-wt-1",
+          role: "worktree",
+          origin: "awen-created",
+          sessions: [],
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        });
+
+        const threadId = ThreadId.make("thread-bootstrap-from-wt");
+        const existingThreadShell = {
+          id: threadId,
+          projectId: wtProjectId,
+          branch: "feature-wt",
+          worktreePath: "/tmp/project-wt-1",
+          messages: [],
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        };
+
+        yield* buildAppUnderTest({
+          layers: {
+            vcsDriver: {
+              isInsideWorkTree: () => Effect.succeed(true),
+            },
+            gitVcsDriver: {
+              execute: () => Effect.succeed(SUCCESSFUL_GIT_EXECUTION),
+              createWorktree: () =>
+                Effect.succeed({
+                  worktree: { path: "/tmp/wt", refName: "awen/bootstrap-from-wt" },
+                }),
+              ...registration.layers.gitVcsDriver,
+            },
+            vcsDriverRegistry: registration.layers.vcsDriverRegistry,
+            projectionSnapshotQuery: {
+              ...registration.layers.projectionSnapshotQuery,
+              getThreadShellById: (id: ThreadId) =>
+                Effect.succeed(
+                  id === threadId ? Option.some(existingThreadShell as any) : Option.none(),
+                ),
+            },
+            orchestrationEngine: {
+              dispatch: registration.dispatchRecording(dispatchedCommands),
+              readEvents: () => Stream.empty,
+            },
+          },
+        });
+
+        const createdAt = "2026-01-01T00:00:00.000Z";
+        const wsUrl = yield* getWsServerUrl("/ws");
+        yield* Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+              type: "thread.turn.start",
+              commandId: CommandId.make("cmd-bootstrap-from-wt"),
+              threadId,
+              message: {
+                messageId: MessageId.make("msg-bootstrap-from-wt"),
+                role: "user",
+                text: "hello",
+                attachments: [],
+              },
+              modelSelection: defaultModelSelection,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              bootstrap: {
+                prepareWorktree: {
+                  projectCwd: "/tmp/project",
+                  baseBranch: "main",
+                  branch: "awen/bootstrap-from-wt",
+                },
+                runSetupScript: false,
+              },
+              createdAt,
+            }),
+          ),
+        );
+
+        // Verify project.create command registered the new worktree under the parent AwenProject
+        const projectCreate = dispatchedCommands.find(
+          (c): c is Extract<OrchestrationCommand, { type: "project.create" }> =>
+            c.type === "project.create",
+        );
+        assertTrue(projectCreate !== undefined);
+        assert.equal(projectCreate?.awenWorkspace?.awenProjectId, registration.project.id);
+      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect.each([
     { caseName: "the origin remote is missing", hasOrigin: false },
     { caseName: "the base branch exists only locally", hasOrigin: true },

@@ -5644,11 +5644,15 @@ export default function ChatView(props: ChatViewProps) {
   const envMode: DraftThreadEnvMode = canOverrideServerThreadEnvMode
     ? (pendingServerThreadEnvMode ?? draftThread?.envMode ?? derivedEnvMode)
     : derivedEnvMode;
+  const currentGitBranch = gitStatusQuery.data?.refName ?? null;
   const activeThreadBranch =
     canOverrideServerThreadEnvMode && pendingServerThreadBranch !== undefined
       ? pendingServerThreadBranch
       : canOverrideServerThreadEnvMode
-        ? (draftThread?.branch ?? activeThread?.branch ?? null)
+        ? (draftThread?.branch ??
+          (envMode === "worktree"
+            ? (currentGitBranch ?? activeThread?.branch ?? null)
+            : (activeThread?.branch ?? null)))
         : (activeThread?.branch ?? null);
   const startFromOrigin = isLocalDraftThread
     ? (draftThread?.startFromOrigin ?? false)
@@ -5668,10 +5672,10 @@ export default function ChatView(props: ChatViewProps) {
             effectiveEnvMode: envMode,
             activeWorktreePath,
             activeThreadBranch,
-            currentGitBranch: gitStatusQuery.data?.refName ?? null,
+            currentGitBranch,
           })
         : null,
-    [activeThreadBranch, activeWorktreePath, envMode, gitStatusQuery.data?.refName, isServerThread],
+    [activeThreadBranch, activeWorktreePath, currentGitBranch, envMode, isServerThread],
   );
   const activeComposerTasksProgress = useMemo(() => {
     if (!activeLatestTurn || latestTurnSettled || activePlan?.turnId !== activeLatestTurn.turnId) {
@@ -7459,12 +7463,14 @@ export default function ChatView(props: ChatViewProps) {
     // worktree (worktreePath set), which must not create anything.
     const pendingNewWorktree =
       sendEnvMode === "worktree" && (canOverrideServerThreadEnvMode || !activeThread.worktreePath);
-    const baseBranchForWorktree = isFirstMessage && pendingNewWorktree ? activeThreadBranch : null;
+    const effectiveBaseBranch =
+      activeThreadBranch ?? (pendingNewWorktree ? (currentGitBranch ?? null) : null);
+    const baseBranchForWorktree = isFirstMessage && pendingNewWorktree ? effectiveBaseBranch : null;
 
     // In worktree mode, require an explicit base branch so we don't silently
     // fall back to local execution when branch selection is missing.
     const shouldCreateWorktree = isFirstMessage && pendingNewWorktree;
-    if (shouldCreateWorktree && !activeThreadBranch) {
+    if (shouldCreateWorktree && !baseBranchForWorktree) {
       setThreadError(threadIdForSend, "Select a base branch before sending in New worktree mode.");
       return;
     }
@@ -8841,10 +8847,20 @@ export default function ChatView(props: ChatViewProps) {
           ? (draftThread?.worktreeBranchName ?? buildTemporaryWorktreeBranchName(randomHex))
           : null;
       if (canOverrideServerThreadEnvMode) {
+        const defaultBranch =
+          mode === "worktree" && !draftThread?.branch && !activeThread?.branch
+            ? (currentGitBranch ?? null)
+            : undefined;
         setPendingServerThreadEnvMode(mode);
+        if (defaultBranch !== undefined && defaultBranch !== null) {
+          setPendingServerThreadBranch(defaultBranch);
+        }
         setDraftThreadContext(composerDraftTarget, {
           envMode: mode,
           worktreeBranchName,
+          ...(defaultBranch !== undefined && defaultBranch !== null
+            ? { branch: defaultBranch }
+            : {}),
           startFromOrigin: resolveNewDraftStartFromOrigin({
             envMode: mode,
             newWorktreesStartFromOrigin: activeProjectSettings.settings.newWorktreesStartFromOrigin,
@@ -8870,11 +8886,14 @@ export default function ChatView(props: ChatViewProps) {
     [
       canOverrideServerThreadEnvMode,
       composerDraftTarget,
+      currentGitBranch,
+      draftThread?.branch,
       draftThread?.worktreePath,
       draftThread?.worktreeBranchName,
       isLocalDraftThread,
       activeProjectSettings.settings.newWorktreesStartFromOrigin,
       setPendingServerThreadEnvMode,
+      setPendingServerThreadBranch,
       scheduleComposerFocus,
       setDraftThreadContext,
     ],

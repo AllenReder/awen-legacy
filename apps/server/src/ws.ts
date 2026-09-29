@@ -21,6 +21,7 @@ import {
   type AuthAccessStreamEvent,
   type AuthEnvironmentScope,
   AuthSessionId,
+  type AwenProjectId,
   awenProjectIdForAwenProject,
   projectTerminalSessions,
   workspaceIdForAwenProject,
@@ -602,6 +603,7 @@ const makeWsRpcLayer = (
         const currentSessionId = currentSession.sessionId;
         const crypto = yield* Crypto.Crypto;
         const sql = yield* SqlClient.SqlClient;
+        const path = yield* Path.Path;
         const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
         /** A reference's host-level link key; the project's own host where the ref names none. */
         const resolvePullRequestSyncKey = (reference: PullRequestRef) =>
@@ -1200,6 +1202,8 @@ const makeWsRpcLayer = (
           Effect.gen(function* () {
             const bootstrap = command.bootstrap;
             const { bootstrap: _bootstrap, ...finalTurnStartCommand } = command;
+            const isSamePath = (left: string, right: string) =>
+              path.resolve(left) === path.resolve(right);
             let createdThread = false;
             let targetProjectId = bootstrap?.createThread?.projectId;
             let targetProjectCwd = bootstrap?.prepareWorktree?.projectCwd;
@@ -1618,30 +1622,82 @@ const makeWsRpcLayer = (
                 // "Git succeeded but registration failed" retry-reuse
                 // semantics, so a resend with the same pinned branch name
                 // reuses the half-made directory instead of duplicating it.
-                const worktreeProjectId = yield* (
-                  targetProjectId
-                    ? Effect.succeed(Option.some(targetProjectId))
-                    : projectionSnapshotQuery
+                const resolvedAwenProjectId = yield* Effect.gen(function* () {
+                  const rawProjectId = targetProjectId
+                    ? Option.some(targetProjectId)
+                    : yield* projectionSnapshotQuery
                         .getThreadShellById(threadId)
-                        .pipe(Effect.map(Option.map((shell) => shell.projectId)))
-                ).pipe(
-                  Effect.flatMap(
-                    Option.match({
-                      onNone: () =>
-                        Effect.fail(
-                          new OrchestrationDispatchCommandError({
-                            message:
-                              "Could not resolve the thread's Project for worktree creation.",
-                          }),
-                        ),
-                      onSome: (projectId) => Effect.succeed(projectId),
-                    }),
-                  ),
-                );
+                        .pipe(Effect.map(Option.map((shell) => shell.projectId)));
+                  if (Option.isNone(rawProjectId)) {
+                    return yield* new OrchestrationDispatchCommandError({
+                      message: "Could not resolve the thread's Project for worktree creation.",
+                    });
+                  }
+                  const candidateId = rawProjectId.value;
+
+                  // 1. Inspect the full shell snapshot to find which AwenProject owns
+                  // candidateId or matches projectCwd.
+                  const snapshot = yield* projectionSnapshotQuery.getShellSnapshot().pipe(
+                    Effect.catchCause(() =>
+                      Effect.succeed({
+                        awenProjects: [] as ReadonlyArray<
+                          import("@awen/contracts").AwenProjectShell
+                        >,
+                      }),
+                    ),
+                  );
+                  const matchedProject = (snapshot.awenProjects ?? []).find(
+                    (p) =>
+                      p.id === (candidateId as unknown as AwenProjectId) ||
+                      p.id === awenProjectIdForAwenProject(candidateId) ||
+                      p.workspaces.some(
+                        (w) =>
+                          w.awenProjectId === candidateId ||
+                          (prepareWorktree &&
+                            isSamePath(w.workspaceRoot, prepareWorktree.projectCwd)),
+                      ),
+                  );
+                  if (matchedProject !== undefined) {
+                    return matchedProject.id;
+                  }
+
+                  // 2. Direct lookup by AwenProjectId (e.g. if candidateId is already an AwenProjectId).
+                  const getProjectById = projectionSnapshotQuery.getAwenProjectById;
+                  if (getProjectById) {
+                    const byIdDirect = yield* getProjectById(
+                      candidateId as unknown as AwenProjectId,
+                    ).pipe(Effect.catchCause(() => Effect.succeedNone));
+                    if (Option.isSome(byIdDirect)) {
+                      return byIdDirect.value.id;
+                    }
+
+                    const byIdConstructed = yield* getProjectById(
+                      awenProjectIdForAwenProject(candidateId),
+                    ).pipe(Effect.catchCause(() => Effect.succeedNone));
+                    if (Option.isSome(byIdConstructed)) {
+                      return byIdConstructed.value.id;
+                    }
+                  }
+
+                  // 3. If candidateId is an orchestration ProjectId of a workspace,
+                  // getAwenProjectByAwenProjectId resolves the owning Awen navigation Project.
+                  const getProjectByAwenProjectId =
+                    projectionSnapshotQuery.getAwenProjectByAwenProjectId;
+                  if (getProjectByAwenProjectId) {
+                    const byAwenProjectId = yield* getProjectByAwenProjectId(candidateId).pipe(
+                      Effect.catchCause(() => Effect.succeedNone),
+                    );
+                    if (Option.isSome(byAwenProjectId)) {
+                      return byAwenProjectId.value.id;
+                    }
+                  }
+
+                  return awenProjectIdForAwenProject(candidateId);
+                });
                 let checkoutTotal: number | null = null;
                 const createdWorktree = yield* workspaceService.createWorktree(
                   {
-                    projectId: awenProjectIdForAwenProject(worktreeProjectId),
+                    projectId: resolvedAwenProjectId,
                     baseRef: worktreeBaseRef,
                     newBranch: prepareWorktree.branch,
                     ...(bootstrap?.createThread?.title
