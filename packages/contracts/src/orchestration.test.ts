@@ -563,7 +563,7 @@ it.effect("accepts bootstrap metadata in thread.turn.start", () =>
           createdAt: "2026-01-01T00:00:00.000Z",
         },
         prepareWorktree: {
-          projectCwd: "/tmp/workspace",
+          sourceWorkspaceId: "workspace-1",
           baseBranch: "main",
           branch: "awen/example",
           startFromOrigin: true,
@@ -573,6 +573,7 @@ it.effect("accepts bootstrap metadata in thread.turn.start", () =>
       createdAt: "2026-01-01T00:00:00.000Z",
     });
     assert.strictEqual(parsed.bootstrap?.createThread?.projectId, "project-1");
+    assert.strictEqual(parsed.bootstrap?.prepareWorktree?.sourceWorkspaceId, "workspace-1");
     assert.strictEqual(parsed.bootstrap?.prepareWorktree?.baseBranch, "main");
     assert.strictEqual(parsed.bootstrap?.prepareWorktree?.startFromOrigin, true);
     assert.strictEqual(parsed.bootstrap?.runSetupScript, true);

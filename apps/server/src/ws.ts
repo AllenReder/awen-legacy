@@ -583,6 +583,11 @@ const makeWsRpcLayer = (
   const awenSessionRpcLayer = WsAwenSessionRpcGroup.toLayer(
     Effect.gen(function* () {
       return WsAwenSessionRpcGroup.of({
+        [WS_METHODS.awenSessionSelectRef]: (input) =>
+          observeAwenManagementRpcEffect(
+            WS_METHODS.awenSessionSelectRef,
+            sessionService.selectRef(input),
+          ),
         [WS_METHODS.awenSessionMigrateToWorkspace]: (input) =>
           observeAwenManagementRpcEffect(
             WS_METHODS.awenSessionMigrateToWorkspace,
@@ -1206,7 +1211,7 @@ const makeWsRpcLayer = (
               path.resolve(left) === path.resolve(right);
             let createdThread = false;
             let targetProjectId = bootstrap?.createThread?.projectId;
-            let targetProjectCwd = bootstrap?.prepareWorktree?.projectCwd;
+            let targetProjectCwd: string | undefined;
             let targetWorktreePath = bootstrap?.createThread?.worktreePath ?? null;
             // Set by the setup-timeout watcher so the interrupt handler can
             // report a failure with a reason instead of a user cancel.
@@ -1456,7 +1461,33 @@ const makeWsRpcLayer = (
               });
 
             const bootstrapProgram = Effect.gen(function* () {
-              const prepareWorktree = bootstrap?.prepareWorktree;
+              const requestedWorktree = bootstrap?.prepareWorktree;
+              const sourceWorkspace = requestedWorktree
+                ? (yield* projectionSnapshotQuery.getShellSnapshot()).awenProjects
+                    ?.flatMap((project) => project.workspaces)
+                    .find((workspace) => workspace.id === requestedWorktree.sourceWorkspaceId)
+                : undefined;
+              if (requestedWorktree && !sourceWorkspace) {
+                return yield* new OrchestrationDispatchCommandError({
+                  message: "The source Workspace is not registered.",
+                });
+              }
+              const prepareWorktree =
+                requestedWorktree && sourceWorkspace
+                  ? { ...requestedWorktree, projectCwd: sourceWorkspace.workspaceRoot }
+                  : undefined;
+              if (sourceWorkspace) {
+                const existing = yield* projectionSnapshotQuery.getThreadShellById(threadId);
+                const assignedProjectId = Option.isSome(existing)
+                  ? existing.value.projectId
+                  : bootstrap?.createThread?.projectId;
+                if (assignedProjectId !== sourceWorkspace.awenProjectId) {
+                  return yield* new OrchestrationDispatchCommandError({
+                    message: "The Session's Workspace changed before worktree setup.",
+                  });
+                }
+                targetProjectCwd = sourceWorkspace.workspaceRoot;
+              }
               let shouldPrepareWorktree = prepareWorktree
                 ? yield* gitWorkflow.isRepository(prepareWorktree.projectCwd)
                 : false;
@@ -1622,58 +1653,7 @@ const makeWsRpcLayer = (
                 // "Git succeeded but registration failed" retry-reuse
                 // semantics, so a resend with the same pinned branch name
                 // reuses the half-made directory instead of duplicating it.
-                const resolvedAwenProjectId = yield* Effect.gen(function* () {
-                  const rawProjectId = targetProjectId
-                    ? Option.some(targetProjectId)
-                    : yield* projectionSnapshotQuery
-                        .getThreadShellById(threadId)
-                        .pipe(Effect.map(Option.map((shell) => shell.projectId)));
-                  if (Option.isNone(rawProjectId)) {
-                    return yield* new OrchestrationDispatchCommandError({
-                      message: "Could not resolve the thread's Project for worktree creation.",
-                    });
-                  }
-                  const candidateId = rawProjectId.value;
-
-                  // 1. Inspect the full shell snapshot to find which AwenProject owns
-                  // candidateId or matches projectCwd.
-                  const snapshot = yield* projectionSnapshotQuery.getShellSnapshot().pipe(
-                    Effect.catchCause(() =>
-                      Effect.succeed({
-                        awenProjects: [] as ReadonlyArray<
-                          import("@awen/contracts").AwenProjectShell
-                        >,
-                      }),
-                    ),
-                  );
-                  const matchedProject = (snapshot.awenProjects ?? []).find(
-                    (p) =>
-                      p.id === (candidateId as unknown as AwenProjectId) ||
-                      p.id === awenProjectIdForAwenProject(candidateId) ||
-                      p.workspaces.some(
-                        (w) =>
-                          w.awenProjectId === candidateId ||
-                          (prepareWorktree &&
-                            isSamePath(w.workspaceRoot, prepareWorktree.projectCwd)),
-                      ),
-                  );
-                  if (matchedProject !== undefined) {
-                    return matchedProject.id;
-                  }
-
-                  // 2. Direct lookup by AwenProjectId (e.g. for mocked unit tests).
-                  const getProjectById = projectionSnapshotQuery.getAwenProjectById;
-                  if (getProjectById) {
-                    const byId = yield* getProjectById(
-                      awenProjectIdForAwenProject(candidateId),
-                    ).pipe(Effect.catchCause(() => Effect.succeedNone));
-                    if (Option.isSome(byId)) {
-                      return byId.value.id;
-                    }
-                  }
-
-                  return awenProjectIdForAwenProject(candidateId);
-                });
+                const resolvedAwenProjectId = sourceWorkspace!.projectId;
                 let checkoutTotal: number | null = null;
                 const createdWorktree = yield* workspaceService.createWorktree(
                   {

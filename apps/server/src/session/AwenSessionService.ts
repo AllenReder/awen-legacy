@@ -1,4 +1,9 @@
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import {
+  type AgentSessionSelectRefInput,
+  type AgentSessionSelectRefResult,
+  workspaceIdForAwenProject,
   AgentSessionOperationError,
   AgentSessionId,
   type AgentSessionMigrateToWorkspaceInput,
@@ -49,6 +54,9 @@ import * as SessionExecutionLock from "./SessionExecutionLock.ts";
 export class AwenSessionService extends Context.Service<
   AwenSessionService,
   {
+    readonly selectRef: (
+      input: AgentSessionSelectRefInput,
+    ) => Effect.Effect<AgentSessionSelectRefResult, AgentSessionOperationError>;
     readonly migrateToWorkspace: (
       input: AgentSessionMigrateToWorkspaceInput,
     ) => Effect.Effect<AgentSessionMigrateToWorkspaceResult, AgentSessionOperationError>;
@@ -174,6 +182,8 @@ function mapAssociateError(
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
+  const git = yield* GitVcsDriver.GitVcsDriver;
+  const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
   const sql = yield* SqlClient.SqlClient;
   const crypto = yield* Crypto.Crypto;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -339,9 +349,6 @@ export const make = Effect.gen(function* () {
   const committedCwdForThread = Effect.fnUntraced(function* (
     thread: Pick<OrchestrationThreadShell, "projectId" | "worktreePath">,
   ) {
-    if (thread.worktreePath !== null && thread.worktreePath.trim() !== "") {
-      return thread.worktreePath;
-    }
     const project = yield* readProjectWorkspaceRoot(thread.projectId);
     return project?.workspaceRoot;
   });
@@ -613,215 +620,283 @@ export const make = Effect.gen(function* () {
       );
     }
 
-    return yield* withExecutionLock(
-      Effect.gen(function* () {
-        const pending = yield* reconcileRecovery(threadId);
-        if (Option.isSome(pending)) {
-          return yield* failSession(
-            "migration-recovery-required",
-            "A previous migration must be verified before this Session can move again.",
-            {
-              agentSessionId: input.agentSessionId,
-              workspaceId: pending.value.intendedWorkspaceId,
-              recovery: pending.value,
-            },
-          );
-        }
+    return yield* Effect.gen(function* () {
+      const pending = yield* reconcileRecovery(threadId);
+      if (Option.isSome(pending)) {
+        return yield* failSession(
+          "migration-recovery-required",
+          "A previous migration must be verified before this Session can move again.",
+          {
+            agentSessionId: input.agentSessionId,
+            workspaceId: pending.value.intendedWorkspaceId,
+            recovery: pending.value,
+          },
+        );
+      }
 
-        const thread = yield* readThread(threadId);
-        if (thread === undefined) {
-          return yield* failSession(
-            "session-not-found",
-            `Agent Session '${threadId}' was not found.`,
-            { agentSessionId: input.agentSessionId },
-          );
-        }
-        if (thread.projectId === targetWorkspace.awenProjectId) {
-          return yield* failSession(
-            "already-in-workspace",
-            `Agent Session '${threadId}' is already assigned to this Workspace.`,
-            { agentSessionId: input.agentSessionId, workspaceId: targetWorkspaceId },
-          );
-        }
-        if (thread.archivedAt !== null) {
-          return yield* failSession(
-            "session-archived",
-            `Agent Session '${threadId}' is archived; restore it before migrating.`,
-            { agentSessionId: input.agentSessionId, workspaceId: targetWorkspaceId },
-          );
-        }
-        if (isOrchestrationSessionExecuting(thread.session)) {
-          return yield* failSession(
-            "session-executing",
-            `Agent Session '${threadId}' is executing. Stop it before migrating; migration is not queued.`,
-            { agentSessionId: input.agentSessionId, workspaceId: targetWorkspaceId },
-          );
-        }
+      const thread = yield* readThread(threadId);
+      if (thread === undefined) {
+        return yield* failSession(
+          "session-not-found",
+          `Agent Session '${threadId}' was not found.`,
+          { agentSessionId: input.agentSessionId },
+        );
+      }
+      if (thread.projectId === targetWorkspace.awenProjectId) {
+        return yield* failSession(
+          "already-in-workspace",
+          `Agent Session '${threadId}' is already assigned to this Workspace.`,
+          { agentSessionId: input.agentSessionId, workspaceId: targetWorkspaceId },
+        );
+      }
+      if (thread.archivedAt !== null) {
+        return yield* failSession(
+          "session-archived",
+          `Agent Session '${threadId}' is archived; restore it before migrating.`,
+          { agentSessionId: input.agentSessionId, workspaceId: targetWorkspaceId },
+        );
+      }
+      if (isOrchestrationSessionExecuting(thread.session)) {
+        return yield* failSession(
+          "session-executing",
+          `Agent Session '${threadId}' is executing. Stop it before migrating; migration is not queued.`,
+          { agentSessionId: input.agentSessionId, workspaceId: targetWorkspaceId },
+        );
+      }
 
-        const targetCwd = targetWorkspace.workspaceRoot;
-        const targetStat = yield* fileSystem
-          .stat(targetCwd)
-          .pipe(Effect.orElseSucceed(() => undefined));
-        if (targetStat === undefined || targetStat.type !== "Directory") {
-          return yield* failSession(
-            "target-directory-missing",
-            `Workspace '${targetWorkspace.title}' has no directory at '${targetCwd}'.`,
-            { agentSessionId: input.agentSessionId, workspaceId: targetWorkspaceId },
-          );
-        }
+      const targetCwd = targetWorkspace.workspaceRoot;
+      const targetStat = yield* fileSystem
+        .stat(targetCwd)
+        .pipe(Effect.orElseSucceed(() => undefined));
+      if (targetStat === undefined || targetStat.type !== "Directory") {
+        return yield* failSession(
+          "target-directory-missing",
+          `Workspace '${targetWorkspace.title}' has no directory at '${targetCwd}'.`,
+          { agentSessionId: input.agentSessionId, workspaceId: targetWorkspaceId },
+        );
+      }
 
-        const committedCwd = yield* committedCwdForThread(thread);
-        const committedProjectId = thread.projectId;
-        const activeSession = yield* activeProviderSession(threadId);
-        const nowIso = DateTime.formatIso(yield* DateTime.now);
+      const committedCwd = yield* committedCwdForThread(thread);
+      const committedProjectId = thread.projectId;
+      const activeSession = yield* activeProviderSession(threadId);
+      const nowIso = DateTime.formatIso(yield* DateTime.now);
 
-        // Recorded only after the provider has actually moved. A row written
-        // before the move could be cleared by a concurrent send that still sees
-        // the provider at the committed directory, erasing the recovery state
-        // for a later failed commit.
-        const recordMovedRecovery = (detail: string) =>
-          upsertRecovery({
-            threadId,
-            intendedWorkspaceId: targetWorkspaceId,
-            intendedProjectId: targetWorkspace.awenProjectId,
-            intendedCwd: targetCwd,
-            committedProjectId,
-            ...(committedCwd !== undefined ? { committedCwd } : {}),
-            providerMoved: true,
-            detail,
-            createdAt: nowIso,
-            updatedAt: nowIso,
-          });
-
-        let providerMoved = false;
-        let providerCwd: string | undefined;
-        const providerAlreadyAtTarget =
-          activeSession?.cwd !== undefined && sameDirectory(activeSession.cwd, targetCwd);
-        if (activeSession !== undefined && !providerAlreadyAtTarget) {
-          const hasResumeCursor =
-            activeSession.resumeCursor !== undefined && activeSession.resumeCursor !== null;
-          const hasExecuted = thread.latestTurn !== null;
-          if (!hasResumeCursor && hasExecuted) {
-            return yield* failSession(
-              "provider-resume-unsupported",
-              `Provider session for '${threadId}' has no resume state; migrating would lose the conversation.`,
-              { agentSessionId: input.agentSessionId, workspaceId: targetWorkspaceId },
-            );
-          }
-          if (activeSession.providerInstanceId === undefined) {
-            return yield* failSession(
-              "provider-move-failed",
-              `Provider session for '${threadId}' has no provider instance id and cannot be relocated.`,
-              { agentSessionId: input.agentSessionId, workspaceId: targetWorkspaceId },
-            );
-          }
-          // The provider accepts the candidate directory directly, before any
-          // committed assignment is published.
-          const moved = yield* providerService
-            .startSession(threadId, {
-              threadId,
-              provider: activeSession.provider,
-              providerInstanceId: activeSession.providerInstanceId,
-              cwd: targetCwd,
-              ...(hasResumeCursor ? { resumeCursor: activeSession.resumeCursor } : {}),
-              modelSelection: thread.modelSelection,
-              runtimeMode: thread.runtimeMode,
-              ...(thread.title ? { title: thread.title } : {}),
-            })
-            .pipe(Effect.result);
-          if (Result.isFailure(moved)) {
-            return yield* failSession(
-              "provider-move-failed",
-              `Provider session for '${threadId}' could not be moved to '${targetCwd}'.`,
-              {
-                agentSessionId: input.agentSessionId,
-                workspaceId: targetWorkspaceId,
-                cause: moved.failure,
-              },
-            );
-          }
-          providerMoved = true;
-          providerCwd = moved.success.cwd ?? targetCwd;
-          yield* recordMovedRecovery("Provider moved; publishing the Workspace assignment.");
-        }
-
-        const commandId = CommandId.make(`awen-session:migrate:${yield* crypto.randomUUIDv4}`);
-        const committed = yield* dispatchAssignment({
+      // Recorded only after the provider has actually moved. A row written
+      // before the move could be cleared by a concurrent send that still sees
+      // the provider at the committed directory, erasing the recovery state
+      // for a later failed commit.
+      const recordMovedRecovery = (detail: string) =>
+        upsertRecovery({
           threadId,
-          target: targetWorkspace,
-          expectedProjectId: committedProjectId,
-          commandId,
-        }).pipe(Effect.result);
-        if (Result.isFailure(committed)) {
-          if (providerMoved) {
-            // A concurrent reconciler may have already published the same
-            // assignment (and then failed its own commit). If the thread now
-            // points at the target, the migration is complete; treat it as
-            // success rather than reporting a false failure.
-            const latest = yield* readThread(threadId);
-            if (latest !== undefined && latest.projectId === targetWorkspace.awenProjectId) {
-              yield* clearRecovery(threadId);
-              return {
-                agentSessionId: input.agentSessionId,
-                workspaceId: targetWorkspaceId,
-                providerMoved,
-                ...(providerCwd !== undefined ? { providerCwd } : {}),
-              } satisfies AgentSessionMigrateToWorkspaceResult;
-            }
-            const recovery = yield* readRecovery(threadId);
-            return yield* failSession(
-              "assignment-commit-failed",
-              `Provider session for '${threadId}' moved but the Workspace assignment could not be committed. Sends are blocked until it is recovered.`,
-              {
-                agentSessionId: input.agentSessionId,
-                workspaceId: targetWorkspaceId,
-                ...(Option.isSome(recovery) ? { recovery: toRecovery(recovery.value) } : {}),
-                cause: committed.failure,
-              },
-            );
-          }
-          yield* clearRecovery(threadId);
+          intendedWorkspaceId: targetWorkspaceId,
+          intendedProjectId: targetWorkspace.awenProjectId,
+          intendedCwd: targetCwd,
+          committedProjectId,
+          ...(committedCwd !== undefined ? { committedCwd } : {}),
+          providerMoved: true,
+          detail,
+          createdAt: nowIso,
+          updatedAt: nowIso,
+        });
+
+      let providerMoved = false;
+      let providerCwd: string | undefined;
+      const providerAlreadyAtTarget =
+        activeSession?.cwd !== undefined && sameDirectory(activeSession.cwd, targetCwd);
+      if (activeSession !== undefined && !providerAlreadyAtTarget) {
+        const hasResumeCursor =
+          activeSession.resumeCursor !== undefined && activeSession.resumeCursor !== null;
+        const hasExecuted = thread.latestTurn !== null;
+        if (!hasResumeCursor && hasExecuted) {
           return yield* failSession(
-            "assignment-commit-failed",
-            `Workspace assignment for '${threadId}' could not be committed.`,
+            "provider-resume-unsupported",
+            `Provider session for '${threadId}' has no resume state; migrating would lose the conversation.`,
+            { agentSessionId: input.agentSessionId, workspaceId: targetWorkspaceId },
+          );
+        }
+        if (activeSession.providerInstanceId === undefined) {
+          return yield* failSession(
+            "provider-move-failed",
+            `Provider session for '${threadId}' has no provider instance id and cannot be relocated.`,
+            { agentSessionId: input.agentSessionId, workspaceId: targetWorkspaceId },
+          );
+        }
+        // The provider accepts the candidate directory directly, before any
+        // committed assignment is published.
+        const moved = yield* providerService
+          .startSession(threadId, {
+            threadId,
+            provider: activeSession.provider,
+            providerInstanceId: activeSession.providerInstanceId,
+            cwd: targetCwd,
+            ...(hasResumeCursor ? { resumeCursor: activeSession.resumeCursor } : {}),
+            modelSelection: thread.modelSelection,
+            runtimeMode: thread.runtimeMode,
+            ...(thread.title ? { title: thread.title } : {}),
+          })
+          .pipe(Effect.result);
+        if (Result.isFailure(moved)) {
+          return yield* failSession(
+            "provider-move-failed",
+            `Provider session for '${threadId}' could not be moved to '${targetCwd}'.`,
             {
               agentSessionId: input.agentSessionId,
               workspaceId: targetWorkspaceId,
+              cause: moved.failure,
+            },
+          );
+        }
+        providerMoved = true;
+        providerCwd = moved.success.cwd ?? targetCwd;
+        yield* recordMovedRecovery("Provider moved; publishing the Workspace assignment.");
+      }
+
+      const commandId = CommandId.make(`awen-session:migrate:${yield* crypto.randomUUIDv4}`);
+      const committed = yield* dispatchAssignment({
+        threadId,
+        target: targetWorkspace,
+        expectedProjectId: committedProjectId,
+        commandId,
+      }).pipe(Effect.result);
+      if (Result.isFailure(committed)) {
+        if (providerMoved) {
+          // A concurrent reconciler may have already published the same
+          // assignment (and then failed its own commit). If the thread now
+          // points at the target, the migration is complete; treat it as
+          // success rather than reporting a false failure.
+          const latest = yield* readThread(threadId);
+          if (latest !== undefined && latest.projectId === targetWorkspace.awenProjectId) {
+            yield* clearRecovery(threadId);
+            return {
+              agentSessionId: input.agentSessionId,
+              workspaceId: targetWorkspaceId,
+              providerMoved,
+              ...(providerCwd !== undefined ? { providerCwd } : {}),
+            } satisfies AgentSessionMigrateToWorkspaceResult;
+          }
+          const recovery = yield* readRecovery(threadId);
+          return yield* failSession(
+            "assignment-commit-failed",
+            `Provider session for '${threadId}' moved but the Workspace assignment could not be committed. Sends are blocked until it is recovered.`,
+            {
+              agentSessionId: input.agentSessionId,
+              workspaceId: targetWorkspaceId,
+              ...(Option.isSome(recovery) ? { recovery: toRecovery(recovery.value) } : {}),
               cause: committed.failure,
             },
           );
         }
-
         yield* clearRecovery(threadId);
-        // The thread left the source Awen workspace; nudge its Sidebar owner to
-        // refetch so the moved row is not shown under the old Workspace.
-        yield* orchestrationEngine
-          .dispatch({
-            type: "project.meta.update",
-            commandId: CommandId.make(`${commandId}:source-workspace`),
-            projectId: committedProjectId,
-          })
-          .pipe(
-            Effect.catchCause((cause) =>
-              Effect.logWarning(
-                "failed to notify the source Workspace after an Agent Session migration",
-                { threadId, projectId: committedProjectId, cause: Cause.pretty(cause) },
-              ),
-            ),
-          );
+        return yield* failSession(
+          "assignment-commit-failed",
+          `Workspace assignment for '${threadId}' could not be committed.`,
+          {
+            agentSessionId: input.agentSessionId,
+            workspaceId: targetWorkspaceId,
+            cause: committed.failure,
+          },
+        );
+      }
 
-        return {
-          agentSessionId: input.agentSessionId,
-          workspaceId: targetWorkspaceId,
-          providerMoved,
-          ...(providerCwd !== undefined ? { providerCwd } : {}),
-        } satisfies AgentSessionMigrateToWorkspaceResult;
-      }),
-    );
+      yield* clearRecovery(threadId);
+      return {
+        agentSessionId: input.agentSessionId,
+        workspaceId: targetWorkspaceId,
+        providerMoved,
+        ...(providerCwd !== undefined ? { providerCwd } : {}),
+      } satisfies AgentSessionMigrateToWorkspaceResult;
+    });
   });
 
+  const selectRef: AwenSessionService["Service"]["selectRef"] = (input) =>
+    normalizeSessionError(
+      withExecutionLock(
+        Effect.gen(function* () {
+          const threadId = ThreadId.make(input.agentSessionId);
+          const thread = yield* readThread(threadId);
+          if (!thread)
+            return yield* failSession("session-not-found", "Agent Session was not found.");
+          const workspaceId = workspaceIdForAwenProject(thread.projectId);
+          if (workspaceId !== input.expectedWorkspaceId) {
+            return yield* failSession(
+              "assignment-changed",
+              "The Session moved. Refresh its Workspace before selecting a branch.",
+            );
+          }
+          if (thread.archivedAt !== null)
+            return yield* failSession(
+              "session-archived",
+              "Restore the Session before switching branches.",
+            );
+          if (isOrchestrationSessionExecuting(thread.session))
+            return yield* failSession(
+              "session-executing",
+              "Stop the Agent before switching branches.",
+            );
+          const recovery = yield* reconcileRecovery(threadId);
+          if (Option.isSome(recovery))
+            return yield* failSession(
+              "migration-recovery-required",
+              "Recover the previous migration before switching branches.",
+            );
+          const workspace = yield* readWorkspace(workspaceId);
+          if (Option.isNone(workspace))
+            return yield* failSession(
+              "workspace-not-found",
+              "The Session's Workspace was not found.",
+            );
+          const cwd = workspace.value.workspaceRoot;
+          let refs = yield* git.listRefs({ cwd, query: input.refName, refresh: true });
+          let ref = refs.refs.find((candidate) => candidate.name === input.refName);
+          while (!ref && refs.nextCursor !== null) {
+            refs = yield* git.listRefs({ cwd, query: input.refName, cursor: refs.nextCursor });
+            ref = refs.refs.find((candidate) => candidate.name === input.refName);
+          }
+          if (
+            !input.create &&
+            ref?.current &&
+            (!ref.worktreePath || sameDirectory(ref.worktreePath, cwd))
+          ) {
+            return { workspaceId, refName: ref.name };
+          }
+          if (!input.create && ref?.worktreePath && !sameDirectory(ref.worktreePath, cwd)) {
+            const moved = yield* migrateToWorkspaceUnsafe({
+              agentSessionId: input.agentSessionId,
+              targetPath: ref.worktreePath,
+            });
+            return { workspaceId: moved.workspaceId, refName: ref.name };
+          }
+          // A checkout affects every Agent using this directory, not just the caller.
+          const snapshot = yield* projectionQuery.getSnapshot();
+          if (
+            snapshot.threads.some(
+              (candidate) =>
+                candidate.projectId === thread.projectId &&
+                isOrchestrationSessionExecuting(candidate.session),
+            )
+          ) {
+            return yield* failSession(
+              "session-executing",
+              "Stop all Agents in this Workspace before switching branches.",
+            );
+          }
+          const result = input.create
+            ? yield* git.createRef({ cwd, refName: input.refName, switchRef: true })
+            : yield* git.switchRef({ cwd, refName: input.refName });
+          yield* gitWorkflow.invalidateStatus(cwd);
+          yield* orchestrationEngine.dispatch({
+            type: "thread.meta.update",
+            commandId: CommandId.make(`awen-session:select-ref:${yield* crypto.randomUUIDv4}`),
+            threadId,
+            branch: result.refName,
+          });
+          return { workspaceId, refName: result.refName };
+        }),
+      ),
+    );
+
   const migrateToWorkspace: AwenSessionService["Service"]["migrateToWorkspace"] = (input) =>
-    normalizeSessionError(migrateToWorkspaceUnsafe(input));
+    normalizeSessionError(withExecutionLock(migrateToWorkspaceUnsafe(input)));
 
   const getMigrationStateUnsafe = Effect.fn("AwenSessionService.getMigrationState")(function* (
     input: AgentSessionMigrationStateInput,
@@ -888,6 +963,7 @@ export const make = Effect.gen(function* () {
   );
 
   return AwenSessionService.of({
+    selectRef,
     migrateToWorkspace,
     getMigrationState,
     assertSendAllowed,

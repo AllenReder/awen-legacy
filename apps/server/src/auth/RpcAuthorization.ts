@@ -134,6 +134,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.awenWorkspaceRemove]: AuthOrchestrationOperateScope,
   [WS_METHODS.awenWorkspaceRename]: AuthOrchestrationOperateScope,
   [WS_METHODS.awenProjectRename]: AuthOrchestrationOperateScope,
+  [WS_METHODS.awenSessionSelectRef]: "orchestration:operate",
   [WS_METHODS.awenSessionMigrateToWorkspace]: AuthOrchestrationOperateScope,
   [WS_METHODS.awenSessionGetMigrationState]: AuthOrchestrationReadScope,
   [WS_METHODS.reviewGetDiffPreview]: AuthReviewWriteScope,

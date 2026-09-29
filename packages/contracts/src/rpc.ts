@@ -69,6 +69,8 @@ import {
 } from "./workspace.ts";
 import {
   AgentSessionOperationError,
+  AgentSessionSelectRefInput,
+  AgentSessionSelectRefResult,
   AgentSessionMigrateToWorkspaceInput,
   AgentSessionMigrateToWorkspaceResult,
   AgentSessionMigrationStateInput,
@@ -333,6 +335,7 @@ export const WS_METHODS = {
   awenProjectRename: "awenProject.rename",
 
   // Awen Agent Session methods
+  awenSessionSelectRef: "awenSession.selectRef",
   awenSessionMigrateToWorkspace: "awenSession.migrateToWorkspace",
   awenSessionGetMigrationState: "awenSession.getMigrationState",
 
@@ -1083,6 +1086,12 @@ const WsAwenProjectRenameRpc = Rpc.make(WS_METHODS.awenProjectRename, {
   error: Schema.Union([AwenWorkspaceError, EnvironmentAuthorizationError]),
 });
 
+const WsAwenSessionSelectRefRpc = Rpc.make(WS_METHODS.awenSessionSelectRef, {
+  payload: AgentSessionSelectRefInput,
+  success: AgentSessionSelectRefResult,
+  error: Schema.Union([AgentSessionOperationError, EnvironmentAuthorizationError]),
+});
+
 const WsAwenSessionMigrateToWorkspaceRpc = Rpc.make(WS_METHODS.awenSessionMigrateToWorkspace, {
   payload: AgentSessionMigrateToWorkspaceInput,
   success: AgentSessionMigrateToWorkspaceResult,
@@ -1508,6 +1517,7 @@ export const WsAwenWorkspaceRpcGroup = RpcGroup.make(
  * the Workspace group: the handler layer's type inference stays usable.
  */
 export const WsAwenSessionRpcGroup = RpcGroup.make(
+  WsAwenSessionSelectRefRpc,
   WsAwenSessionMigrateToWorkspaceRpc,
   WsAwenSessionGetMigrationStateRpc,
 );

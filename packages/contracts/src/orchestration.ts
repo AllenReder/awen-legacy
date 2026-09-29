@@ -7,6 +7,7 @@ import { OrchestrationMessageContext } from "./composerContext.ts";
 import { ProviderOptionSelections } from "./model.ts";
 import { RepositoryIdentity, ThreadEnvMode } from "./environment.ts";
 import {
+  WorkspaceId,
   AwenProjectId,
   ApprovalRequestId,
   CheckpointRef,
@@ -1308,7 +1309,7 @@ const ThreadTurnStartBootstrapCreateThread = Schema.Struct({
 });
 
 const ThreadTurnStartBootstrapPrepareWorktree = Schema.Struct({
-  projectCwd: TrimmedNonEmptyString,
+  sourceWorkspaceId: WorkspaceId,
   baseBranch: TrimmedNonEmptyString,
   branch: Schema.optional(TrimmedNonEmptyString),
   startFromOrigin: Schema.optional(Schema.Boolean),

@@ -9502,7 +9502,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                   createdAt,
                 },
                 prepareWorktree: {
-                  projectCwd: "/tmp/project",
+                  sourceWorkspaceId: workspaceIdForAwenProject(defaultProjectId),
                   baseBranch: "main",
                   branch: "awen/bootstrap-refName",
                   startFromOrigin: true,
@@ -9721,7 +9721,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               interactionMode: "default",
               bootstrap: {
                 prepareWorktree: {
-                  projectCwd: "/tmp/project",
+                  sourceWorkspaceId: workspaceIdForAwenProject(wtProjectId),
                   baseBranch: "main",
                   branch: "awen/bootstrap-from-wt",
                 },
@@ -9832,7 +9832,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                 createdAt,
               },
               prepareWorktree: {
-                projectCwd: "/tmp/project",
+                sourceWorkspaceId: workspaceIdForAwenProject(defaultProjectId),
                 baseBranch: "main",
                 branch: "awen/bootstrap-refName",
                 startFromOrigin: true,
@@ -9871,6 +9871,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
   it.effect("falls back to the project checkout when worktree mode targets a non-repository", () =>
     Effect.gen(function* () {
       const dispatchedCommands: Array<OrchestrationCommand> = [];
+      const registration = makeBootstrapWorkspaceRegistration({
+        projectId: defaultProjectId,
+        mainRoot: "/tmp/project",
+      });
       const createWorktree = vi.fn(
         (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["createWorktree"]>[0]) =>
           Effect.die(new Error("createWorktree must not run for a non-repository")),
@@ -9878,6 +9882,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
       yield* buildAppUnderTest({
         layers: {
+          projectionSnapshotQuery: registration.layers.projectionSnapshotQuery,
           gitVcsDriver: {
             execute: () => Effect.succeed(SUCCESSFUL_GIT_EXECUTION),
             createWorktree,
@@ -9922,7 +9927,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                 createdAt,
               },
               prepareWorktree: {
-                projectCwd: "/tmp/project",
+                sourceWorkspaceId: workspaceIdForAwenProject(defaultProjectId),
                 baseBranch: "main",
                 branch: "awen/bootstrap-refName",
               },
@@ -9956,6 +9961,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
   it.effect("falls back to the project checkout when the worktree base has no commit", () =>
     Effect.gen(function* () {
       const dispatchedCommands: Array<OrchestrationCommand> = [];
+      const registration = makeBootstrapWorkspaceRegistration({
+        projectId: defaultProjectId,
+        mainRoot: "/tmp/project",
+      });
       const createWorktree = vi.fn(
         (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["createWorktree"]>[0]) =>
           Effect.die(new Error("createWorktree must not run without a base commit")),
@@ -9963,6 +9972,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
       yield* buildAppUnderTest({
         layers: {
+          projectionSnapshotQuery: registration.layers.projectionSnapshotQuery,
           vcsDriver: {
             isInsideWorkTree: () => Effect.succeed(true),
           },
@@ -10015,7 +10025,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                 createdAt,
               },
               prepareWorktree: {
-                projectCwd: "/tmp/project",
+                sourceWorkspaceId: workspaceIdForAwenProject(defaultProjectId),
                 baseBranch: "main",
                 branch: "awen/bootstrap-refName",
               },
@@ -10124,7 +10134,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                 createdAt,
               },
               prepareWorktree: {
-                projectCwd: "/tmp/project",
+                sourceWorkspaceId: workspaceIdForAwenProject(defaultProjectId),
                 baseBranch: "main",
                 branch: "awen/bootstrap-refName",
               },
@@ -10269,7 +10279,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                 createdAt,
               },
               prepareWorktree: {
-                projectCwd: "/tmp/project",
+                sourceWorkspaceId: workspaceIdForAwenProject(defaultProjectId),
                 baseBranch: "main",
                 branch: "awen/bootstrap-refName",
               },
@@ -10397,7 +10407,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                 createdAt,
               },
               prepareWorktree: {
-                projectCwd: "/tmp/project",
+                sourceWorkspaceId: workspaceIdForAwenProject(defaultProjectId),
                 baseBranch: "main",
                 branch: "awen/bootstrap-refName",
               },
@@ -10550,7 +10560,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                   createdAt,
                 },
                 prepareWorktree: {
-                  projectCwd: "/tmp/project",
+                  sourceWorkspaceId: workspaceIdForAwenProject(defaultProjectId),
                   baseBranch: "main",
                   branch: "awen/bootstrap-refName",
                 },
@@ -10653,7 +10663,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                 createdAt,
               },
               prepareWorktree: {
-                projectCwd: "/tmp/project",
+                sourceWorkspaceId: workspaceIdForAwenProject(defaultProjectId),
                 baseBranch: "main",
                 branch: "awen/bootstrap-refName",
               },
@@ -10781,7 +10791,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                 createdAt,
               },
               prepareWorktree: {
-                projectCwd: "/tmp/project",
+                sourceWorkspaceId: workspaceIdForAwenProject(defaultProjectId),
                 baseBranch: "main",
                 branch: "awen/bootstrap-refName",
               },
@@ -10988,7 +10998,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                 createdAt,
               },
               prepareWorktree: {
-                projectCwd: "/tmp/project",
+                sourceWorkspaceId: workspaceIdForAwenProject(defaultProjectId),
                 baseBranch: "main",
                 branch: "awen/bootstrap-refName",
               },

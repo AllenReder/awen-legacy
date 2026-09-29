@@ -40,6 +40,7 @@ import { useCopyToClipboard } from "./useCopyToClipboard";
 import { useNewThreadHandler } from "./useHandleNewThread";
 import { useClientSettings } from "./useSettings";
 import { useThreadActions } from "./useThreadActions";
+import { useSessionExecutionContext } from "../state/sessionContext";
 
 function failureToast(title: string, error: unknown) {
   toastManager.add(
@@ -63,11 +64,10 @@ function failureToast(title: string, error: unknown) {
  */
 export function useThreadActionMenu(input: {
   readonly threadRef: ScopedThreadRef | null;
-  /** Fallback for "Copy path" when the thread has no worktree. */
-  readonly projectCwd: string | null;
   readonly onStartRename: () => void;
 }) {
-  const { threadRef, projectCwd, onStartRename } = input;
+  const { threadRef, onStartRename } = input;
+  const sessionContext = useSessionExecutionContext(threadRef);
   const router = useRouter();
   const projects = useProjects();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -258,7 +258,7 @@ export function useThreadActionMenu(input: {
             markThreadUnread(scopedThreadKey(threadRef), thread.latestTurn?.completedAt);
             return;
           case "copy-path": {
-            const workspacePath = thread.worktreePath ?? projectCwd;
+            const workspacePath = sessionContext.cwd;
             if (!workspacePath) {
               toastManager.add(
                 stackedThreadToast({
@@ -346,7 +346,7 @@ export function useThreadActionMenu(input: {
       markThreadUnread,
       onStartRename,
       pinThread,
-      projectCwd,
+      sessionContext.cwd,
       projectGroupingSettings,
       projects,
       router,

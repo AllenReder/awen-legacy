@@ -42,6 +42,12 @@ Project are different checkouts of the same repository.
 _Avoid_: Session, Checkout. Not paseo's Workspace, which is a `cwd` that
 happens to carry a branch.
 
+**Execution Plan**:
+A Session's uncommitted choice for its next turn, such as creating a new
+worktree from a selected base ref. It does not change the Session's current
+Workspace or the checkout's Git HEAD; successful execution consumes it.
+_Avoid_: Workspace assignment, Current branch, Composer content
+
 **Session**:
 A persistent unit of work belonging to exactly one Workspace. Agent sessions
 and terminal sessions are the current Session kinds; each has an Awen identity
@@ -376,6 +382,9 @@ _Avoid_: Chat wallpaper, Session background, View background
 - A Project owns zero or more Workspaces.
 - A Workspace belongs to exactly one Project.
 - Workspace identity is independent of Git branch, commit, or HEAD state.
+- An Agent Session's committed Workspace determines its execution directory.
+  A pending Execution Plan does not change that assignment until the server
+  commits the resulting Workspace move.
 - An Agent Session belongs to exactly one Workspace. A Terminal Session belongs
   to one Environment, and its Workspace assignment is nullable and mutable.
 - A Terminal Session is looked up, subscribed to, and deep-linked by its stable

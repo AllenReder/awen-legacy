@@ -4,6 +4,7 @@ import type { EnvironmentId, ScopedThreadRef } from "@awen/contracts";
 import { useProjects } from "~/state/entities";
 
 import { useHandleNewThread } from "./useHandleNewThread";
+import { useSessionExecutionContext } from "../state/sessionContext";
 
 export interface ActiveProjectTarget {
   readonly environmentId: EnvironmentId;
@@ -22,13 +23,15 @@ export function useActiveProjectTarget(): ActiveProjectTarget | null {
   const projects = useProjects();
   const thread = activeThread ?? activeDraftThread;
   const threadId = activeThread?.id ?? activeDraftThread?.threadId;
+  const threadRef = threadId && thread ? scopeThreadRef(thread.environmentId, threadId) : null;
+  const context = useSessionExecutionContext(threadRef, thread);
   const project = thread
     ? projects.find(
         (candidate) =>
           candidate.environmentId === thread.environmentId && candidate.id === thread.projectId,
       )
     : null;
-  const cwd = thread?.worktreePath ?? project?.workspaceRoot;
+  const cwd = context.cwd;
 
   if (!thread || !threadId || !project || !cwd) return null;
 
@@ -36,6 +39,6 @@ export function useActiveProjectTarget(): ActiveProjectTarget | null {
     environmentId: project.environmentId,
     cwd,
     projectName: project.title,
-    threadRef: scopeThreadRef(thread.environmentId, threadId),
+    threadRef: threadRef!,
   };
 }

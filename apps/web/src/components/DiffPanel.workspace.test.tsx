@@ -54,7 +54,9 @@ vi.mock("../hooks/useSettings", () => ({
 
 vi.mock("../state/entities", () => ({
   useThread: () => null,
+  useThreadShell: () => null,
   useProject: () => null,
+  useAwenProjects: () => [],
 }));
 
 vi.mock("@effect/atom-react", () => ({

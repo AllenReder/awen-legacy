@@ -255,6 +255,7 @@ export function applyThreadDetailEvent(
         kind: "updated",
         thread: {
           ...thread,
+          ...(event.payload.projectId !== undefined ? { projectId: event.payload.projectId } : {}),
           ...(event.payload.title !== undefined ? { title: event.payload.title } : {}),
           ...(event.payload.titleState !== undefined
             ? { titleState: event.payload.titleState }
