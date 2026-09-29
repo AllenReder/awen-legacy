@@ -66,6 +66,7 @@ import { ProjectionThreadPullRequest } from "../../persistence/ProjectionThreadP
 import { ProjectionThreadSession } from "../../persistence/Services/ProjectionThreadSessions.ts";
 import { ProjectionPendingApproval } from "../../persistence/Services/ProjectionPendingApprovals.ts";
 import { ProjectionThread } from "../../persistence/Services/ProjectionThreads.ts";
+import { ProjectionPendingTurnStart } from "../../persistence/Services/ProjectionTurns.ts";
 import {
   decodeThreadDetailPageCursor,
   encodeThreadDetailPageCursor,
@@ -1512,6 +1513,44 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         toPersistenceSqlOrDecodeError(
           "ProjectionSnapshotQuery.listActivitiesByKind:query",
           "ProjectionSnapshotQuery.listActivitiesByKind:decodeRow",
+        ),
+      ),
+    );
+
+  // Pending-start placeholders are the durable record of a committed
+  // turn-start intent: they appear when the intent is projected and disappear
+  // once a provider turn adopts the message or the start fails. A row that
+  // survives a restart means the adopting session-set never committed, so
+  // startup recovery re-drives the intent at-least-once.
+  const listPendingTurnStartRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: ProjectionPendingTurnStart,
+    execute: () =>
+      sql`
+        SELECT
+          turns.thread_id AS "threadId",
+          turns.pending_message_id AS "messageId",
+          turns.source_proposed_plan_thread_id AS "sourceProposedPlanThreadId",
+          turns.source_proposed_plan_id AS "sourceProposedPlanId",
+          turns.requested_at AS "requestedAt"
+        FROM projection_turns turns
+        JOIN projection_threads threads ON threads.thread_id = turns.thread_id
+        WHERE turns.turn_id IS NULL
+          AND turns.state = 'pending'
+          AND turns.pending_message_id IS NOT NULL
+          AND turns.checkpoint_turn_count IS NULL
+          AND threads.deleted_at IS NULL
+          AND threads.archived_at IS NULL
+        ORDER BY turns.requested_at ASC, turns.thread_id ASC
+      `,
+  });
+
+  const listPendingTurnStarts: ProjectionSnapshotQueryShape["listPendingTurnStarts"] = () =>
+    listPendingTurnStartRows().pipe(
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "ProjectionSnapshotQuery.listPendingTurnStarts:query",
+          "ProjectionSnapshotQuery.listPendingTurnStarts:decodeRow",
         ),
       ),
     );
@@ -3776,6 +3815,7 @@ pending_approval_requests AS (
     getUserInputActivity,
     getPendingApproval,
     listActivitiesByKind,
+    listPendingTurnStarts,
     getSnapshot,
     getShellSnapshot,
     getArchivedShellSnapshot,

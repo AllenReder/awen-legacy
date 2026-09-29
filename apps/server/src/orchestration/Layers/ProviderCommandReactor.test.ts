@@ -985,6 +985,91 @@ describe("ProviderCommandReactor", () => {
     }),
   );
 
+  effectIt.effect("delivers a turn-start intent committed while the reactor was stopped", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() => createHarness({ deferReactorStart: true }));
+      const threadId = ThreadId.make("thread-1");
+
+      yield* harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-before-reactor-start"),
+        threadId,
+        message: {
+          messageId: asMessageId("user-message-before-reactor-start"),
+          role: "user",
+          text: "Deliver this after the restart",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:01.000Z",
+      });
+
+      // The intent is durable but undelivered: no reactor was consuming the
+      // domain stream when the command committed.
+      expect(harness.sendTurn).not.toHaveBeenCalled();
+      expect(yield* Effect.promise(() => harness.readPendingTurnStarts())).toEqual([
+        { threadId: "thread-1" },
+      ]);
+
+      yield* Effect.promise(() => harness.startReactor());
+      yield* Effect.promise(() => waitFor(() => harness.sendTurn.mock.calls.length === 1));
+      yield* Effect.promise(() => harness.drain());
+
+      expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
+        threadId,
+        input: "Deliver this after the restart",
+      });
+    }),
+  );
+
+  effectIt.effect("does not re-deliver a turn-start intent the projection already adopted", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() => createHarness({ deferReactorStart: true }));
+      const threadId = ThreadId.make("thread-1");
+      const createdAt = "2026-01-01T00:00:01.000Z";
+
+      yield* harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-adopted-before-reactor-start"),
+        threadId,
+        message: {
+          messageId: asMessageId("user-message-adopted-before-reactor-start"),
+          role: "user",
+          text: "Already running",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt,
+      });
+      // The provider reported the turn before the process restarted, so the
+      // durable pending-start record is already gone.
+      yield* harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-provider-turn-started"),
+        threadId,
+        createdAt,
+        session: {
+          threadId,
+          status: "running",
+          providerName: "codex",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          runtimeMode: "approval-required",
+          activeTurnId: TurnId.make("turn-already-running"),
+          lastError: null,
+          updatedAt: createdAt,
+        },
+      });
+      expect(yield* Effect.promise(() => harness.readPendingTurnStarts())).toEqual([]);
+
+      yield* Effect.promise(() => harness.startReactor());
+      yield* Effect.promise(() => harness.drain());
+
+      expect(harness.sendTurn).not.toHaveBeenCalled();
+    }),
+  );
+
   effectIt.effect("starts a turn and generates its title without loading old message bodies", () =>
     Effect.gen(function* () {
       const started = yield* Deferred.make<void>();
