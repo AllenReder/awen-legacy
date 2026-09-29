@@ -104,6 +104,128 @@ it("keeps drag preview out of persisted Workbench state until the exact result i
   expect(writes).toHaveLength(1);
 });
 
+const FILE_A: ViewTarget = {
+  kind: "workspace",
+  definitionId: "fileView",
+  environmentId: ENV_A,
+  workspaceId: WS_A,
+};
+
+it("asks a dirty Pane's close guard before a drop replaces its View", async () => {
+  const store = createWorkbenchStore({ persist: () => {} });
+  await store.getState().openTarget(FILE_A);
+  const tab = getActiveTab(store.getState());
+  const paneId = tab.focusedPaneId;
+  const reasons: Array<"close" | "switch" | undefined> = [];
+  store.getState().registerCloseGuard(paneId, {
+    isDirty: () => true,
+    confirmClose: async (reason) => {
+      reasons.push(reason);
+      return false;
+    },
+  });
+
+  const preview = store
+    .getState()
+    .previewDrop(
+      { kind: "sidebar", target: agent() },
+      { kind: "pane", tabId: tab.id, paneId, zone: "replace" },
+    );
+  expect(preview).not.toBeNull();
+
+  await expect(store.getState().commitDrop(preview!)).resolves.toBe(false);
+
+  expect(reasons).toEqual(["close"]);
+  expect(getActiveTab(store.getState()).panes.get(paneId)?.target).toEqual(FILE_A);
+});
+
+it("applies a drop when the dirty Pane's guard approves", async () => {
+  const store = createWorkbenchStore({ persist: () => {} });
+  await store.getState().openTarget(FILE_A);
+  const tab = getActiveTab(store.getState());
+  const paneId = tab.focusedPaneId;
+  store.getState().registerCloseGuard(paneId, {
+    isDirty: () => true,
+    confirmClose: async () => true,
+  });
+
+  const preview = store
+    .getState()
+    .previewDrop(
+      { kind: "sidebar", target: agent() },
+      { kind: "pane", tabId: tab.id, paneId, zone: "replace" },
+    );
+  expect(preview).not.toBeNull();
+
+  await expect(store.getState().commitDrop(preview!)).resolves.toBe(true);
+
+  expect(getActiveTab(store.getState()).panes.get(paneId)?.target).toEqual(agent());
+});
+
+it("applies the drop after a guard clears its own draft while confirming", async () => {
+  const store = createWorkbenchStore({ persist: () => {} });
+  await store.getState().openTarget(FILE_A);
+  const tab = getActiveTab(store.getState());
+  const paneId = tab.focusedPaneId;
+  store.getState().setPanePresentation(paneId, {
+    fileDraft: { path: "a.ts", contents: "unsaved" },
+  });
+  store.getState().registerCloseGuard(paneId, {
+    isDirty: () => true,
+    confirmClose: async () => {
+      // The Files guard resets a discarded draft, which rewrites the Pane
+      // presentation (and the tabs array) before the drop is applied.
+      store.getState().setPanePresentation(paneId, { fileDraft: null });
+      return true;
+    },
+  });
+
+  const preview = store
+    .getState()
+    .previewDrop(
+      { kind: "sidebar", target: agent() },
+      { kind: "pane", tabId: tab.id, paneId, zone: "replace" },
+    );
+  expect(preview).not.toBeNull();
+
+  await expect(store.getState().commitDrop(preview!)).resolves.toBe(true);
+
+  const tabAfter = getActiveTab(store.getState());
+  expect(tabAfter.panes.get(paneId)?.target).toEqual(agent());
+  expect(tabAfter.panes.size).toBe(1);
+});
+
+it("does not ask the guard of a Pane whose View the drop only moves", async () => {
+  const store = createWorkbenchStore({ persist: () => {} });
+  await store.getState().openTarget(agent());
+  const agentPaneId = getActiveTab(store.getState()).focusedPaneId;
+  await store.getState().openFromPane(agentPaneId, FILE_A);
+  const filePaneId = getActiveTab(store.getState()).focusedPaneId;
+  const confirmClose = vi.fn(async () => false);
+  store.getState().registerCloseGuard(filePaneId, {
+    isDirty: () => true,
+    confirmClose,
+  });
+
+  const preview = store.getState().previewDrop(
+    { kind: "sidebar", target: FILE_A },
+    {
+      kind: "pane",
+      tabId: getActiveTab(store.getState()).id,
+      paneId: agentPaneId,
+      zone: "replace",
+    },
+  );
+  expect(preview).not.toBeNull();
+
+  await expect(store.getState().commitDrop(preview!)).resolves.toBe(true);
+
+  expect(confirmClose).not.toHaveBeenCalled();
+  const tab = getActiveTab(store.getState());
+  expect(tab.panes.get(filePaneId)?.target).toEqual(FILE_A);
+  expect(tab.panes.size).toBe(1);
+});
+
 it("intercepts pane closure with registered close guard when dirty", async () => {
   const ids = makeIds();
   const initial = applyOpenTarget(emptyWorkbenchSnapshot(ids), agent(), ids);

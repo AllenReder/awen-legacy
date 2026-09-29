@@ -782,11 +782,18 @@ export function WorkbenchDragProvider({ children }: { readonly children: ReactNo
         const result =
           target === null ? null : useWorkbenchStore.getState().previewDrop(source, target);
         if (!cancelled && target !== null && result !== null) {
-          useWorkbenchStore.getState().commitDrop(result);
-          if (source.kind === "sidebar") {
-            source.onCommit?.(result);
-          }
-          setState(null);
+          // A drop that replaces a dirty Pane first runs that Pane's close
+          // guard; the Sidebar's own commit only follows an accepted drop.
+          void (async () => {
+            try {
+              const accepted = await useWorkbenchStore.getState().commitDrop(result);
+              if (accepted && source.kind === "sidebar") {
+                source.onCommit?.(result);
+              }
+            } finally {
+              setState(null);
+            }
+          })();
           return;
         }
         const phase: WorkbenchDragPhase = cancelled ? "canceling" : "rejected";

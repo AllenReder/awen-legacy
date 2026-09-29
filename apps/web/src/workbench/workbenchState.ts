@@ -1017,6 +1017,32 @@ export function applyViewDrop(
   );
 }
 
+/**
+ * Panes whose View a drop retires instead of moving.
+ *
+ * A placed View keeps its `PaneView` instance while it moves, so any base
+ * View instance missing from the drop result is content the drop discards —
+ * a replacement target, or a Pane whose View was overwritten. Callers consult
+ * these Panes' close guards before committing so a drop cannot silently throw
+ * away unsaved edits (ADR-0008 dirty guards).
+ */
+export function retiredPanesByDrop(
+  base: WorkbenchSnapshot,
+  after: WorkbenchSnapshot,
+): ReadonlyArray<{ readonly paneId: string; readonly view: PaneView }> {
+  const surviving = new Set<PaneView>();
+  for (const tab of after.tabs) {
+    for (const view of tab.panes.values()) surviving.add(view);
+  }
+  const retired: Array<{ readonly paneId: string; readonly view: PaneView }> = [];
+  for (const tab of base.tabs) {
+    for (const [paneId, view] of tab.panes) {
+      if (!surviving.has(view)) retired.push({ paneId, view });
+    }
+  }
+  return retired;
+}
+
 export function applySetSplitRatio(
   snapshot: WorkbenchSnapshot,
   splitId: string,

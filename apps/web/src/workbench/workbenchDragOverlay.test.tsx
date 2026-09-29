@@ -619,11 +619,11 @@ describe("WorkbenchDrag lifecycle and overlay animations", () => {
     expect(destinationPane.props.className).toContain("workbench-drop-destination-indicator");
 
     // 3. Pointerup: commits the drop and triggers onCommit
-    act(() => {
+    await act(async () => {
       listeners["pointerup"]?.forEach((fn) => fn({}));
     });
 
-    expect(onCommit).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(onCommit).toHaveBeenCalledTimes(1));
     expect(useWorkbenchStore.getState().tabs[0]?.panes.size).toBe(3);
   });
 

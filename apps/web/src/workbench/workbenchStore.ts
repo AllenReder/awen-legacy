@@ -46,6 +46,7 @@ import {
   applySplitPane,
   applySplitFocused,
   applyViewDrop,
+  retiredPanesByDrop,
   clearedTab,
   emptyWorkbenchSnapshot,
   type ViewDragSource,
@@ -85,7 +86,11 @@ export interface WorkbenchStore extends WorkbenchSnapshot {
   closeView: (paneId: string) => void;
   removeSessionViews: (target: ViewTarget) => void;
   previewDrop: (source: ViewDragSource, target: ViewDropTarget) => ViewDropResult | null;
-  commitDrop: (result: ViewDropResult) => void;
+  /**
+   * Commit a drag preview. Returns false when the drop is stale, or when a
+   * displaced Pane's dirty close guard refuses the replacement.
+   */
+  commitDrop: (result: ViewDropResult) => Promise<boolean>;
   openTarget: (target: ViewTarget) => Promise<boolean>;
   openFromPane: (paneId: string, target: ViewTarget) => Promise<boolean>;
   setPanePresentation: (paneId: string, presentation: Readonly<Record<string, unknown>>) => void;
@@ -136,7 +141,14 @@ export function createWorkbenchStore(options: WorkbenchStoreOptions = {}) {
   const tabCloseDelayMs = () => scaledMotionDuration(FLUID_MOTION_DURATION_MS);
   const initialSnapshot =
     options.initialSnapshot ?? readWorkbenchSnapshot() ?? emptyWorkbenchSnapshot(generateId);
-  const previews = new WeakMap<ViewDropResult, WorkbenchSnapshot>();
+  const previews = new WeakMap<
+    ViewDropResult,
+    {
+      readonly base: WorkbenchSnapshot;
+      readonly source: ViewDragSource;
+      readonly target: ViewDropTarget;
+    }
+  >();
   const closeGuards = new Map<string, PaneCloseGuard>();
   const closeAdapters = new Map<string, PaneCloseAdapter>();
   const pendingCloses = new Map<string, Promise<CloseResult>>();
@@ -630,17 +642,49 @@ export function createWorkbenchStore(options: WorkbenchStoreOptions = {}) {
       previewDrop: (source, target) => {
         const base = get();
         const result = applyViewDrop(base, source, target, generateId);
-        if (result) previews.set(result, base);
+        if (result) previews.set(result, { base, source, target });
         return result;
       },
-      commitDrop: (result) =>
-        set((snapshot) => {
-          const base = previews.get(result);
-          previews.delete(result);
-          if (!base || base.tabs !== snapshot.tabs || base.activeTabId !== snapshot.activeTabId)
-            return snapshot;
-          return { ...result.snapshot, focusRequestId: snapshot.focusRequestId + 1 };
-        }),
+      commitDrop: (result) => {
+        const preview = previews.get(result);
+        previews.delete(result);
+        const current = get();
+        if (
+          preview === undefined ||
+          preview.base.tabs !== current.tabs ||
+          preview.base.activeTabId !== current.activeTabId
+        ) {
+          return Promise.resolve(false);
+        }
+        const confirmRetiredPanes = async (): Promise<boolean> => {
+          // A drop that replaces a Pane asks that Pane's dirty guard first, so
+          // unsaved edits cannot be discarded without a decision.
+          for (const { paneId, view } of retiredPanesByDrop(preview.base, result.snapshot)) {
+            const guard = closeGuards.get(paneId);
+            if (!guard?.isDirty() && !view.presentation?.fileDraft) continue;
+            const mountedGuard = guard ?? (await waitForFileGuard(paneId));
+            if (mountedGuard === null) return false;
+            try {
+              if (!(await mountedGuard.confirmClose("close"))) return false;
+            } catch {
+              return false;
+            }
+          }
+          const settled = get();
+          if (settled.tabs === current.tabs && settled.activeTabId === current.activeTabId) {
+            set((state) => ({ ...result.snapshot, focusRequestId: state.focusRequestId + 1 }));
+            return true;
+          }
+          // Answering a guard rewrites the Pane it guards (a discarded draft
+          // clears its presentation), so re-apply the drop intent to the
+          // settled snapshot instead of writing the previewed one back.
+          const rebased = applyViewDrop(settled, preview.source, preview.target, generateId);
+          if (rebased === null) return false;
+          set((state) => ({ ...rebased.snapshot, focusRequestId: state.focusRequestId + 1 }));
+          return true;
+        };
+        return confirmRetiredPanes();
+      },
       openTarget: (target) =>
         navigate(target, (snapshot) => applyOpenTarget(snapshot, target, generateId)),
       openDeepLinkTarget: (target) =>
