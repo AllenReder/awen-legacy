@@ -6,6 +6,8 @@ import { useRender } from "@base-ui/react/use-render";
 import { cva, type VariantProps } from "class-variance-authority";
 import { ChevronDownIcon, ChevronsUpDownIcon, ChevronUpIcon } from "lucide-react";
 import type * as React from "react";
+import { POPOVER_CONTENT_MOTION_CLASS } from "~/components/ui/dialog-styles";
+import { GlassBackdrop } from "~/components/ui/GlassBackdrop";
 
 import { cn } from "~/lib/utils";
 
@@ -140,7 +142,7 @@ function SelectPopup({
         sideOffset={sideOffset}
       >
         <SelectPrimitive.Popup
-          className="origin-(--transform-origin) rounded-lg text-foreground outline-none"
+          className="origin-(--transform-origin) rounded-lg text-foreground outline-none transition-opacity [transition-duration:calc(170ms*var(--motion-duration-scale,1))] data-ending-style:opacity-0 data-starting-style:opacity-0"
           data-slot="select-popup"
           {...props}
         >
@@ -152,13 +154,18 @@ function SelectPopup({
           </SelectPrimitive.ScrollUpArrow>
           <div
             className={cn(
-              "material-surface-overlay relative h-full rounded-lg shadow-[0_16px_40px_-18px_rgb(0_0_0/55%)] dark:shadow-[0_18px_44px_-18px_rgb(0_0_0/80%)]",
+              "relative isolate h-full overflow-hidden rounded-lg border shadow-[0_16px_40px_-18px_rgb(0_0_0/55%)] dark:shadow-[0_18px_44px_-18px_rgb(0_0_0/80%)]",
               matchTriggerWidth && "min-w-(--anchor-width)",
               popupClassName,
             )}
           >
+            <GlassBackdrop />
             <SelectPrimitive.List
-              className={cn("max-h-(--available-height) overflow-y-auto p-1", className)}
+              className={cn(
+                "relative z-[1] max-h-(--available-height) overflow-y-auto p-1",
+                POPOVER_CONTENT_MOTION_CLASS,
+                className,
+              )}
               data-slot="select-list"
             >
               {children}
@@ -187,7 +194,7 @@ function SelectItem({
   return (
     <SelectPrimitive.Item
       className={cn(
-        "flex min-h-8 in-data-[side=none]:min-w-[calc(var(--anchor-width)+1.25rem)] cursor-pointer items-center rounded-sm px-2 py-1 text-base outline-none data-selected:bg-foreground/[0.08] data-disabled:pointer-events-none data-disabled:cursor-not-allowed data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:opacity-64 sm:min-h-7 sm:text-sm [&_svg:not([class*='size-'])]:size-4.5 sm:[&_svg:not([class*='size-'])]:size-4 [&_svg]:pointer-events-none [&_svg]:shrink-0",
+        "flex min-h-8 in-data-[side=none]:min-w-[calc(var(--anchor-width)+1.25rem)] cursor-pointer items-center rounded-sm px-2 py-1 text-base outline-none data-selected:bg-selection data-disabled:pointer-events-none data-disabled:cursor-not-allowed data-highlighted:bg-selection-hover data-highlighted:text-accent-foreground [&[data-highlighted][data-selected]]:bg-selection-strong data-disabled:opacity-64 sm:min-h-7 sm:text-sm [&_svg:not([class*='size-'])]:size-4.5 sm:[&_svg:not([class*='size-'])]:size-4 [&_svg]:pointer-events-none [&_svg]:shrink-0",
         className,
       )}
       data-slot="select-item"

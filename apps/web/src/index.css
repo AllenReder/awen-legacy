@@ -134,6 +134,38 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(awen-mob
   --window-control-close-hover: #e81123;
   --window-control-close-active: #c4101f;
 
+  /* Interactive selection hierarchy */
+  --selection-subtle-strength: 8%;
+  --selection-strength: 10%;
+  --selection-strong-strength: 12%;
+  --selection-hover-strength: 15%;
+  --selection-emphasis-strength: 20%;
+  --selection-subtle: color-mix(
+    in srgb,
+    var(--foreground) var(--selection-subtle-strength),
+    transparent
+  );
+  --selection: color-mix(
+    in srgb,
+    var(--foreground) var(--selection-strength),
+    transparent
+  );
+  --selection-strong: color-mix(
+    in srgb,
+    var(--foreground) var(--selection-strong-strength),
+    transparent
+  );
+  --selection-hover: color-mix(
+    in srgb,
+    var(--foreground) var(--selection-hover-strength),
+    transparent
+  );
+  --selection-emphasis: color-mix(
+    in srgb,
+    var(--foreground) var(--selection-emphasis-strength),
+    transparent
+  );
+
   @variant dark {
     --appearance-contrast-target: white;
     --app-scrollbar-thumb: rgb(255 255 255 / 8%);
@@ -225,6 +257,11 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(awen-mob
   --color-sidebar-row-active: var(--sidebar-row-active);
   --color-sidebar-row-selected: var(--sidebar-row-selected);
   --color-sidebar-border: var(--contrast-sidebar-border);
+  --color-selection-subtle: var(--selection-subtle);
+  --color-selection: var(--selection);
+  --color-selection-strong: var(--selection-strong);
+  --color-selection-hover: var(--selection-hover);
+  --color-selection-emphasis: var(--selection-emphasis);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -582,24 +619,7 @@ html.material-stage-opaque .material-surface-overlay {
 }
 
 @utility dialog-backdrop {
-  background: rgb(0 0 0 / 20%);
-  -webkit-backdrop-filter: blur(4px);
-  backdrop-filter: blur(4px);
-}
-
-@utility dropdown-glass {
-  background: color-mix(
-    in srgb,
-    var(--material-overlay-tint) calc(var(--material-overlay-opacity, 0.9) * 100%),
-    transparent
-  );
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
-  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
-  border: 1px solid color-mix(in srgb, var(--contrast-foreground) 10%, transparent);
-
-  @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
-    background: var(--popover) !important;
-  }
+  background: rgb(0 0 0 / 40%);
 }
 
 @utility topbar-scroll-fade {
