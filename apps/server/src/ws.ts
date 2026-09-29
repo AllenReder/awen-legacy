@@ -2,8 +2,10 @@ import { sameUsageLimitCommandCoverage, withUsageLimitsCommands } from "@awen/sh
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -134,6 +136,7 @@ import { readWorkflowScript } from "./orchestration/workflowScriptQuery.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as AwenWorkspaceService from "./workspace/AwenWorkspaceService.ts";
 import * as AwenSessionService from "./session/AwenSessionService.ts";
+import * as SessionExecutionLock from "./session/SessionExecutionLock.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
@@ -181,6 +184,14 @@ const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchComma
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 const CONFIG_DISCOVERY_TIMEOUT = Duration.seconds(5);
+
+/**
+ * Overall bound for a bootstrap worktree preparation (fetch, checkout,
+ * submodules, and a synchronous setup script). Any stage that hangs past this
+ * fails the setup card with a reason instead of sitting at "Setting up
+ * worktree" forever.
+ */
+const WORKTREE_SETUP_TIMEOUT = Duration.minutes(30);
 
 const resolveDiscoveryForConfig = <A, E, R>(
   discovery: Effect.Effect<A, E, R>,
@@ -659,6 +670,7 @@ const makeWsRpcLayer = (
         const serverUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
         const config = yield* ServerConfig.ServerConfig;
         const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
+        const worktreeSetupTimeout = config.worktreeSetupTimeout ?? WORKTREE_SETUP_TIMEOUT;
         const serverSettings = yield* ServerSettings.ServerSettingsService;
         const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
         const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
@@ -701,6 +713,7 @@ const makeWsRpcLayer = (
         });
         const projectSetupScriptRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
         const worktreeSetupTracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
+        const sessionExecutionLock = yield* SessionExecutionLock.SessionExecutionLock;
         const projectCloneTracker = yield* ProjectCloneTracker.ProjectCloneTracker;
         const repositoryIdentityResolver =
           yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
@@ -1192,6 +1205,14 @@ const makeWsRpcLayer = (
             let targetProjectId = bootstrap?.createThread?.projectId;
             let targetProjectCwd = bootstrap?.prepareWorktree?.projectCwd;
             let targetWorktreePath = bootstrap?.createThread?.worktreePath ?? null;
+            // Set once AwenWorkspaceService has registered the created
+            // worktree: from here the directory is a real Workspace, so cancel
+            // and failure cleanup leave it for the user instead of deleting a
+            // registered directory out from under the Sidebar.
+            let worktreeRegistered = false;
+            // Set by the setup-timeout watcher so the interrupt handler can
+            // report a failure with a reason instead of a user cancel.
+            let worktreeSetupTimedOut = false;
             // The setup script's terminal, once started. Cancel closes only this
             // one so terminals the user opened meanwhile survive.
             let setupTerminalId: string | null = null;
@@ -1598,14 +1619,43 @@ const makeWsRpcLayer = (
                   preparingSessionSet = true;
                 }
                 yield* worktreeSetupTracker.stageStatus(threadId, "checkout", "running");
+                // The worktree must become a registered Awen Workspace before
+                // the turn starts: CheckpointReactor resolves execution
+                // ownership by an exact workspaceRoot match against the
+                // registered workspaces, so a directory created by bare git
+                // would fail every file-checkpoint capture. The service also
+                // owns the dirty-tree, nesting, and conflict checks plus the
+                // "Git succeeded but registration failed" retry-reuse
+                // semantics, so a resend with the same pinned branch name
+                // reuses the half-made directory instead of duplicating it.
+                const worktreeProjectId = yield* (targetProjectId
+                  ? Effect.succeed(Option.some(targetProjectId))
+                  : projectionSnapshotQuery
+                      .getThreadShellById(threadId)
+                      .pipe(Effect.map(Option.map((shell) => shell.projectId)))
+                ).pipe(
+                  Effect.flatMap(
+                    Option.match({
+                      onNone: () =>
+                        Effect.fail(
+                          new OrchestrationDispatchCommandError({
+                            message:
+                              "Could not resolve the thread's Project for worktree creation.",
+                          }),
+                        ),
+                      onSome: (projectId) => Effect.succeed(projectId),
+                    }),
+                  ),
+                );
                 let checkoutTotal: number | null = null;
-                const worktree = yield* gitWorkflow.createWorktree(
+                const createdWorktree = yield* workspaceService.createWorktree(
                   {
-                    cwd: prepareWorktree.projectCwd,
-                    refName: worktreeBaseRef,
-                    newRefName: prepareWorktree.branch,
-                    baseRefName: prepareWorktree.baseBranch,
-                    path: null,
+                    projectId: awenProjectIdForAwenProject(worktreeProjectId),
+                    baseRef: worktreeBaseRef,
+                    newBranch: prepareWorktree.branch,
+                    ...(bootstrap?.createThread?.title
+                      ? { title: bootstrap.createThread.title }
+                      : {}),
                   },
                   {
                     progress: {
@@ -1655,10 +1705,11 @@ const makeWsRpcLayer = (
                     },
                   },
                 );
+                worktreeRegistered = true;
                 const checkoutEndedAt = yield* nowIso;
                 yield* worktreeSetupTracker.update(threadId, (snapshot) => ({
                   ...snapshot,
-                  worktreePath: worktree.worktree.path,
+                  worktreePath: createdWorktree.worktreePath,
                   stages: snapshot.stages.map((stage) => {
                     if (stage.id === "checkout" && stage.status === "running") {
                       return {
@@ -1678,12 +1729,12 @@ const makeWsRpcLayer = (
                     return stage;
                   }),
                 }));
-                targetWorktreePath = worktree.worktree.path;
+                targetWorktreePath = createdWorktree.worktreePath;
                 yield* dispatchFromClient({
                   type: "thread.meta.update",
                   commandId: yield* serverCommandId("bootstrap-thread-meta-update"),
                   threadId,
-                  branch: worktree.worktree.refName,
+                  branch: prepareWorktree.branch,
                   worktreePath: targetWorktreePath,
                 });
                 yield* refreshGitStatus(targetWorktreePath);
@@ -1724,10 +1775,12 @@ const makeWsRpcLayer = (
               return started;
             });
 
-            const cleanupAndFail = (
-              cause: Cause.Cause<unknown>,
-              dispatchError: OrchestrationDispatchCommandError,
-            ) =>
+            // Resolves the error the RPC should report after rolling back the
+            // created thread. Returns the error instead of failing so the
+            // interrupt path can route it through `interruptResult`: a fiber
+            // interrupted by cancel or the timeout still exits interrupted, and
+            // an exit cannot be rewritten from `onExit`.
+            const cleanupAndResolveError = (dispatchError: OrchestrationDispatchCommandError) =>
               Effect.uninterruptible(cleanupCreatedThread()).pipe(
                 Effect.matchCauseEffect({
                   onFailure: (cleanupCause) =>
@@ -1745,10 +1798,10 @@ const makeWsRpcLayer = (
                             )
                           : Effect.void,
                       ),
-                      Effect.flatMap(() => Effect.fail(dispatchError)),
+                      Effect.as(dispatchError),
                     ),
                   onSuccess: (threadDeleted) =>
-                    Effect.fail(
+                    Effect.succeed(
                       threadDeleted
                         ? new OrchestrationDispatchCommandError({
                             message: dispatchError.message,
@@ -1762,47 +1815,71 @@ const makeWsRpcLayer = (
                 }),
               );
 
+            // Interruption bypasses `catchCause`, so the cancel/timeout cleanup
+            // runs from `onExit` and reports the RPC-facing failure through
+            // this Deferred instead of the fiber's own exit: the detached
+            // bootstrap fiber still exits interrupted, and awaiting that
+            // interruption in the RPC handler would interrupt the handler too
+            // and abandon the response without failing the send.
+            const interruptResult = yield* Deferred.make<
+              never,
+              OrchestrationDispatchCommandError
+            >();
+
             const settledBootstrapProgram = bootstrapProgram.pipe(
-              Effect.catchCause((cause) => {
-                const dispatchError = toBootstrapDispatchCommandCauseError(cause);
-                if (Cause.hasInterruptsOnly(cause)) {
-                  // A user cancel interrupts the forked bootstrap fiber. The
-                  // created thread is rolled back like any other failure so the
-                  // draft returns to the composer. The setup terminal is closed
-                  // first so a still-running script cannot hold files open in
-                  // the worktree while git removes it. Closing kills the
-                  // process asynchronously, so the removal retries briefly.
-                  const closeSetupTerminal = setupTerminalId
-                    ? terminalManager.close({
-                        ...(targetProjectId
-                          ? { workspaceId: workspaceIdForAwenProject(targetProjectId) }
-                          : {}),
-                        terminalId: setupTerminalId,
-                        deleteHistory: true,
-                      })
+              Effect.onExit((exit) => {
+                if (Exit.isSuccess(exit) || !Cause.hasInterruptsOnly(exit.cause)) {
+                  return Effect.void;
+                }
+                // A user cancel — or the overall setup-timeout watcher —
+                // interrupts the forked bootstrap fiber. The created thread
+                // is rolled back like any other failure so the draft returns
+                // to the composer. The setup terminal is closed first so a
+                // still-running script cannot hold files open in the
+                // worktree while git removes it. Closing kills the process
+                // asynchronously, so the removal retries briefly.
+                const interruptedMessage = worktreeSetupTimedOut
+                  ? `Worktree setup timed out after ${Duration.toMinutes(worktreeSetupTimeout)} minutes.`
+                  : "Worktree setup cancelled.";
+                const closeSetupTerminal = setupTerminalId
+                  ? terminalManager.close({
+                      ...(targetProjectId
+                        ? { workspaceId: workspaceIdForAwenProject(targetProjectId) }
+                        : {}),
+                      terminalId: setupTerminalId,
+                      deleteHistory: true,
+                    })
+                  : Effect.void;
+                // Once registered, the worktree is a real Workspace listed in
+                // the Sidebar; removing it is the user's explicit action, not
+                // cleanup. Only an unregistered half-made directory is
+                // removed here.
+                const removeCreatedWorktree =
+                  tracked && targetWorktreePath && !worktreeRegistered && bootstrap?.prepareWorktree
+                    ? closeSetupTerminal.pipe(
+                        Effect.ignoreCause({ log: true }),
+                        Effect.andThen(
+                          gitWorkflow
+                            .removeWorktree({
+                              cwd: bootstrap.prepareWorktree.projectCwd,
+                              path: targetWorktreePath,
+                              force: true,
+                            })
+                            .pipe(
+                              Effect.retry({ times: 4, schedule: Schedule.spaced("500 millis") }),
+                            ),
+                        ),
+                        Effect.ignoreCause({ log: true }),
+                      )
                     : Effect.void;
-                  const removeCreatedWorktree =
-                    tracked && targetWorktreePath && bootstrap?.prepareWorktree
-                      ? closeSetupTerminal.pipe(
-                          Effect.ignoreCause({ log: true }),
-                          Effect.andThen(
-                            gitWorkflow
-                              .removeWorktree({
-                                cwd: bootstrap.prepareWorktree.projectCwd,
-                                path: targetWorktreePath,
-                                force: true,
-                              })
-                              .pipe(
-                                Effect.retry({ times: 4, schedule: Schedule.spaced("500 millis") }),
-                              ),
-                          ),
-                          Effect.ignoreCause({ log: true }),
-                          Effect.uninterruptible,
-                        )
-                      : Effect.void;
-                  return track(
+                return Effect.uninterruptible(
+                  track(
                     worktreeSetupTracker
-                      .finish(threadId, "cancelled")
+                      .finish(
+                        threadId,
+                        worktreeSetupTimedOut ? "failed" : "cancelled",
+                        worktreeSetupTimedOut ? interruptedMessage : null,
+                      )
                       .pipe(
                         Effect.flatMap((snapshot) =>
                           snapshot ? recordWorktreeSetup(snapshot) : Effect.void,
@@ -1812,16 +1889,25 @@ const makeWsRpcLayer = (
                     Effect.andThen(removeCreatedWorktree),
                     Effect.andThen(
                       tracked
-                        ? cleanupAndFail(
-                            cause,
+                        ? cleanupAndResolveError(
                             new OrchestrationDispatchCommandError({
-                              message: "Worktree setup cancelled.",
+                              message: interruptedMessage,
                             }),
+                          ).pipe(
+                            Effect.flatMap((resolved) =>
+                              Deferred.completeWith(interruptResult, Exit.fail(resolved)),
+                            ),
+                            Effect.asVoid,
                           )
-                        : Effect.fail(dispatchError),
+                        : Effect.void,
                     ),
-                  );
-                }
+                  ),
+                );
+              }),
+              Effect.catchCause((cause) => {
+                // Interruption is handled by `onExit` above; only typed
+                // failures and defects arrive here.
+                const dispatchError = toBootstrapDispatchCommandCauseError(cause);
                 return track(
                   worktreeSetupTracker
                     .finish(threadId, "failed", dispatchError.message)
@@ -1830,7 +1916,11 @@ const makeWsRpcLayer = (
                         snapshot ? recordWorktreeSetup(snapshot) : Effect.void,
                       ),
                     ),
-                ).pipe(Effect.andThen(cleanupAndFail(cause, dispatchError)));
+                ).pipe(
+                  Effect.andThen(
+                    cleanupAndResolveError(dispatchError).pipe(Effect.flatMap(Effect.fail)),
+                  ),
+                );
               }),
             );
 
@@ -1839,6 +1929,16 @@ const makeWsRpcLayer = (
             // the thread it created is already visible to every client. The
             // RPC only waits on the detached fiber; a user cancel interrupts it
             // through the tracker.
+            //
+            // The execution lock serializes this preparation against Agent
+            // Session migrations and provider starts (same semaphore they use),
+            // so a duplicate send cannot interleave a second creation into the
+            // first one's half-published state. Only the worktree-creating
+            // (tracked) path takes it: a plain first-send must not queue
+            // behind another Session's long worktree setup. The timeout
+            // watcher bounds how long the lock can be held: once it fires it
+            // routes through the tracker's cancel, which is a no-op after the
+            // turn-start handoff marked the setup uncancellable.
             const runBootstrap = tracked
               ? Effect.gen(function* () {
                   // Fork and register as one step: a detached fiber keeps going
@@ -1846,7 +1946,9 @@ const makeWsRpcLayer = (
                   // the tracker entry that cancel and the stage updates key on.
                   const fiber = yield* Effect.uninterruptible(
                     Effect.gen(function* () {
-                      const fiber = yield* Effect.forkDetach(settledBootstrapProgram);
+                      const fiber = yield* Effect.forkDetach(
+                        sessionExecutionLock.withLock(settledBootstrapProgram),
+                      );
                       yield* worktreeSetupTracker.begin({
                         threadId,
                         branch: bootstrap?.prepareWorktree?.branch ?? null,
@@ -1857,7 +1959,32 @@ const makeWsRpcLayer = (
                       return fiber;
                     }),
                   );
-                  return yield* Fiber.join(fiber);
+                  const timeoutWatcher = yield* Effect.sleep(worktreeSetupTimeout).pipe(
+                    Effect.andThen(
+                      Effect.sync(() => {
+                        worktreeSetupTimedOut = true;
+                      }),
+                    ),
+                    Effect.andThen(worktreeSetupTracker.cancel(threadId)),
+                    Effect.forkDetach,
+                  );
+                  return yield* Fiber.await(fiber).pipe(
+                    Effect.flatMap((exit) => {
+                      if (Exit.isSuccess(exit)) return Effect.succeed(exit.value);
+                      if (Cause.hasInterruptsOnly(exit.cause)) {
+                        // A cancelled bootstrap exits interrupted; its `onExit`
+                        // cleanup already ran and reported the RPC-facing
+                        // failure through `interruptResult`. Re-failing the
+                        // interruption itself would interrupt this handler and
+                        // abandon the response instead of failing the send.
+                        return Deferred.await(interruptResult);
+                      }
+                      return Effect.failCause(exit.cause);
+                    }),
+                    Effect.ensuring(
+                      Fiber.interrupt(timeoutWatcher).pipe(Effect.ignoreCause({ log: true })),
+                    ),
+                  );
                 })
               : settledBootstrapProgram;
 

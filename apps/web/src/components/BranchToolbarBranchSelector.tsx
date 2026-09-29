@@ -277,7 +277,6 @@ export function BranchToolbarBranchSelector({
   const SourceControlIcon = sourceControlPresentation.Icon;
   const canonicalActiveBranch = resolveBranchToolbarValue({
     envMode: effectiveEnvMode,
-    activeWorktreePath,
     activeThreadBranch,
     currentGitBranch,
   });
@@ -288,8 +287,10 @@ export function BranchToolbarBranchSelector({
   );
   const normalizedDeferredBranchQuery = deferredTrimmedBranchQuery.toLowerCase();
   const prReference = parsePullRequestReference(trimmedBranchQuery);
-  const isSelectingWorktreeBase =
-    effectiveEnvMode === "worktree" && !envLocked && !activeWorktreePath;
+  // envMode "worktree" always means a pending New worktree choice now — even
+  // for an unstarted Session anchored in a worktree Workspace — so the branch
+  // picker is choosing the *base* for the new worktree, not a checkout.
+  const isSelectingWorktreeBase = effectiveEnvMode === "worktree" && !envLocked;
   const checkoutPullRequestItemValue =
     prReference && onCheckoutPullRequestRequest ? `__checkout_pull_request__:${prReference}` : null;
   const canCreateBranch = !isSelectingWorktreeBase && trimmedBranchQuery.length > 0;
@@ -742,7 +743,6 @@ export function BranchToolbarBranchSelector({
   }, [deferredTrimmedBranchQuery, isBranchMenuOpen]);
 
   const triggerLabel = resolveBranchTriggerLabel({
-    activeWorktreePath,
     effectiveEnvMode,
     resolvedActiveBranch,
     resolvedActiveBranchIsRemote,

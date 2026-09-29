@@ -6,6 +6,9 @@ import { HostProcessEnvironment, HostProcessPlatform } from "@awen/shared/hostPr
 import {
   AgentSessionId,
   AwenProjectId,
+  awenProjectIdForAwenProject,
+  type AwenProjectShell,
+  type AwenWorkspaceShell,
   TerminalSessionId,
   AuthStandardClientScopes,
   AuthAdministrativeScopes,
@@ -39,6 +42,7 @@ import {
   ThreadId,
   TurnId,
   WorkspaceId,
+  workspaceIdForAwenProject,
   UsageLimitSourceId,
   WS_METHODS,
   WsRpcGroup,
@@ -9238,12 +9242,130 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  // New worktree sends register the created directory as an Awen Workspace via
+  // AwenWorkspaceService, so bootstrap tests share a stateful Awen Project
+  // projection: dispatching `project.create` extends the workspaces the
+  // projection reports, like the real projection pipeline would.
+  const makeBootstrapWorkspaceRegistration = (input: {
+    readonly projectId: ProjectId;
+    readonly mainRoot: string;
+  }) => {
+    const awenProjectId = awenProjectIdForAwenProject(input.projectId);
+    const now = "2026-01-01T00:00:00.000Z";
+    const headCommit = "0123456789abcdef0123456789abcdef01234567";
+    const workspaces: Array<AwenWorkspaceShell> = [
+      {
+        id: workspaceIdForAwenProject(input.projectId),
+        projectId: awenProjectId,
+        awenProjectId: input.projectId,
+        title: "main",
+        workspaceRoot: input.mainRoot,
+        role: "main",
+        sessions: [],
+        createdAt: now,
+        updatedAt: now,
+      },
+    ];
+    const project: AwenProjectShell = {
+      id: awenProjectId,
+      title: "Bootstrap Project",
+      workspaces,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const noteDispatched = (command: OrchestrationCommand) => {
+      if (command.type !== "project.create" || command.awenWorkspace === undefined) {
+        return;
+      }
+      if (command.awenWorkspace.awenProjectId !== awenProjectId) {
+        return;
+      }
+      const workspace: AwenWorkspaceShell = {
+        id: workspaceIdForAwenProject(command.projectId),
+        projectId: awenProjectId,
+        awenProjectId: command.projectId,
+        title: command.title,
+        workspaceRoot: command.workspaceRoot,
+        role: "worktree",
+        origin: command.awenWorkspace.origin,
+        sessions: [],
+        createdAt: now,
+        updatedAt: now,
+      };
+      workspaces.push(workspace);
+    };
+    const dispatchRecording =
+      (dispatchedCommands: Array<OrchestrationCommand>) => (command: OrchestrationCommand) => {
+        noteDispatched(command);
+        dispatchedCommands.push(command);
+        return Effect.succeed({ sequence: dispatchedCommands.length });
+      };
+    return {
+      project,
+      noteDispatched,
+      dispatchRecording,
+      layers: {
+        projectionSnapshotQuery: {
+          getAwenProjectById: (id: AwenProjectId) =>
+            Effect.succeed(id === awenProjectId ? Option.some(project) : Option.none()),
+          getShellSnapshot: () =>
+            Effect.succeed({
+              snapshotSequence: 1,
+              projects: [],
+              threads: [],
+              awenProjects: [project],
+              updatedAt: now,
+            }),
+        },
+        vcsDriverRegistry: {
+          resolve: (request: { readonly cwd: string }) =>
+            Effect.succeed({
+              kind: "git" as const,
+              repository: {
+                kind: "git" as const,
+                rootPath: request.cwd,
+                metadataPath: `${input.mainRoot}/.git`,
+                freshness: {
+                  source: "live-local" as const,
+                  observedAt: TEST_EPOCH,
+                  expiresAt: Option.none(),
+                },
+              },
+              driver: {} as VcsDriverRegistry.VcsDriverHandle["driver"],
+            }),
+        },
+        gitVcsDriver: {
+          resolveCommit: () => Effect.succeed({ commitSha: headCommit }),
+          statusDetails: () =>
+            Effect.succeed({
+              isRepo: true,
+              hasOriginRemote: true,
+              isDefaultBranch: true,
+              branch: "main",
+              headCommit,
+              upstreamRef: "origin/main",
+              hasWorkingTreeChanges: false,
+              workingTree: { files: [], insertions: 0, deletions: 0 },
+              hasUpstream: true,
+              aheadCount: 0,
+              behindCount: 0,
+              aheadOfDefaultCount: 0,
+            }),
+        },
+      },
+    };
+  };
+
   it.effect(
     "bootstraps first-send worktree turns on the server before dispatching turn start",
     () =>
       Effect.gen(function* () {
         const dispatchedCommands: Array<OrchestrationCommand> = [];
         const bootstrapGitOperations: string[] = [];
+        const registration = makeBootstrapWorkspaceRegistration({
+          projectId: defaultProjectId,
+          mainRoot: "/tmp/project",
+        });
         const refreshStatus = vi.fn((_: string) =>
           Effect.succeed({
             isRepo: true,
@@ -9334,16 +9456,15 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               remoteBranchExists,
               resolveRemoteTrackingCommit,
               createWorktree,
+              ...registration.layers.gitVcsDriver,
             },
+            vcsDriverRegistry: registration.layers.vcsDriverRegistry,
+            projectionSnapshotQuery: registration.layers.projectionSnapshotQuery,
             vcsStatusBroadcaster: {
               refreshStatus,
             },
             orchestrationEngine: {
-              dispatch: (command) =>
-                Effect.sync(() => {
-                  dispatchedCommands.push(command);
-                  return { sequence: dispatchedCommands.length };
-                }),
+              dispatch: registration.dispatchRecording(dispatchedCommands),
               readEvents: () => Stream.empty,
             },
             projectSetupScriptRunner: {
@@ -9393,7 +9514,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           ),
         );
 
-        assert.equal(response.sequence, 8);
+        assert.equal(response.sequence, 9);
         assert.deepEqual(
           dispatchedCommands.map((command) => command.type),
           [
@@ -9401,6 +9522,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             "thread.message.user.append",
             "thread.activity.append",
             "thread.session.set",
+            "project.create",
             "thread.meta.update",
             "thread.activity.append",
             "thread.activity.append",
@@ -9408,6 +9530,18 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             "thread.activity.append",
           ],
         );
+        // The created directory is registered as an Awen Workspace of the
+        // thread's Project before the turn starts, so checkpoint capture can
+        // resolve execution ownership by workspaceRoot.
+        const projectCreate = dispatchedCommands.find(
+          (command) => command.type === "project.create",
+        );
+        assertTrue(projectCreate?.type === "project.create");
+        if (projectCreate?.type === "project.create") {
+          assert.equal(projectCreate.awenWorkspace?.awenProjectId, registration.project.id);
+          assert.equal(projectCreate.awenWorkspace?.role, "worktree");
+          assert.equal(projectCreate.awenWorkspace?.origin, "awen-created");
+        }
         // The checkout can take minutes, so the thread reads as working from
         // the moment setup starts rather than only once the turn is dispatched.
         const preparingCommand = dispatchedCommands[3];
@@ -9424,9 +9558,15 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           cwd: "/tmp/project",
           refName: fetchedOriginCommit,
           newRefName: "awen/bootstrap-refName",
-          baseRefName: "main",
-          path: null,
+          baseRefName: fetchedOriginCommit,
+          path: createWorktree.mock.calls[0]?.[0].path ?? null,
         });
+        // Registration picks the daemon-managed destination, which becomes the
+        // worktree path every later stage (meta update, setup script, git
+        // status) agrees on.
+        const createdWorktreePath = createWorktree.mock.calls[0]?.[0].path;
+        assertTrue(typeof createdWorktreePath === "string" && createdWorktreePath.length > 0);
+        assert.include(createdWorktreePath, "awen-bootstrap-refName");
         assert.deepEqual(fetchRemote.mock.calls[0]?.[0], {
           cwd: "/tmp/project",
           remoteName: "origin",
@@ -9461,12 +9601,12 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             threadId: ThreadId.make("thread-bootstrap"),
             projectId: defaultProjectId,
             projectCwd: "/tmp/project",
-            worktreePath: "/tmp/bootstrap-worktree",
+            worktreePath: createdWorktreePath,
           },
         );
         // Worktree bootstraps observe script completion so the setup card can show the exit code.
         assert.isDefined(runForThreadInput?.observeCompletion);
-        assert.deepEqual(refreshStatus.mock.calls[0]?.[0], "/tmp/bootstrap-worktree");
+        assert.deepEqual(refreshStatus.mock.calls[0]?.[0], createdWorktreePath);
 
         const setupActivities = dispatchedCommands.filter(
           (command): command is Extract<OrchestrationCommand, { type: "thread.activity.append" }> =>
@@ -9492,7 +9632,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           assert.equal(settledActivity.payload.phase, "done");
           assert.equal(settledActivity.payload.threadId, ThreadId.make("thread-bootstrap"));
         }
-        const finalCommand = dispatchedCommands[7];
+        const finalCommand = dispatchedCommands[8];
         assertTrue(finalCommand?.type === "thread.turn.start");
         if (finalCommand?.type === "thread.turn.start") {
           assert.equal(finalCommand.bootstrap, undefined);
@@ -9506,6 +9646,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
   ])("falls back to the local base branch when $caseName", ({ hasOrigin }) =>
     Effect.gen(function* () {
       const dispatchedCommands: Array<OrchestrationCommand> = [];
+      const registration = makeBootstrapWorkspaceRegistration({
+        projectId: defaultProjectId,
+        mainRoot: "/tmp/project",
+      });
       const remoteExists = vi.fn(
         (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["remoteExists"]>[0]) =>
           Effect.succeed(hasOrigin),
@@ -9546,13 +9690,12 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             remoteBranchExists,
             resolveRemoteTrackingCommit,
             createWorktree,
+            ...registration.layers.gitVcsDriver,
           },
+          vcsDriverRegistry: registration.layers.vcsDriverRegistry,
+          projectionSnapshotQuery: registration.layers.projectionSnapshotQuery,
           orchestrationEngine: {
-            dispatch: (command) =>
-              Effect.sync(() => {
-                dispatchedCommands.push(command);
-                return { sequence: dispatchedCommands.length };
-              }),
+            dispatch: registration.dispatchRecording(dispatchedCommands),
             readEvents: () => Stream.empty,
           },
         },
@@ -9617,8 +9760,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         refName: "main",
         newRefName: "awen/bootstrap-refName",
         baseRefName: "main",
-        path: null,
+        path: createWorktree.mock.calls[0]?.[0].path ?? null,
       });
+      assert.include(createWorktree.mock.calls[0]?.[0].path ?? "", "awen-bootstrap-refName");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
@@ -9798,6 +9942,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
   it.effect("records setup-script failures without aborting bootstrap turn start", () =>
     Effect.gen(function* () {
       const dispatchedCommands: Array<OrchestrationCommand> = [];
+      const registration = makeBootstrapWorkspaceRegistration({
+        projectId: defaultProjectId,
+        mainRoot: "/tmp/project",
+      });
       const createWorktree = vi.fn(
         (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["createWorktree"]>[0]) =>
           Effect.succeed({
@@ -9831,13 +9979,12 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           gitVcsDriver: {
             execute: () => Effect.succeed(SUCCESSFUL_GIT_EXECUTION),
             createWorktree,
+            ...registration.layers.gitVcsDriver,
           },
+          vcsDriverRegistry: registration.layers.vcsDriverRegistry,
+          projectionSnapshotQuery: registration.layers.projectionSnapshotQuery,
           orchestrationEngine: {
-            dispatch: (command) =>
-              Effect.sync(() => {
-                dispatchedCommands.push(command);
-                return { sequence: dispatchedCommands.length };
-              }),
+            dispatch: registration.dispatchRecording(dispatchedCommands),
             readEvents: () => Stream.empty,
           },
           projectSetupScriptRunner: {
@@ -9886,7 +10033,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         ),
       );
 
-      assert.equal(response.sequence, 7);
+      assert.equal(response.sequence, 8);
       assert.deepEqual(
         dispatchedCommands.map((command) => command.type),
         [
@@ -9894,6 +10041,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           "thread.message.user.append",
           "thread.activity.append",
           "thread.session.set",
+          "project.create",
           "thread.meta.update",
           "thread.activity.append",
           "thread.turn.start",
@@ -9907,7 +10055,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(setupFailureActivity?.activity.kind, "setup-script.failed");
       assert.deepEqual(setupFailureActivity?.activity.payload, {
         detail: "pty unavailable",
-        worktreePath: "/tmp/bootstrap-worktree",
+        worktreePath: createWorktree.mock.calls[0]?.[0].path,
       });
       assertTrue(dispatchedCommands.every((command) => command.type !== "thread.delete"));
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
@@ -9916,6 +10064,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
   it.effect("does not misattribute setup activity dispatch failures as setup launch failures", () =>
     Effect.gen(function* () {
       const dispatchedCommands: Array<OrchestrationCommand> = [];
+      const registration = makeBootstrapWorkspaceRegistration({
+        projectId: defaultProjectId,
+        mainRoot: "/tmp/project",
+      });
       const createWorktree = vi.fn(
         (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["createWorktree"]>[0]) =>
           Effect.succeed({
@@ -9951,9 +10103,13 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           gitVcsDriver: {
             execute: () => Effect.succeed(SUCCESSFUL_GIT_EXECUTION),
             createWorktree,
+            ...registration.layers.gitVcsDriver,
           },
+          vcsDriverRegistry: registration.layers.vcsDriverRegistry,
+          projectionSnapshotQuery: registration.layers.projectionSnapshotQuery,
           orchestrationEngine: {
             dispatch: (command) => {
+              registration.noteDispatched(command);
               if (
                 command.type === "thread.activity.append" &&
                 command.activity.kind.startsWith("setup-script.")
@@ -10022,7 +10178,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         ),
       );
 
-      assert.equal(response.sequence, 7);
+      assert.equal(response.sequence, 8);
       assert.deepEqual(
         dispatchedCommands.map((command) => command.type),
         [
@@ -10030,6 +10186,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           "thread.message.user.append",
           "thread.activity.append",
           "thread.session.set",
+          "project.create",
           "thread.meta.update",
           "thread.activity.append",
           "thread.turn.start",
@@ -10057,6 +10214,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
   ])("$caseName", ({ async }) =>
     Effect.gen(function* () {
       const dispatchedCommands: Array<OrchestrationCommand> = [];
+      const registration = makeBootstrapWorkspaceRegistration({
+        projectId: defaultProjectId,
+        mainRoot: "/tmp/project",
+      });
       const scriptExit = yield* Deferred.make<void>();
       const runForThread = vi.fn(
         (
@@ -10090,13 +10251,12 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                   path: "/tmp/bootstrap-worktree",
                 },
               }),
+            ...registration.layers.gitVcsDriver,
           },
+          vcsDriverRegistry: registration.layers.vcsDriverRegistry,
+          projectionSnapshotQuery: registration.layers.projectionSnapshotQuery,
           orchestrationEngine: {
-            dispatch: (command) =>
-              Effect.sync(() => {
-                dispatchedCommands.push(command);
-                return { sequence: dispatchedCommands.length };
-              }),
+            dispatch: registration.dispatchRecording(dispatchedCommands),
             readEvents: () => Stream.empty,
           },
           projectSetupScriptRunner: {
@@ -10208,6 +10368,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
   it.effect("cleans up created bootstrap threads when worktree creation defects", () =>
     Effect.gen(function* () {
       const dispatchedCommands: Array<OrchestrationCommand> = [];
+      const registration = makeBootstrapWorkspaceRegistration({
+        projectId: defaultProjectId,
+        mainRoot: "/tmp/project",
+      });
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const createWorktree = vi.fn(
@@ -10223,13 +10387,12 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           gitVcsDriver: {
             execute: () => Effect.succeed(SUCCESSFUL_GIT_EXECUTION),
             createWorktree,
+            ...registration.layers.gitVcsDriver,
           },
+          vcsDriverRegistry: registration.layers.vcsDriverRegistry,
+          projectionSnapshotQuery: registration.layers.projectionSnapshotQuery,
           orchestrationEngine: {
-            dispatch: (command) =>
-              Effect.sync(() => {
-                dispatchedCommands.push(command);
-                return { sequence: dispatchedCommands.length };
-              }),
+            dispatch: registration.dispatchRecording(dispatchedCommands),
             readEvents: () => Stream.empty,
           },
         },
@@ -10299,6 +10462,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
       assertTrue(result._tag === "Failure");
       assertTrue(result.failure._tag === "OrchestrationDispatchCommandError");
+      // A driver-level defect is not wrapped by the Workspace service's typed
+      // error mapping; the raw defect surfaces as the dispatch failure.
       assert.include(result.failure.message, "worktree exploded");
       assert.strictEqual(result.failure.bootstrapThreadDisposition, "deleted");
       assert.deepEqual(
@@ -10320,6 +10485,126 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         `${pendingAttachmentId}.png`,
       ]);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("converges the setup card to failed when worktree setup exceeds the timeout", () =>
+    Effect.gen(function* () {
+      const dispatchedCommands: Array<OrchestrationCommand> = [];
+      const registration = makeBootstrapWorkspaceRegistration({
+        projectId: defaultProjectId,
+        mainRoot: "/tmp/project",
+      });
+      const createWorktreeStarted = yield* Deferred.make<void>();
+      const createWorktree = vi.fn(() =>
+        // Creation hangs (a wedged checkout); only the timeout watcher can
+        // end it, via the tracker's cancel.
+        Deferred.succeed(createWorktreeStarted, undefined).pipe(Effect.andThen(Effect.never)),
+      );
+
+      yield* buildAppUnderTest({
+        config: { worktreeSetupTimeout: Duration.millis(50) },
+        layers: {
+          vcsDriver: {
+            isInsideWorkTree: () => Effect.succeed(true),
+          },
+          gitVcsDriver: {
+            execute: () => Effect.succeed(SUCCESSFUL_GIT_EXECUTION),
+            createWorktree,
+            ...registration.layers.gitVcsDriver,
+          },
+          vcsDriverRegistry: registration.layers.vcsDriverRegistry,
+          projectionSnapshotQuery: registration.layers.projectionSnapshotQuery,
+          orchestrationEngine: {
+            dispatch: registration.dispatchRecording(dispatchedCommands),
+            readEvents: () => Stream.empty,
+          },
+        },
+      });
+
+      const createdAt = "2026-01-01T00:00:00.000Z";
+      const threadId = ThreadId.make("thread-bootstrap-timeout");
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const dispatchFiber = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+            type: "thread.turn.start",
+            commandId: CommandId.make("cmd-bootstrap-timeout"),
+            threadId,
+            message: {
+              messageId: MessageId.make("msg-bootstrap-timeout"),
+              role: "user",
+              text: "hello",
+              attachments: [],
+            },
+            modelSelection: defaultModelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            bootstrap: {
+              createThread: {
+                projectId: defaultProjectId,
+                title: "Bootstrap Thread",
+                modelSelection: defaultModelSelection,
+                runtimeMode: "full-access",
+                interactionMode: "default",
+                branch: "main",
+                worktreePath: null,
+                createdAt,
+              },
+              prepareWorktree: {
+                projectCwd: "/tmp/project",
+                baseBranch: "main",
+                branch: "awen/bootstrap-refName",
+              },
+              runSetupScript: false,
+            },
+            createdAt,
+          }),
+        ).pipe(Effect.result),
+      ).pipe(Effect.forkChild);
+
+      // Creation is wedged and the card is running when the timeout fires.
+      yield* Deferred.await(createWorktreeStarted).pipe(
+        Effect.timeout(Duration.seconds(10)),
+      );
+      const snapshotWhere = (predicate: (snapshot: WorktreeSetupSnapshot) => boolean) =>
+        Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            client[WS_METHODS.subscribeWorktreeSetup]({ threadId }).pipe(
+              Stream.filter(
+                (snapshot): snapshot is WorktreeSetupSnapshot =>
+                  snapshot !== null && predicate(snapshot),
+              ),
+              Stream.runHead,
+              Effect.map(Option.getOrThrow),
+            ),
+          ),
+        );
+      const settled = yield* snapshotWhere((snapshot) => snapshot.phase !== "running");
+      // The timeout watcher cancels through the tracker, which the interrupt
+      // path reports as a failure — not a user cancel — so the card converges
+      // instead of hanging on "Setting up worktree".
+      assert.equal(settled.phase, "failed");
+      assert.include(settled.error ?? "", "timed out");
+
+      const result = yield* Fiber.join(dispatchFiber);
+      assertTrue(result._tag === "Failure");
+      assertTrue(result.failure._tag === "OrchestrationDispatchCommandError");
+      assert.include(result.failure.message, "timed out");
+      assert.strictEqual(result.failure.bootstrapThreadDisposition, "deleted");
+      // The bootstrap thread is rolled back like any other failure so the
+      // draft returns to the composer.
+      assert.deepEqual(
+        dispatchedCommands.map((command) => command.type),
+        [
+          "thread.create",
+          "thread.message.user.append",
+          "thread.activity.append",
+          "thread.session.set",
+          "thread.activity.append",
+          "thread.delete",
+        ],
+      );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
   );
 
   it.effect("drains deletion cleanup through the re-created thread event", () =>
@@ -10435,6 +10720,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
   it.effect("does not report a deleted bootstrap thread when cleanup fails", () =>
     Effect.gen(function* () {
       const dispatchedCommands: Array<OrchestrationCommand> = [];
+      const registration = makeBootstrapWorkspaceRegistration({
+        projectId: defaultProjectId,
+        mainRoot: "/tmp/project",
+      });
       const createWorktree = vi.fn(
         (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["createWorktree"]>[0]) =>
           Effect.die(new Error("worktree exploded")),
@@ -10448,9 +10737,13 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           gitVcsDriver: {
             execute: () => Effect.succeed(SUCCESSFUL_GIT_EXECUTION),
             createWorktree,
+            ...registration.layers.gitVcsDriver,
           },
+          vcsDriverRegistry: registration.layers.vcsDriverRegistry,
+          projectionSnapshotQuery: registration.layers.projectionSnapshotQuery,
           orchestrationEngine: {
             dispatch: (command) => {
+              registration.noteDispatched(command);
               dispatchedCommands.push(command);
               if (command.type === "thread.delete") {
                 return Effect.fail(

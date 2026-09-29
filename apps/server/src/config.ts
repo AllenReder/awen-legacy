@@ -8,6 +8,7 @@
  */
 import * as Context from "effect/Context";
 import * as Clock from "effect/Clock";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -98,6 +99,12 @@ export class ServerConfig extends Context.Service<
     readonly resourceMonitorPath?: string | undefined;
     readonly autoBootstrapProjectFromCwd: boolean;
     readonly logWebSocketEvents: boolean;
+    /**
+     * Overall budget for a New worktree bootstrap (create, setup script, agent
+     * start) before the setup card converges to failed. Defaults to 30 minutes.
+     * Tests override this with a short duration.
+     */
+    readonly worktreeSetupTimeout?: Duration.Duration;
     readonly tailscaleServeEnabled: boolean;
     readonly tailscaleServePort: number;
   }

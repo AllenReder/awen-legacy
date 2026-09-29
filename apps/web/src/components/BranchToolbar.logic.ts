@@ -149,12 +149,18 @@ export function resolveEffectiveEnvMode(input: {
 }): EnvMode {
   const { activeWorktreePath, hasServerThread, draftThreadEnvMode } = input;
   if (!hasServerThread) {
+    // Choosing New worktree for an anchored draft clears its worktreePath, so
+    // an anchor that remains means "run in that existing worktree".
     if (activeWorktreePath) {
       return "local";
     }
     return draftThreadEnvMode === "worktree" ? "worktree" : "local";
   }
-  return activeWorktreePath ? "worktree" : "local";
+  // For a server thread the mode is a *pending choice*, not the current
+  // anchor: an unstarted Session may still pick New worktree (the pending
+  // override wins upstream), and a begun one is locked anyway. The anchor
+  // itself is shown through the workspace labels.
+  return "local";
 }
 
 export function resolveDraftEnvModeAfterBranchChange(input: {
@@ -174,26 +180,25 @@ export function resolveDraftEnvModeAfterBranchChange(input: {
 
 export function resolveBranchToolbarValue(input: {
   envMode: EnvMode;
-  activeWorktreePath: string | null;
   activeThreadBranch: string | null;
   currentGitBranch: string | null;
 }): string | null {
-  const { envMode, activeWorktreePath, activeThreadBranch, currentGitBranch } = input;
-  if (envMode === "worktree" && !activeWorktreePath) {
+  // envMode "worktree" always means a pending New worktree choice now, so the
+  // toolbar tracks the base selection regardless of the Session's anchor.
+  const { envMode, activeThreadBranch, currentGitBranch } = input;
+  if (envMode === "worktree") {
     return activeThreadBranch ?? currentGitBranch;
   }
   return currentGitBranch ?? activeThreadBranch;
 }
 
 export function resolveBranchTriggerLabel(input: {
-  activeWorktreePath: string | null;
   effectiveEnvMode: EnvMode;
   resolvedActiveBranch: string | null;
   resolvedActiveBranchIsRemote: boolean | null;
   startFromOrigin: boolean;
 }): string {
   const {
-    activeWorktreePath,
     effectiveEnvMode,
     resolvedActiveBranch,
     resolvedActiveBranchIsRemote,
@@ -202,7 +207,7 @@ export function resolveBranchTriggerLabel(input: {
   if (!resolvedActiveBranch) {
     return "Select ref";
   }
-  if (effectiveEnvMode === "worktree" && !activeWorktreePath) {
+  if (effectiveEnvMode === "worktree") {
     const baseRef =
       startFromOrigin && resolvedActiveBranchIsRemote === false
         ? `origin/${resolvedActiveBranch}`

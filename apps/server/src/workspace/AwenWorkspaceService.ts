@@ -60,6 +60,7 @@ export class AwenWorkspaceService extends Context.Service<
     ) => Effect.Effect<AwenWorkspaceAssociateResult, AwenWorkspaceError>;
     readonly createWorktree: (
       input: AwenWorkspaceCreateWorktreeInput,
+      options?: GitVcsDriver.CreateWorktreeOptions,
     ) => Effect.Effect<AwenWorkspaceCreateWorktreeResult, AwenWorkspaceError>;
     readonly remove: (
       input: AwenWorkspaceRemoveInput,
@@ -476,7 +477,7 @@ export const make = Effect.gen(function* () {
 
   const createWorktree: AwenWorkspaceService["Service"]["createWorktree"] = Effect.fn(
     "AwenWorkspaceService.createWorktree",
-  )(function* (input) {
+  )(function* (input, options) {
     const project = yield* readAwenProject(input.projectId);
     const mainWorkspace = yield* mainWorkspaceFor(project);
     const mainRoot = pathService.resolve(mainWorkspace.workspaceRoot);
@@ -629,14 +630,17 @@ export const make = Effect.gen(function* () {
           ),
         );
       yield* gitWorkflow
-        .createWorktree({
-          cwd: mainRoot,
-          refName: input.newBranch === undefined ? resolvedBase.commitSha : baseRef,
-          ...(input.newBranch === undefined
-            ? { detach: true }
-            : { newRefName: input.newBranch, baseRefName: baseRef }),
-          path: requestedAbsolutePath,
-        })
+        .createWorktree(
+          {
+            cwd: mainRoot,
+            refName: input.newBranch === undefined ? resolvedBase.commitSha : baseRef,
+            ...(input.newBranch === undefined
+              ? { detach: true }
+              : { newRefName: input.newBranch, baseRefName: baseRef }),
+            path: requestedAbsolutePath,
+          },
+          options,
+        )
         .pipe(
           Effect.mapError((cause) =>
             workspaceError(

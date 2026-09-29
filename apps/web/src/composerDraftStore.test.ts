@@ -1958,6 +1958,35 @@ describe("composerDraftStore project draft thread mapping", () => {
     expect(useComposerDraftStore.getState().getDraftThread(draftId)?.startFromOrigin).toBe(false);
   });
 
+  it("pins, preserves, and clears the temporary worktree branch name with the draft", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectRef, draftId, {
+      threadId,
+      envMode: "worktree",
+      worktreeBranchName: "awen/wt-abc123",
+    });
+    expect(useComposerDraftStore.getState().getDraftThread(draftId)?.worktreeBranchName).toBe(
+      "awen/wt-abc123",
+    );
+
+    // Unrelated context updates keep the pinned name, so a retry after a
+    // failed setup reuses the same branch and directory.
+    store.setDraftThreadContext(draftId, { startFromOrigin: false });
+    expect(useComposerDraftStore.getState().getDraftThread(draftId)?.worktreeBranchName).toBe(
+      "awen/wt-abc123",
+    );
+
+    // Switching back to the current checkout drops it.
+    store.setDraftThreadContext(draftId, { worktreeBranchName: null });
+    expect(useComposerDraftStore.getState().getDraftThread(draftId)?.worktreeBranchName).toBeNull();
+
+    // Selecting New worktree again pins a fresh name.
+    store.setDraftThreadContext(draftId, { worktreeBranchName: "awen/wt-def456" });
+    expect(useComposerDraftStore.getState().getDraftThread(draftId)?.worktreeBranchName).toBe(
+      "awen/wt-def456",
+    );
+  });
+
   it("preserves existing branch and worktree when setProjectDraftThreadId receives undefined", () => {
     const store = useComposerDraftStore.getState();
     store.setProjectDraftThreadId(projectRef, draftId, {

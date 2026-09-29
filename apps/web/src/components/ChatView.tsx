@@ -5642,7 +5642,6 @@ export default function ChatView(props: ChatViewProps) {
     isServerThread &&
     activeThread &&
     activeThread.messages.length === 0 &&
-    activeThread.worktreePath === null &&
     !envLocked,
   );
   const envMode: DraftThreadEnvMode = canOverrideServerThreadEnvMode
@@ -7456,15 +7455,20 @@ export default function ChatView(props: ChatViewProps) {
     }
     const threadIdForSend = activeThread.id;
     const isFirstMessage = !isServerThread || activeThread.messages.length === 0;
+    // "New worktree" is a pending choice of an unstarted Session, so an empty
+    // Session anchored in a worktree Workspace may still pick it: for those
+    // (canOverrideServerThreadEnvMode) worktree mode always means "create one
+    // on send". Drafts reuse the same field to anchor at an *existing*
+    // worktree (worktreePath set), which must not create anything.
+    const pendingNewWorktree =
+      sendEnvMode === "worktree" &&
+      (canOverrideServerThreadEnvMode || !activeThread.worktreePath);
     const baseBranchForWorktree =
-      isFirstMessage && sendEnvMode === "worktree" && !activeThread.worktreePath
-        ? activeThreadBranch
-        : null;
+      isFirstMessage && pendingNewWorktree ? activeThreadBranch : null;
 
     // In worktree mode, require an explicit base branch so we don't silently
     // fall back to local execution when branch selection is missing.
-    const shouldCreateWorktree =
-      isFirstMessage && sendEnvMode === "worktree" && !activeThread.worktreePath;
+    const shouldCreateWorktree = isFirstMessage && pendingNewWorktree;
     if (shouldCreateWorktree && !activeThreadBranch) {
       setThreadError(threadIdForSend, "Select a base branch before sending in New worktree mode.");
       return;
@@ -7845,7 +7849,9 @@ export default function ChatView(props: ChatViewProps) {
                     prepareWorktree: {
                       projectCwd: activeProject.workspaceRoot,
                       baseBranch: baseBranchForWorktree,
-                      branch: buildTemporaryWorktreeBranchName(randomHex),
+                      branch:
+                        draftThread?.worktreeBranchName ??
+                        buildTemporaryWorktreeBranchName(randomHex),
                       ...(startFromOrigin ? { startFromOrigin: true } : {}),
                     },
                     runSetupScript: true,
@@ -8832,10 +8838,18 @@ export default function ChatView(props: ChatViewProps) {
   );
   const onEnvModeChange = useCallback(
     (mode: DraftThreadEnvMode) => {
+      // Pin the temporary branch name when New worktree is chosen so a retry
+      // after a partial failure reuses the same directory; clear it when the
+      // choice is cancelled.
+      const worktreeBranchName =
+        mode === "worktree"
+          ? (draftThread?.worktreeBranchName ?? buildTemporaryWorktreeBranchName(randomHex))
+          : null;
       if (canOverrideServerThreadEnvMode) {
         setPendingServerThreadEnvMode(mode);
         setDraftThreadContext(composerDraftTarget, {
           envMode: mode,
+          worktreeBranchName,
           startFromOrigin: resolveNewDraftStartFromOrigin({
             envMode: mode,
             newWorktreesStartFromOrigin: activeProjectSettings.settings.newWorktreesStartFromOrigin,
@@ -8848,6 +8862,7 @@ export default function ChatView(props: ChatViewProps) {
       if (isLocalDraftThread) {
         setDraftThreadContext(composerDraftTarget, {
           envMode: mode,
+          worktreeBranchName,
           startFromOrigin: resolveNewDraftStartFromOrigin({
             envMode: mode,
             newWorktreesStartFromOrigin: activeProjectSettings.settings.newWorktreesStartFromOrigin,
@@ -8861,6 +8876,7 @@ export default function ChatView(props: ChatViewProps) {
       canOverrideServerThreadEnvMode,
       composerDraftTarget,
       draftThread?.worktreePath,
+      draftThread?.worktreeBranchName,
       isLocalDraftThread,
       activeProjectSettings.settings.newWorktreesStartFromOrigin,
       setPendingServerThreadEnvMode,
@@ -8920,7 +8936,11 @@ export default function ChatView(props: ChatViewProps) {
     if (sendEnvMode !== "local") {
       // The draft is back; switch it to the project checkout and let the next
       // render resend.
-      setDraftThreadContext(composerDraftTarget, { envMode: "local", startFromOrigin: false });
+      setDraftThreadContext(composerDraftTarget, {
+        envMode: "local",
+        startFromOrigin: false,
+        worktreeBranchName: null,
+      });
       return;
     }
     setWorkLocallyResendDraftId(null);
