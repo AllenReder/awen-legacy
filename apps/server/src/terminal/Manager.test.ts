@@ -1862,6 +1862,45 @@ it.layer(
       }),
   );
 
+  it.effect("bounds every unterminated control sequence introducer and resynchronizes", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter, getEvents } = yield* createManager(5);
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0];
+      expect(process).toBeDefined();
+      if (!process) return;
+
+      // Each process opens one introducer and never terminates the sequence.
+      // Without a cap the scanner keeps every byte inside the sequence and
+      // re-scans it with each chunk, so the following text never appears.
+      const cases = [
+        ["OSC", "\u001b]"],
+        ["CSI", "\u001b["],
+        ["DCS", "\u001bP"],
+        ["C1 OSC", "\u009d"],
+        ["C1 CSI", "\u009b"],
+      ] as const;
+      for (const [name, introducer] of cases) {
+        const marker = `resynchronized ${name} output\n`;
+        process.emitData(introducer);
+        // 64 KiB of payload that cannot terminate the sequence, well past the
+        // 8 KiB pending-sequence cap.
+        const payloadChunks = 64;
+        for (let index = 0; index < payloadChunks; index += 1) {
+          process.emitData("0".repeat(1024));
+        }
+        process.emitData(marker);
+
+        yield* waitFor(
+          Effect.map(getEvents, (events) =>
+            events.some((event) => event.type === "output" && event.data === marker),
+          ),
+        );
+        expect((yield* manager.open(openInput())).history).toContain(marker.trim());
+      }
+    }),
+  );
+
   it.effect("deletes history file when close(deleteHistory=true)", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter, logsDir } = yield* createManager();
