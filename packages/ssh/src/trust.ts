@@ -10,6 +10,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { SshHostDiscoveryError, SshInvalidTargetError } from "./errors.ts";
 import { buildSshHostSpecEffect } from "./command.ts";
+import { resolveSshUserHome } from "./userHome.ts";
 
 export type SshTrustError =
   | SshHostDiscoveryError
@@ -265,7 +266,7 @@ export const trustSshHostKey = Effect.fn("ssh/trust.trustSshHostKey")(function* 
   }
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const home = yield* Effect.sync(() => process.env.HOME ?? process.cwd());
+  const home = yield* resolveSshUserHome;
   const sshDir = path.join(home, ".ssh");
   const knownHostsPath = path.join(sshDir, "known_hosts");
   yield* fs.makeDirectory(sshDir, { recursive: true, mode: 0o700 });
