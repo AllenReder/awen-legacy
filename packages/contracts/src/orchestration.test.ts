@@ -35,6 +35,7 @@ import {
   ThreadTurnStartRequestedPayload,
   DispatchResult,
   SnapShotAccessibility,
+  isOrchestrationSessionExecuting,
   isProviderSendTurnSupportedImageMimeType,
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
 } from "./orchestration.ts";
@@ -1666,3 +1667,39 @@ it.effect("encodes compatible icons inside snapshots and client commands", () =>
     assert.deepEqual(yield* decodeNightlyIcon(command.projectIcon), fallback);
   }),
 );
+
+it("isOrchestrationSessionExecuting considers live providers executing, but allows bootstrap worktree preparation", () => {
+  assert.strictEqual(isOrchestrationSessionExecuting(null), false);
+  assert.strictEqual(
+    isOrchestrationSessionExecuting({ status: "idle", activeTurnId: null, providerName: null }),
+    false,
+  );
+  assert.strictEqual(
+    isOrchestrationSessionExecuting({
+      status: "running",
+      activeTurnId: null,
+      providerName: "codex",
+    }),
+    true,
+  );
+  assert.strictEqual(
+    isOrchestrationSessionExecuting({
+      status: "idle",
+      activeTurnId: "turn-1" as any,
+      providerName: null,
+    }),
+    true,
+  );
+  assert.strictEqual(
+    isOrchestrationSessionExecuting({
+      status: "starting",
+      activeTurnId: null,
+      providerName: "codex",
+    }),
+    true,
+  );
+  assert.strictEqual(
+    isOrchestrationSessionExecuting({ status: "starting", activeTurnId: null, providerName: null }),
+    false,
+  );
+});

@@ -1736,10 +1736,12 @@ const makeWsRpcLayer = (
                   }),
                 }));
                 targetWorktreePath = createdWorktree.worktreePath;
+                targetProjectId = createdWorktree.workspace.awenProjectId;
                 yield* dispatchFromClient({
                   type: "thread.meta.update",
                   commandId: yield* serverCommandId("bootstrap-thread-meta-update"),
                   threadId,
+                  projectId: createdWorktree.workspace.awenProjectId,
                   branch: prepareWorktree.branch,
                   worktreePath: targetWorktreePath,
                 });

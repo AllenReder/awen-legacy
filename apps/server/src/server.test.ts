@@ -9542,6 +9542,13 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           assert.equal(projectCreate.awenWorkspace?.role, "worktree");
           assert.equal(projectCreate.awenWorkspace?.origin, "awen-created");
         }
+        const metaUpdate = dispatchedCommands.find(
+          (command) => command.type === "thread.meta.update",
+        );
+        assertTrue(metaUpdate?.type === "thread.meta.update");
+        if (metaUpdate?.type === "thread.meta.update") {
+          assert.equal(metaUpdate.projectId, projectCreate?.projectId);
+        }
         // The checkout can take minutes, so the thread reads as working from
         // the moment setup starts rather than only once the turn is dispatched.
         const preparingCommand = dispatchedCommands[3];
@@ -9599,7 +9606,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           },
           {
             threadId: ThreadId.make("thread-bootstrap"),
-            projectId: defaultProjectId,
+            projectId: projectCreate?.projectId,
             projectCwd: "/tmp/project",
             worktreePath: createdWorktreePath,
           },
