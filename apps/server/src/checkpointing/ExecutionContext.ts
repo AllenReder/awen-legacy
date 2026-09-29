@@ -198,6 +198,7 @@ const make = Effect.gen(function* () {
     if (saved.headRef === current.headRef) return true;
     if (
       saved.headRef !== null &&
+      current.headRef !== null &&
       isTemporaryWorktreeBranch(saved.headRef.replace(/^refs\/heads\//, ""))
     ) {
       return true;
@@ -212,7 +213,7 @@ const make = Effect.gen(function* () {
     yield* sql`
       UPDATE checkpoint_execution_contexts
       SET head_ref = ${newRef}
-      WHERE thread_id = ${threadId}
+      WHERE thread_id = ${threadId} AND context_key LIKE 'turn:%'
     `;
   });
 
