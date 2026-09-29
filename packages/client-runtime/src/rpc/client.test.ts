@@ -29,6 +29,8 @@ import * as RpcSession from "../rpc/session.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import {
   EnvironmentRpcRequestObserver,
+  type EnvironmentSubscriptionRpcTag,
+  type EnvironmentUnaryRpcTag,
   request,
   runStream,
   subscribe,
@@ -77,6 +79,41 @@ const makeHarness = Effect.fn("TestEnvironmentRpc.makeHarness")(function* () {
 });
 
 describe("environment RPC", () => {
+  it("classifies background policy as a subscription RPC", () => {
+    const subscriptionTag: EnvironmentSubscriptionRpcTag = WS_METHODS.subscribeBackgroundPolicy;
+    void subscriptionTag;
+
+    // @ts-expect-error subscribeBackgroundPolicy is a stream, not a unary RPC.
+    const unaryTag: EnvironmentUnaryRpcTag = WS_METHODS.subscribeBackgroundPolicy;
+    void unaryTag;
+  });
+
+  it.effect("subscribes to background policy through the durable subscription helper", () =>
+    Effect.gen(function* () {
+      let subscribed = false;
+      const client = {
+        [WS_METHODS.subscribeBackgroundPolicy]: () => {
+          subscribed = true;
+          return Stream.never;
+        },
+      } as unknown as WsRpcProtocolClient;
+      const { activeSession, supervisor } = yield* makeHarness();
+      yield* SubscriptionRef.set(activeSession, Option.some(session(client)));
+
+      const fiber = yield* subscribe(WS_METHODS.subscribeBackgroundPolicy, {}).pipe(
+        Stream.runDrain,
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.forkChild,
+      );
+      for (let attempt = 0; attempt < 100 && !subscribed; attempt += 1) {
+        yield* Effect.yieldNow;
+      }
+      yield* Fiber.interrupt(fiber);
+
+      expect(subscribed).toBe(true);
+    }),
+  );
+
   it.effect("reuses the session config stream instead of opening a duplicate subscription", () =>
     Effect.gen(function* () {
       const event: ServerConfigStreamEvent = {
