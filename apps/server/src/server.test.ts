@@ -58,6 +58,7 @@ import * as Deferred from "effect/Deferred";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -104,6 +105,8 @@ const encodeTestJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unk
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as ServerConfig from "./config.ts";
 import { HTTP_ROUTER_CONFIG, makeRoutesLayer } from "./server.ts";
+import { HTTP_REQUEST_BODY_LIMIT_BYTES } from "./http.ts";
+import { ATTACHMENT_UPLOAD_ROUTE_PREFIX } from "./assets/AttachmentUpload.ts";
 import * as SessionExecutionLock from "./session/SessionExecutionLock.ts";
 import {
   isThreadDetailEvent,
@@ -2125,6 +2128,68 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(sessionResponse.status, 200);
       assert.equal(sessionBody.authenticated, true);
       assert.equal(sessionBody.sessionMethod, "browser-session-cookie");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("rejects buffered request bodies above the limit without reading them", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+
+      const url = yield* getHttpServerUrl("/api/auth/browser-session");
+      const response = yield* fetchEffect(url, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          origin: crossOriginClientOrigin,
+        },
+        body: jsonRequestBody({
+          credential: "x".repeat(HTTP_REQUEST_BODY_LIMIT_BYTES),
+        }),
+      });
+
+      assert.equal(response.status, 413);
+      assertBrowserApiCorsResponseHeaders(response.headers);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("keeps byte-stream attachment uploads outside the buffered body limit", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+
+      const url = yield* getHttpServerUrl(`${ATTACHMENT_UPLOAD_ROUTE_PREFIX}/not-a-signed-token`);
+      const response = yield* fetchEffect(url, {
+        method: "POST",
+        headers: { "content-type": "application/octet-stream" },
+        body: "x".repeat(HTTP_REQUEST_BODY_LIMIT_BYTES + 1),
+      });
+
+      // Uploads stream to disk and check their own size, so the buffered body
+      // guard must leave them to the route: a bad token is a 404, not a 413.
+      assert.equal(response.status, 404);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("stops reading bodies without a Content-Length once they exceed the limit", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+
+      // A stream body is sent with chunked transfer encoding, so no
+      // Content-Length is available to reject the request up front.
+      const request = HttpClientRequest.post("/api/auth/browser-session").pipe(
+        HttpClientRequest.bodyStream(
+          Stream.make(
+            new TextEncoder().encode(
+              jsonRequestBody({ credential: "x".repeat(HTTP_REQUEST_BODY_LIMIT_BYTES) }),
+            ),
+          ),
+          { contentType: "application/json" },
+        ),
+      );
+      const attempt = yield* HttpClient.execute(request).pipe(Effect.exit);
+
+      // The request fails instead of buffering an unbounded body: the adapter
+      // tears the connection down when the body crosses the limit.
+      assert.isTrue(Exit.isFailure(attempt));
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

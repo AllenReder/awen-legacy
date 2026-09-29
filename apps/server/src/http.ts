@@ -240,6 +240,42 @@ export const httpCompressionLayer = HttpRouter.middleware(HttpMiddleware.compres
   global: true,
 });
 
+/**
+ * Upper bound for request bodies the server buffers into memory. Bodies are
+ * read whole by JSON payload decoders, so an unbounded read lets a single
+ * request exhaust the daemon.
+ */
+export const HTTP_REQUEST_BODY_LIMIT_BYTES = 8 * 1024 * 1024;
+
+const exceedsRequestBodyLimit = (contentLength: string | undefined): boolean => {
+  if (contentLength === undefined) return false;
+  const bytes = Number(contentLength);
+  return Number.isFinite(bytes) && bytes > HTTP_REQUEST_BODY_LIMIT_BYTES;
+};
+
+/**
+ * Global guard that rejects over-limit request bodies with 413 before any
+ * route (including the credential checks) can read them. Requests streamed
+ * without a `Content-Length` header are instead bounded by the
+ * `HttpServerRequest.MaxBodySize` reference.
+ */
+export const requestBodyLimitLayer = HttpRouter.middleware(
+  (httpEffect) =>
+    Effect.gen(function* () {
+      const request = yield* HttpServerRequest.HttpServerRequest;
+      const url = HttpServerRequest.toURL(request);
+      const path = Option.isSome(url) ? url.value.pathname : undefined;
+      // Byte-stream uploads validate their own size and write straight to
+      // disk, so their bodies legitimately exceed the buffered limit.
+      const exempt = path !== undefined && path.startsWith(ATTACHMENT_UPLOAD_ROUTE_PREFIX);
+      if (!exempt && exceedsRequestBodyLimit(request.headers["content-length"])) {
+        return HttpServerResponse.text("Request body too large.", { status: 413 });
+      }
+      return yield* httpEffect;
+    }),
+  { global: true },
+);
+
 export const browserApiCorsLayer = Layer.unwrap(
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
