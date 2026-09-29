@@ -1,7 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "@tanstack/react-router";
 
-import { useAwenProjects, useEnvironmentShellSnapshotPresent } from "../state/entities";
+import {
+  useAllEnvironmentProjectSnapshotsReady,
+  useAwenProjects,
+  useEnvironmentShellSnapshotPresent,
+} from "../state/entities";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { useEnvironmentCatalogSnapshot } from "../state/environmentCatalogSnapshot";
 import { useEnvironments } from "../state/environments";
@@ -48,11 +52,18 @@ export function Workbench() {
     (state) => state.reconcileDraftWorkspaceBindings,
   );
   const projects = useAwenProjects();
+  const projectSnapshotsReady = useAllEnvironmentProjectSnapshotsReady();
   const { environments } = useEnvironments();
+  // Only enabled Environments take part in the workspace projection, so a
+  // disabled-but-still-connected one must not count as observed here: the
+  // readiness gate below never waits for it.
   const connectedEnvironmentIds = useMemo(
     () =>
       environments
-        .filter((environment) => environment.connection.phase === "connected")
+        .filter(
+          (environment) =>
+            environment.entry.enabled && environment.connection.phase === "connected",
+        )
         .map((environment) => environment.environmentId),
     [environments],
   );
@@ -127,16 +138,22 @@ export function Workbench() {
       }
     }
     activeSessionTargetsRef.current = nextActiveTargets;
-    pruneWorkspaceViews(
-      projects.flatMap((project) =>
-        project.workspaces.map((workspace) => ({
-          environmentId: project.environmentId,
-          workspaceId: workspace.id,
-        })),
-      ),
-      [...observedEnvironmentIds],
-    );
-  }, [connectedEnvironmentIds, projects, pruneWorkspaceViews]);
+    // A connected Environment that has not delivered its snapshot yet projects
+    // no Workspaces at all, so pruning then would delete the Views the user
+    // restored. Wait until every enabled Environment has an authoritative
+    // snapshot before trusting an empty workspace list.
+    if (projectSnapshotsReady) {
+      pruneWorkspaceViews(
+        projects.flatMap((project) =>
+          project.workspaces.map((workspace) => ({
+            environmentId: project.environmentId,
+            workspaceId: workspace.id,
+          })),
+        ),
+        [...observedEnvironmentIds],
+      );
+    }
+  }, [connectedEnvironmentIds, projects, pruneWorkspaceViews, projectSnapshotsReady]);
 
   useEffect(() => {
     const workspaces = projects.flatMap((project) =>

@@ -100,6 +100,21 @@ describe("project snapshot readiness", () => {
     registry.dispose();
   });
 
+  it("is not ready while a connected Environment has not delivered its snapshot", () => {
+    const { catalog, shells, ready, registry } = makeHarness();
+    const connected = { ...shellState("synchronizing"), snapshot: Option.none() };
+    registry.set(catalog, catalogState([LOCAL]));
+    registry.set(shells(LOCAL), connected);
+
+    // The transport is connected, but the project list is still empty: pruning
+    // then would delete Workspace Views the user restored.
+    expect(registry.get(ready)).toBe(false);
+
+    registry.set(shells(LOCAL), shellState("live"));
+    expect(registry.get(ready)).toBe(true);
+    registry.dispose();
+  });
+
   it("waits for live snapshots through offline startup and reconnect", () => {
     const { catalog, shells, ready, registry } = makeHarness();
     registry.set(catalog, catalogState([LOCAL, REMOTE]));
