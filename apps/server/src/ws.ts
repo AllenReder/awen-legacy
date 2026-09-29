@@ -1846,8 +1846,13 @@ const makeWsRpcLayer = (
                 // still-running script cannot hold files open in the
                 // worktree while git removes it. Closing kills the process
                 // asynchronously, so the removal retries briefly.
+                const timeoutMinutes = Duration.toMinutes(worktreeSetupTimeout);
+                const timeoutFormatted =
+                  timeoutMinutes >= 1
+                    ? `${timeoutMinutes} minute${timeoutMinutes === 1 ? "" : "s"}`
+                    : `${Math.max(1, Math.round(Duration.toSeconds(worktreeSetupTimeout)))} seconds`;
                 const interruptedMessage = worktreeSetupTimedOut
-                  ? `Worktree setup timed out after ${Duration.toMinutes(worktreeSetupTimeout)} minutes.`
+                  ? `Worktree setup timed out after ${timeoutFormatted}.`
                   : "Worktree setup cancelled.";
                 // A claimed worktree is kept, registered or not. The claim
                 // fires only after `git worktree add` completed, so the
