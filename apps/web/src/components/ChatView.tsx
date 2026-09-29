@@ -437,6 +437,7 @@ import {
   prepareRevertedMessageAttachments,
   waitForRevertedMessage,
   reconcileMountedTerminalThreadIds,
+  readyBrowserSurfaceTabIds,
   recallCheckoutIsRepo,
   rememberCheckoutIsRepo,
   resolveBackgroundDraftWorkspaceOptions,
@@ -1998,6 +1999,8 @@ export default function ChatView(props: ChatViewProps) {
   );
   const activePreviewState = useThreadPreviewState(activeThreadRef);
   const activePreviewServerEpoch = activePreviewState.serverEpoch;
+  const activePreviewListEpoch = activePreviewState.listEpoch;
+  const activePreviewSessions = activePreviewState.sessions;
   const resolvePreviewRuntimeTabId = useMemo(
     () =>
       activeThreadRef
@@ -2058,10 +2061,16 @@ export default function ChatView(props: ChatViewProps) {
 
   useEffect(() => {
     if (!activeThreadRef) return;
-    useRightPanelStore
-      .getState()
-      .reconcileBrowserSurfaces(activeThreadRef, Object.keys(activePreviewState.sessions));
-  }, [activePreviewState.sessions, activeThreadRef]);
+    // Reconciling before the first preview snapshot arrives would delete the
+    // persisted browser surfaces (empty session map); wait for the server
+    // epoch so their order and active choice survive a reload.
+    const tabIds = readyBrowserSurfaceTabIds({
+      listEpoch: activePreviewListEpoch,
+      sessions: activePreviewSessions,
+    });
+    if (tabIds === null) return;
+    useRightPanelStore.getState().reconcileBrowserSurfaces(activeThreadRef, tabIds);
+  }, [activePreviewSessions, activePreviewListEpoch, activeThreadRef]);
 
   useEffect(() => {
     if (!activeThreadRef || activePreviewMiniPlayer?.source.kind !== "browser") return;

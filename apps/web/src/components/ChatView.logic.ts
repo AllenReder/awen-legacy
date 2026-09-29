@@ -91,6 +91,22 @@ export function agentControlledBrowserCloseConfirmation(
   ].join("\n");
 }
 
+/**
+ * Preview tab ids the right panel may reconcile against, or null while no
+ * authoritative preview list has arrived yet.
+ *
+ * A freshly mounted thread starts with an empty session map, and a single
+ * preview event proves only its own tab. Reconciling either would delete the
+ * persisted browser surfaces and lose their order and active choice, so wait
+ * for the first `preview.list` result before touching them.
+ */
+export function readyBrowserSurfaceTabIds(state: {
+  readonly listEpoch: string | null;
+  readonly sessions: Readonly<Record<string, unknown>>;
+}): string[] | null {
+  return state.listEpoch === null ? null : Object.keys(state.sessions);
+}
+
 /** The floating player hides only while the same source is rendered in the panel. */
 export function shouldRenderPreviewMiniPlayer(
   source: PreviewMiniPlayerSource | null,

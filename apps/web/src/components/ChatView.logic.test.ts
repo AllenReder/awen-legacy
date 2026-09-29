@@ -38,6 +38,7 @@ import {
   branchMismatchKey,
   buildExpiredTerminalContextToastCopy,
   buildLoadingThreadFromShell,
+  readyBrowserSurfaceTabIds,
   buildRunningThreadTurnInterruptInput,
   buildThreadTurnInterruptInput,
   createLocalDispatchSnapshot,
@@ -2559,5 +2560,23 @@ describe("worktree setup visibility", () => {
       ...settledDone,
       sequence: 9,
     });
+  });
+});
+
+describe("readyBrowserSurfaceTabIds", () => {
+  it("waits for the authoritative preview list before reconciling", () => {
+    expect(readyBrowserSurfaceTabIds({ listEpoch: null, sessions: {} })).toBeNull();
+    // A single preview event can seed a partial session map before the list:
+    // reconciling then would delete the panels the list still carries.
+    expect(readyBrowserSurfaceTabIds({ listEpoch: null, sessions: { "tab-a": {} } })).toBeNull();
+  });
+
+  it("lists the live preview tabs once a preview list has been applied", () => {
+    expect(
+      readyBrowserSurfaceTabIds({
+        listEpoch: "epoch-1",
+        sessions: { "tab-b": {}, "tab-a": {} },
+      }),
+    ).toEqual(["tab-b", "tab-a"]);
   });
 });

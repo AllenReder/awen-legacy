@@ -107,6 +107,23 @@ describe("previewStateStore (single-tab)", () => {
     expect(state.snapshot?.tabId).toBe(b.tabId);
   });
 
+  it("marks the preview list applied only when a list result arrives", () => {
+    const snapshot = makeSnapshot();
+    applyPreviewServerEvent(ref, {
+      type: "opened",
+      threadId: "thread-1",
+      tabId: snapshot.tabId,
+      createdAt: snapshot.updatedAt,
+      snapshot,
+    });
+
+    // One event proves one tab, not the whole live set.
+    expect(readThreadPreviewState(ref).listEpoch).toBeNull();
+
+    reconcilePreviewServerSessions(ref, { sessions: [snapshot], serverEpoch, revision: 1 });
+    expect(readThreadPreviewState(ref).listEpoch).toBe(serverEpoch);
+  });
+
   it("navigated event updates the snapshot URL", () => {
     const snapshot = makeSnapshot();
     applyPreviewServerEvent(ref, {
