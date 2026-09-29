@@ -1628,11 +1628,12 @@ const makeWsRpcLayer = (
                 // "Git succeeded but registration failed" retry-reuse
                 // semantics, so a resend with the same pinned branch name
                 // reuses the half-made directory instead of duplicating it.
-                const worktreeProjectId = yield* (targetProjectId
-                  ? Effect.succeed(Option.some(targetProjectId))
-                  : projectionSnapshotQuery
-                      .getThreadShellById(threadId)
-                      .pipe(Effect.map(Option.map((shell) => shell.projectId)))
+                const worktreeProjectId = yield* (
+                  targetProjectId
+                    ? Effect.succeed(Option.some(targetProjectId))
+                    : projectionSnapshotQuery
+                        .getThreadShellById(threadId)
+                        .pipe(Effect.map(Option.map((shell) => shell.projectId)))
                 ).pipe(
                   Effect.flatMap(
                     Option.match({

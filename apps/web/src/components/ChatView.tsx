@@ -5639,10 +5639,7 @@ export default function ChatView(props: ChatViewProps) {
     draftThreadEnvMode: isLocalDraftThread ? draftThread?.envMode : undefined,
   });
   const canOverrideServerThreadEnvMode = Boolean(
-    isServerThread &&
-    activeThread &&
-    activeThread.messages.length === 0 &&
-    !envLocked,
+    isServerThread && activeThread && activeThread.messages.length === 0 && !envLocked,
   );
   const envMode: DraftThreadEnvMode = canOverrideServerThreadEnvMode
     ? (pendingServerThreadEnvMode ?? draftThread?.envMode ?? derivedEnvMode)
@@ -7461,10 +7458,8 @@ export default function ChatView(props: ChatViewProps) {
     // on send". Drafts reuse the same field to anchor at an *existing*
     // worktree (worktreePath set), which must not create anything.
     const pendingNewWorktree =
-      sendEnvMode === "worktree" &&
-      (canOverrideServerThreadEnvMode || !activeThread.worktreePath);
-    const baseBranchForWorktree =
-      isFirstMessage && pendingNewWorktree ? activeThreadBranch : null;
+      sendEnvMode === "worktree" && (canOverrideServerThreadEnvMode || !activeThread.worktreePath);
+    const baseBranchForWorktree = isFirstMessage && pendingNewWorktree ? activeThreadBranch : null;
 
     // In worktree mode, require an explicit base branch so we don't silently
     // fall back to local execution when branch selection is missing.

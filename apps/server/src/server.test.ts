@@ -10563,9 +10563,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       ).pipe(Effect.forkChild);
 
       // Creation is wedged and the card is running when the timeout fires.
-      yield* Deferred.await(createWorktreeStarted).pipe(
-        Effect.timeout(Duration.seconds(10)),
-      );
+      yield* Deferred.await(createWorktreeStarted).pipe(Effect.timeout(Duration.seconds(10)));
       const snapshotWhere = (predicate: (snapshot: WorktreeSetupSnapshot) => boolean) =>
         Effect.scoped(
           withWsRpcClient(wsUrl, (client) =>

@@ -198,12 +198,8 @@ export function resolveBranchTriggerLabel(input: {
   resolvedActiveBranchIsRemote: boolean | null;
   startFromOrigin: boolean;
 }): string {
-  const {
-    effectiveEnvMode,
-    resolvedActiveBranch,
-    resolvedActiveBranchIsRemote,
-    startFromOrigin,
-  } = input;
+  const { effectiveEnvMode, resolvedActiveBranch, resolvedActiveBranchIsRemote, startFromOrigin } =
+    input;
   if (!resolvedActiveBranch) {
     return "Select ref";
   }
