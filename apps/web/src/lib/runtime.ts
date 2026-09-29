@@ -3,10 +3,12 @@ import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Socket from "effect/unstable/socket/Socket";
+import * as Tracer from "effect/Tracer";
 
 import { remoteHttpClientLayer } from "@awen/client-runtime/rpc";
 import * as PrimaryEnvironmentHttpClient from "../environments/primary/httpClient";
 import { primaryEnvironmentHttpLayer } from "../environments/primary/httpLayer";
+import { clientTracer } from "../observability/clientTracer";
 
 const httpClientLayer = remoteHttpClientLayer((input, init) => globalThis.fetch(input, init));
 
@@ -23,13 +25,23 @@ const browserCryptoLayer = Layer.succeed(
   }),
 );
 
+// Client spans are delegated to the OTLP tracer once
+// `configureClientTracing` installs one; see observability/clientTracer.
+export const clientTracerLayer = Layer.succeed(Tracer.Tracer, clientTracer);
+
 type RuntimeLayerSource =
   | typeof httpClientLayer
   | typeof browserCryptoLayer
-  | typeof Socket.layerWebSocketConstructorGlobal;
+  | typeof Socket.layerWebSocketConstructorGlobal
+  | typeof clientTracerLayer;
 
 const primaryHttpRuntime = ManagedRuntime.make(
-  PrimaryEnvironmentHttpClient.layer.pipe(Layer.provide(primaryEnvironmentHttpLayer)),
+  Layer.merge(
+    PrimaryEnvironmentHttpClient.layer.pipe(Layer.provide(primaryEnvironmentHttpLayer)),
+    // `Layer.provide` above only serves the layer's construction; the tracer has
+    // to be part of the runtime context to see the effects this runner runs.
+    clientTracerLayer,
+  ),
 );
 
 export type PrimaryHttpEffectRunner = <A, E>(
@@ -53,6 +65,7 @@ const runtimeLayer = Layer.mergeAll(
   httpClientLayer,
   browserCryptoLayer,
   Socket.layerWebSocketConstructorGlobal,
+  clientTracerLayer,
 );
 
 export const runtime: ManagedRuntime.ManagedRuntime<
