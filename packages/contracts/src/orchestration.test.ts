@@ -35,6 +35,7 @@ import {
   ThreadTurnStartRequestedPayload,
   DispatchResult,
   SnapShotAccessibility,
+  isOrchestrationSessionExecuting,
   isProviderSendTurnSupportedImageMimeType,
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
 } from "./orchestration.ts";
@@ -563,7 +564,7 @@ it.effect("accepts bootstrap metadata in thread.turn.start", () =>
           createdAt: "2026-01-01T00:00:00.000Z",
         },
         prepareWorktree: {
-          projectCwd: "/tmp/workspace",
+          sourceWorkspaceId: "workspace-1",
           baseBranch: "main",
           branch: "awen/example",
           startFromOrigin: true,
@@ -573,6 +574,7 @@ it.effect("accepts bootstrap metadata in thread.turn.start", () =>
       createdAt: "2026-01-01T00:00:00.000Z",
     });
     assert.strictEqual(parsed.bootstrap?.createThread?.projectId, "project-1");
+    assert.strictEqual(parsed.bootstrap?.prepareWorktree?.sourceWorkspaceId, "workspace-1");
     assert.strictEqual(parsed.bootstrap?.prepareWorktree?.baseBranch, "main");
     assert.strictEqual(parsed.bootstrap?.prepareWorktree?.startFromOrigin, true);
     assert.strictEqual(parsed.bootstrap?.runSetupScript, true);
@@ -1665,3 +1667,39 @@ it.effect("encodes compatible icons inside snapshots and client commands", () =>
     assert.deepEqual(yield* decodeNightlyIcon(command.projectIcon), fallback);
   }),
 );
+
+it("isOrchestrationSessionExecuting considers live providers executing, but allows bootstrap worktree preparation", () => {
+  assert.strictEqual(isOrchestrationSessionExecuting(null), false);
+  assert.strictEqual(
+    isOrchestrationSessionExecuting({ status: "idle", activeTurnId: null, providerName: null }),
+    false,
+  );
+  assert.strictEqual(
+    isOrchestrationSessionExecuting({
+      status: "running",
+      activeTurnId: null,
+      providerName: "codex",
+    }),
+    true,
+  );
+  assert.strictEqual(
+    isOrchestrationSessionExecuting({
+      status: "idle",
+      activeTurnId: "turn-1" as any,
+      providerName: null,
+    }),
+    true,
+  );
+  assert.strictEqual(
+    isOrchestrationSessionExecuting({
+      status: "starting",
+      activeTurnId: null,
+      providerName: "codex",
+    }),
+    true,
+  );
+  assert.strictEqual(
+    isOrchestrationSessionExecuting({ status: "starting", activeTurnId: null, providerName: null }),
+    false,
+  );
+});

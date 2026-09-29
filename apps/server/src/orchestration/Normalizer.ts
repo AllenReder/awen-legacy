@@ -118,7 +118,7 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
     // and never passes through this normalizer.
     if (
       canonicalCommand.type === "thread.meta.update" &&
-      canonicalCommand.projectId !== undefined
+      (canonicalCommand.projectId !== undefined || canonicalCommand.worktreePath !== undefined)
     ) {
       return yield* new OrchestrationDispatchCommandError({
         message:

@@ -1,3 +1,4 @@
+import { useSessionExecutionContext } from "../state/sessionContext";
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
 import { resolveThreadCurrentPullRequestLink } from "@awen/shared/threadPullRequests";
 import { useRightPanelStore } from "../rightPanelStore";
@@ -8,7 +9,7 @@ import {
   squashAtomCommandFailure,
 } from "@awen/client-runtime/state/runtime";
 import type { ContextMenuItem, EnvironmentId, VcsRef, ThreadId } from "@awen/contracts";
-import { AgentSessionId, isOrchestrationSessionExecuting } from "@awen/contracts";
+import { AgentSessionId } from "@awen/contracts";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { ChevronDownIcon, GitBranchIcon, SearchIcon } from "lucide-react";
 import {
@@ -33,10 +34,9 @@ import { readLocalApi } from "../localApi";
 import { useOpenPrLink } from "../lib/openPullRequestLink";
 import { shouldLoadNextBranchPageAfterScroll } from "../state/paginatedBranches";
 import { usePaginatedBranches } from "../state/queries";
-import { useProject, useAwenProjects, useThreadShell } from "../state/entities";
+import { useProject, useAwenProjects } from "../state/entities";
 import { useEnvironmentQuery } from "../state/query";
 import { sessionEnvironment, workspaceEnvironment } from "../state/projects";
-import { threadEnvironment } from "../state/threads";
 import { useAtomCommand } from "../state/use-atom-command";
 import { vcsEnvironment } from "../state/vcs";
 import { cn } from "../lib/utils";
@@ -119,18 +119,11 @@ export function BranchToolbarBranchSelector({
 }: BranchToolbarBranchSelectorProps) {
   const composerFloatingLayerProps = useComposerMenuProps();
   const startFromOriginSwitchId = useId();
-  const stopThreadSession = useAtomCommand(threadEnvironment.stopSession, "thread session stop");
-  const updateThreadMetadata = useAtomCommand(
-    threadEnvironment.updateMetadata,
-    "thread metadata update",
-  );
+  const selectSessionRef = useAtomCommand(sessionEnvironment.selectRef, { reportFailure: false });
   const switchRef = useAtomCommand(vcsEnvironment.switchRef, {
     reportFailure: false,
   });
   const createRefMutation = useAtomCommand(vcsEnvironment.createRef, {
-    reportFailure: false,
-  });
-  const migrateToWorkspace = useAtomCommand(sessionEnvironment.migrateToWorkspace, {
     reportFailure: false,
   });
   const associateWorkspace = useAtomCommand(workspaceEnvironment.associate, {
@@ -146,7 +139,8 @@ export function BranchToolbarBranchSelector({
   const draftThread = useComposerDraftStore((store) =>
     draftId ? store.getDraftSession(draftId) : store.getDraftThreadByRef(threadRef),
   );
-  const serverThread = useThreadShell(threadRef);
+  const executionContext = useSessionExecutionContext(threadRef, draftThread);
+  const serverThread = executionContext.thread;
   const serverSession = serverThread?.session ?? null;
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
 
@@ -163,9 +157,9 @@ export function BranchToolbarBranchSelector({
     activeThreadBranchOverride !== undefined
       ? activeThreadBranchOverride
       : (serverThread?.branch ?? draftThread?.branch ?? null);
-  const activeWorktreePath = serverThread?.worktreePath ?? draftThread?.worktreePath ?? null;
+  const activeWorktreePath = executionContext.worktreePath;
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
-  const branchCwd = activeWorktreePath ?? activeProjectCwd;
+  const branchCwd = executionContext.cwd;
   const hasServerThread = serverThread !== null;
   const effectiveEnvMode =
     effectiveEnvModeOverride ??
@@ -181,23 +175,7 @@ export function BranchToolbarBranchSelector({
   const setThreadBranch = useCallback(
     (branch: string | null, worktreePath: string | null, automatic = false) => {
       if (!activeThreadId || !activeProject) return;
-      if (serverSession && worktreePath !== activeWorktreePath) {
-        void stopThreadSession({
-          environmentId,
-          input: { threadId: activeThreadId },
-        });
-      }
-      if (hasServerThread) {
-        void updateThreadMetadata({
-          environmentId,
-          input: {
-            threadId: activeThreadId,
-            branch,
-            worktreePath,
-          },
-        });
-      }
-      if (hasServerThread) {
+      if (hasServerThread || effectiveEnvMode === "worktree") {
         onActiveThreadBranchOverrideChange?.(branch);
         return;
       }
@@ -227,8 +205,6 @@ export function BranchToolbarBranchSelector({
       environmentId,
       effectiveEnvMode,
       draftThread?.environmentSelection,
-      stopThreadSession,
-      updateThreadMetadata,
     ],
   );
 
@@ -277,7 +253,6 @@ export function BranchToolbarBranchSelector({
   const SourceControlIcon = sourceControlPresentation.Icon;
   const canonicalActiveBranch = resolveBranchToolbarValue({
     envMode: effectiveEnvMode,
-    activeWorktreePath,
     activeThreadBranch,
     currentGitBranch,
   });
@@ -288,8 +263,10 @@ export function BranchToolbarBranchSelector({
   );
   const normalizedDeferredBranchQuery = deferredTrimmedBranchQuery.toLowerCase();
   const prReference = parsePullRequestReference(trimmedBranchQuery);
-  const isSelectingWorktreeBase =
-    effectiveEnvMode === "worktree" && !envLocked && !activeWorktreePath;
+  // envMode "worktree" always means a pending New worktree choice now — even
+  // for an unstarted Session anchored in a worktree Workspace — so the branch
+  // picker is choosing the *base* for the new worktree, not a checkout.
+  const isSelectingWorktreeBase = effectiveEnvMode === "worktree" && !envLocked;
   const checkoutPullRequestItemValue =
     prReference && onCheckoutPullRequestRequest ? `__checkout_pull_request__:${prReference}` : null;
   const canCreateBranch = !isSelectingWorktreeBase && trimmedBranchQuery.length > 0;
@@ -424,44 +401,6 @@ export function BranchToolbarBranchSelector({
    * re-bound to the target Workspace before its first send.
    */
   const switchToWorkspace = (branchName: string, targetPath: string) => {
-    if (hasServerThread && activeThreadId !== undefined) {
-      if (isOrchestrationSessionExecuting(serverSession)) {
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Agent is working",
-            description: "Stop the Agent before moving it to another Workspace.",
-          }),
-        );
-        return;
-      }
-      runBranchAction(async () => {
-        const previousBranch = resolvedActiveBranch;
-        setOptimisticBranch(branchName);
-        onActiveThreadBranchOverrideChange?.(branchName);
-        const migrated = await migrateToWorkspace({
-          environmentId,
-          input: { agentSessionId: AgentSessionId.make(activeThreadId), targetPath },
-        });
-        if (migrated._tag === "Success") {
-          setOptimisticBranch(branchName);
-          return;
-        }
-        setOptimisticBranch(previousBranch);
-        onActiveThreadBranchOverrideChange?.(previousBranch);
-        if (!isAtomCommandInterrupted(migrated)) {
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: "Failed to move Agent Session",
-              description: toBranchActionErrorMessage(squashAtomCommandFailure(migrated)),
-            }),
-          );
-        }
-      });
-      return;
-    }
-
     // Draft: register the checkout (idempotent) so the created thread lands in
     // the target Workspace, then point the draft context at it.
     const awenProject = activeProject
@@ -506,6 +445,32 @@ export function BranchToolbarBranchSelector({
     });
   };
 
+  const changeSessionRef = (refName: string, create: boolean) => {
+    if (!activeThreadId || !executionContext.workspace) return;
+    setIsBranchMenuOpen(false);
+    onComposerFocusRequest?.();
+    runBranchAction(async () => {
+      const result = await selectSessionRef({
+        environmentId,
+        input: {
+          agentSessionId: AgentSessionId.make(activeThreadId),
+          expectedWorkspaceId: executionContext.workspace!.id,
+          refName,
+          create,
+        },
+      });
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Failed to change Session workspace or branch",
+            description: toBranchActionErrorMessage(squashAtomCommandFailure(result)),
+          }),
+        );
+      }
+    });
+  };
+
   const selectBranch = (refName: VcsRef) => {
     if (!branchCwd || !activeProjectCwd || isBranchActionPending) return;
 
@@ -513,6 +478,11 @@ export function BranchToolbarBranchSelector({
       setThreadBranch(refName.name, null);
       setIsBranchMenuOpen(false);
       onComposerFocusRequest?.();
+      return;
+    }
+
+    if (hasServerThread) {
+      changeSessionRef(refName.name, false);
       return;
     }
 
@@ -579,6 +549,10 @@ export function BranchToolbarBranchSelector({
   const createRef = (rawName: string) => {
     const name = sanitizeNewRefName(rawName);
     if (!branchCwd || !name || isBranchActionPending) return;
+    if (hasServerThread) {
+      changeSessionRef(name, true);
+      return;
+    }
 
     setIsBranchMenuOpen(false);
     onComposerFocusRequest?.();
@@ -623,12 +597,7 @@ export function BranchToolbarBranchSelector({
     : (defaultBranchName ?? currentGitBranch);
 
   useEffect(() => {
-    if (
-      effectiveEnvMode !== "worktree" ||
-      activeWorktreePath ||
-      activeThreadBranch ||
-      !worktreeBaseBranchCandidate
-    ) {
+    if (effectiveEnvMode !== "worktree" || activeThreadBranch || !worktreeBaseBranchCandidate) {
       return;
     }
     setThreadBranch(worktreeBaseBranchCandidate, null, true);
@@ -742,7 +711,6 @@ export function BranchToolbarBranchSelector({
   }, [deferredTrimmedBranchQuery, isBranchMenuOpen]);
 
   const triggerLabel = resolveBranchTriggerLabel({
-    activeWorktreePath,
     effectiveEnvMode,
     resolvedActiveBranch,
     resolvedActiveBranchIsRemote,

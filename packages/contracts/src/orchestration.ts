@@ -7,6 +7,7 @@ import { OrchestrationMessageContext } from "./composerContext.ts";
 import { ProviderOptionSelections } from "./model.ts";
 import { RepositoryIdentity, ThreadEnvMode } from "./environment.ts";
 import {
+  WorkspaceId,
   AwenProjectId,
   ApprovalRequestId,
   CheckpointRef,
@@ -609,11 +610,16 @@ export type OrchestrationSession = typeof OrchestrationSession.Type;
  * drift.
  */
 export function isOrchestrationSessionExecuting(
-  session: Pick<OrchestrationSession, "status" | "activeTurnId"> | null,
+  session:
+    | (Pick<OrchestrationSession, "status" | "activeTurnId"> &
+        Partial<Pick<OrchestrationSession, "providerName">>)
+    | null,
 ): boolean {
   return (
     session !== null &&
-    (session.status === "running" || session.status === "starting" || session.activeTurnId !== null)
+    (session.status === "running" ||
+      (session.status === "starting" && session.providerName !== null) ||
+      session.activeTurnId !== null)
   );
 }
 
@@ -1308,7 +1314,7 @@ const ThreadTurnStartBootstrapCreateThread = Schema.Struct({
 });
 
 const ThreadTurnStartBootstrapPrepareWorktree = Schema.Struct({
-  projectCwd: TrimmedNonEmptyString,
+  sourceWorkspaceId: WorkspaceId,
   baseBranch: TrimmedNonEmptyString,
   branch: Schema.optional(TrimmedNonEmptyString),
   startFromOrigin: Schema.optional(Schema.Boolean),

@@ -149,6 +149,21 @@ export const AgentSessionMigrateToWorkspaceResult = Schema.Struct({
 });
 export type AgentSessionMigrateToWorkspaceResult = typeof AgentSessionMigrateToWorkspaceResult.Type;
 
+/** Ref selection is a Session operation; the server resolves checkout versus migration. */
+export const AgentSessionSelectRefInput = Schema.Struct({
+  agentSessionId: AgentSessionId,
+  expectedWorkspaceId: WorkspaceId,
+  refName: TrimmedNonEmptyString,
+  create: Schema.Boolean,
+});
+export type AgentSessionSelectRefInput = typeof AgentSessionSelectRefInput.Type;
+
+export const AgentSessionSelectRefResult = Schema.Struct({
+  workspaceId: WorkspaceId,
+  refName: Schema.NullOr(TrimmedNonEmptyString),
+});
+export type AgentSessionSelectRefResult = typeof AgentSessionSelectRefResult.Type;
+
 export const AgentSessionMigrationStateInput = Schema.Struct({
   agentSessionId: AgentSessionId,
 });
@@ -162,6 +177,7 @@ export type AgentSessionMigrationStateResult = typeof AgentSessionMigrationState
 export const AgentSessionOperationErrorReason = Schema.Literals([
   /** The Agent Session identity does not exist on this server. */
   "session-not-found",
+  "assignment-changed",
   /** The target Workspace identity does not exist on this server. */
   "workspace-not-found",
   /** The target Workspace does not belong to the Session's Awen Project. */

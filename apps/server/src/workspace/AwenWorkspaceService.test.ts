@@ -104,19 +104,24 @@ const makeLayer = (input: {
     command: Parameters<OrchestrationEngine.OrchestrationEngineService["Service"]["dispatch"]>[0],
   ) => void;
   readonly failProjectRenameDispatch?: boolean;
+  /** When true, `project.create` dispatches fail, simulating a registration failure. */
+  readonly failProjectCreateWhile?: () => boolean;
   readonly readProject: () => AwenProjectShell;
   readonly readWorkspace: () => Option.Option<AwenWorkspaceShell>;
   readonly onRenameProject?: (input: {
     readonly awenProjectId: AwenProjectId;
     readonly title: string;
   }) => void;
+  /** Share one base dir across runs so the managed worktrees path is stable. */
+  readonly serverConfigBaseDir?: string;
   readonly terminals?: ReadonlyArray<TerminalSummary>;
   readonly occupancy?: ReadonlyArray<TerminalManager.TerminalDirectoryOccupancy>;
   readonly onReleaseWorkspaceAssignment?: (workspaceId: string) => void;
 }) => {
-  const serverConfigLayer = ServerConfig.layerTest(process.cwd(), {
-    prefix: "awen-workspace-service-test-",
-  });
+  const serverConfigLayer = ServerConfig.layerTest(
+    process.cwd(),
+    input.serverConfigBaseDir ?? { prefix: "awen-workspace-service-test-" },
+  );
   const projectionLayer = Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
     getAwenProjectById: () => Effect.succeed(Option.some(input.readProject())),
     getAwenWorkspaceById: () => Effect.succeed(input.readWorkspace()),
@@ -156,7 +161,13 @@ const makeLayer = (input: {
         ? Effect.die(new Error("No Git repository"))
         : Effect.succeed(
             makeRepositoryHandle(
-              request.cwd === input.root ? input.root : input.sibling,
+              request.cwd === input.root
+                ? input.root
+                : request.cwd === input.sibling
+                  ? input.sibling
+                  : // A daemon-managed worktree path resolves as its own root
+                    // sharing the repository's common dir.
+                    request.cwd,
               request.cwd === input.root
                 ? input.commonDir
                 : (input.targetCommonDir ?? input.commonDir),
@@ -190,19 +201,26 @@ const makeLayer = (input: {
   });
   const orchestrationLayer = Layer.mock(OrchestrationEngine.OrchestrationEngineService)({
     dispatch: (command, _options) =>
-      input.failProjectRenameDispatch &&
-      command.type === "project.meta.update" &&
-      command.title === undefined
+      input.failProjectCreateWhile?.() === true && command.type === "project.create"
         ? Effect.fail(
             new OrchestrationCommandInvariantError({
               commandType: command.type,
-              detail: "simulated publish failure",
+              detail: "simulated registration failure",
             }),
           )
-        : Effect.sync(() => {
-            input.onDispatch(command);
-            return { sequence: 1 };
-          }),
+        : input.failProjectRenameDispatch &&
+            command.type === "project.meta.update" &&
+            command.title === undefined
+          ? Effect.fail(
+              new OrchestrationCommandInvariantError({
+                commandType: command.type,
+                detail: "simulated publish failure",
+              }),
+            )
+          : Effect.sync(() => {
+              input.onDispatch(command);
+              return { sequence: 1 };
+            }),
   });
   const terminalManagerLayer = Layer.mock(TerminalManager.TerminalManager)({
     getMetadata: () => Effect.succeed(input.terminals ?? []),
@@ -581,6 +599,94 @@ describe("AwenWorkspaceService", () => {
         assert.equal(createInput?.detach, true);
         assert.equal(result.worktreeCreated, true);
         assert.equal(result.workspace.origin, "awen-created");
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("reuses the kept worktree directory when a retry follows a registration failure", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const parent = yield* fileSystem.makeTempDirectoryScoped({ prefix: "awen-retry-" });
+        const root = path.join(parent, "main");
+        const sibling = path.join(parent, "other");
+        const baseDir = path.join(parent, "server");
+        yield* fileSystem.makeDirectory(root, { recursive: true });
+        let project = makeProject(root);
+        let failCreate = true;
+        const createInputs: Array<
+          Parameters<GitWorkflowService.GitWorkflowService["Service"]["createWorktree"]>[0]
+        > = [];
+        let projectCreateDispatches = 0;
+        const run = () =>
+          Effect.gen(function* () {
+            const service = yield* AwenWorkspaceService.AwenWorkspaceService;
+            return yield* service.createWorktree({
+              projectId: project.id,
+              baseRef: "HEAD",
+              newBranch: "awen/retry-branch",
+            });
+          }).pipe(
+            Effect.provide(
+              makeLayer({
+                root,
+                sibling,
+                commonDir: path.join(parent, ".git"),
+                serverConfigBaseDir: baseDir,
+                failProjectCreateWhile: () => failCreate,
+                onCreate: (input) => {
+                  createInputs.push(input);
+                },
+                onDispatch: (command) => {
+                  if (command.type !== "project.create") return;
+                  projectCreateDispatches += 1;
+                  project = {
+                    ...project,
+                    workspaces: [
+                      ...project.workspaces,
+                      {
+                        id: workspaceIdForAwenProject(command.projectId),
+                        projectId: project.id,
+                        awenProjectId: command.projectId,
+                        title: command.title,
+                        workspaceRoot: command.workspaceRoot,
+                        role: "worktree",
+                        origin: command.awenWorkspace?.origin,
+                        sessions: [],
+                        createdAt: command.createdAt,
+                        updatedAt: command.createdAt,
+                      },
+                    ],
+                  };
+                },
+                readProject: () => project,
+                readWorkspace: () => Option.none(),
+              }),
+            ),
+          );
+
+        const first = yield* run().pipe(Effect.flip);
+        assert.equal(first._tag, "AwenWorkspaceError");
+        if (first._tag === "AwenWorkspaceError") {
+          assert.equal(first.reason, "registration-failed");
+        }
+        assert.equal(createInputs.length, 1);
+        const managedPath = createInputs[0]?.path;
+        assert.include(managedPath ?? "", "awen-retry-branch");
+        // The Git half succeeded and only the registration failed, so the
+        // directory was kept on disk for the retry to reuse.
+        yield* fileSystem.makeDirectory(managedPath ?? "", { recursive: true });
+
+        // The retry pins the same branch name, so it resolves to the same
+        // daemon-managed directory and reuses the checkout instead of
+        // duplicating it.
+        failCreate = false;
+        const second = yield* run();
+        assert.equal(createInputs.length, 1);
+        assert.equal(second.worktreeCreated, false);
+        assert.equal(second.workspace.workspaceRoot, managedPath);
+        assert.equal(projectCreateDispatches, 1);
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
   );

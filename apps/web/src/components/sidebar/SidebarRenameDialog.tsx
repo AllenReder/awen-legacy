@@ -61,7 +61,7 @@ export function SidebarRenameDialog({
               : `This changes the name in the Sidebar. The folder on disk stays named “${directoryName}”.`}
           </DialogDescription>
         </DialogHeader>
-        <form onSubmit={(event) => void handleSubmit(event)}>
+        <form onSubmit={(event) => void handleSubmit(event)} className="contents">
           <DialogPanel className="space-y-2">
             <Label htmlFor="sidebar-rename-title">Display name</Label>
             <Input

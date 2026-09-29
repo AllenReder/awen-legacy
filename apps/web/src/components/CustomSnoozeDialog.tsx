@@ -74,7 +74,7 @@ function CustomSnoozeDialog() {
     >
       <DialogPopup className="sm:max-w-sm">
         <form
-          className="flex min-h-0 flex-col"
+          className="contents"
           onSubmit={(event) => {
             event.preventDefault();
             const snoozedUntil = resolveCustomSnooze(input, new Date());

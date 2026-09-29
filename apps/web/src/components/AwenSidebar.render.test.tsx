@@ -769,4 +769,49 @@ describe("AwenSidebar", () => {
     expect(workspaceRow.props["aria-expanded"]).toBe(true);
     expect(disclosure.props["aria-label"]).toBe("Collapse Workspace");
   });
+
+  it("initializes new agent sessions in a worktree workspace with local envMode", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const { useComposerDraftStore } = await import("../composerDraftStore");
+    mockState.projects = [
+      {
+        id: "p1",
+        environmentId: "local",
+        title: "awen",
+        workspaces: [
+          {
+            id: "w-wt",
+            title: "feature-branch",
+            workspaceRoot: "/code/awen-wt",
+            role: "worktree",
+            sessions: [],
+            historySessions: [],
+          },
+        ],
+      },
+    ];
+    sidebarMocks.showContextMenu.mockResolvedValue("new-agent-session");
+
+    await act(() => {
+      renderer = create(<AwenSidebar />);
+    });
+
+    const workspaceRow = renderer.root.findByProps({ "data-testid": "sidebar-workspace-row" });
+    await act(async () => {
+      workspaceRow.props.onContextMenu({
+        preventDefault: vi.fn(),
+        stopPropagation: vi.fn(),
+        clientX: 10,
+        clientY: 20,
+      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    const store = useComposerDraftStore.getState();
+    const draft = Object.values(store.draftThreadsByThreadKey).find(
+      (thread) => thread.worktreePath === "/code/awen-wt",
+    );
+    expect(draft).toBeDefined();
+    expect(draft?.envMode).toBe("local");
+  });
 });

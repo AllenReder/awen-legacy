@@ -1,3 +1,5 @@
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
@@ -159,6 +161,8 @@ function providerSession(overrides: Partial<ProviderSession> = {}): ProviderSess
 }
 
 interface Harness {
+  readonly git?: Partial<GitVcsDriver.GitVcsDriver["Service"]>;
+  readonly otherThreads?: ReadonlyArray<OrchestrationThreadShell>;
   readonly thread: () => OrchestrationThreadShell;
   readonly agentSession: () => AwenAgentSessionShell;
   readonly workspaces: Map<WorkspaceId, AwenWorkspaceShell>;
@@ -180,6 +184,11 @@ interface Harness {
 
 const makeLayer = (harness: Harness, databasePath?: string) => {
   const projectionLayer = Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
+    getSnapshot: () =>
+      Effect.succeed({
+        threads: [harness.thread(), ...(harness.otherThreads ?? [])],
+        projects: [],
+      } as unknown as import("@awen/contracts").OrchestrationReadModel),
     getThreadShellById: () => Effect.succeed(Option.some(harness.thread())),
     getAwenAgentSessionByThreadId: () => Effect.succeed(Option.some(harness.agentSession())),
     getAwenWorkspaceById: (workspaceId) =>
@@ -232,6 +241,10 @@ const makeLayer = (harness: Harness, databasePath?: string) => {
   } as never);
 
   return AwenSessionService.layer.pipe(
+    Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)(harness.git ?? {})),
+    Layer.provide(
+      Layer.mock(GitWorkflowService.GitWorkflowService)({ invalidateStatus: () => Effect.void }),
+    ),
     Layer.provide(projectionLayer),
     Layer.provide(providerLayer),
     Layer.provide(engineLayer),
@@ -867,4 +880,92 @@ describe("AwenSessionService.migrateToWorkspace", () => {
       );
     }),
   );
+});
+
+describe("AwenSessionService.selectRef", () => {
+  const refs = (worktreePath: string | null) =>
+    Effect.succeed({
+      refs: [{ name: "feature", current: false, isDefault: false, worktreePath }],
+      isRepo: true,
+      hasPrimaryRemote: false,
+      nextCursor: null,
+      totalCount: 1,
+    });
+  const input = {
+    agentSessionId: AgentSessionId.make(THREAD_ID),
+    expectedWorkspaceId: SOURCE_WORKSPACE,
+    refName: "feature",
+    create: false,
+  };
+
+  it.effect(
+    "moves to the Workspace occupying the selected ref without checking out the source",
+    () => {
+      const harness = baseHarness({
+        awenProjectWorkspaces: () => [sourceWorkspace(), targetWorkspace()],
+        git: { listRefs: () => refs(TARGET_ROOT) },
+      });
+      return Effect.gen(function* () {
+        const service = yield* AwenSessionService.AwenSessionService;
+        const result = yield* service.selectRef(input);
+        assert.strictEqual(result.workspaceId, TARGET_WORKSPACE);
+        assert.strictEqual(harness.dispatched.length, 1);
+        assert.deepInclude(harness.dispatched[0], {
+          type: "thread.meta.update",
+          projectId: TARGET_PROJECT,
+        });
+      }).pipe(Effect.provide(makeLayer(harness)));
+    },
+  );
+
+  it.effect(
+    "checks out an unoccupied ref using the registered directory, ignoring a stale Thread path",
+    () => {
+      const directories: string[] = [];
+      const harness = baseHarness({
+        thread: () => thread({ worktreePath: "/stale-test" }),
+        git: {
+          listRefs: () => refs(null),
+          switchRef: ({ cwd }) =>
+            Effect.sync(() => {
+              directories.push(cwd);
+              return { refName: "feature" };
+            }),
+        },
+      });
+      return Effect.gen(function* () {
+        const service = yield* AwenSessionService.AwenSessionService;
+        const result = yield* service.selectRef(input);
+        assert.strictEqual(result.workspaceId, SOURCE_WORKSPACE);
+        assert.deepStrictEqual(directories, [SOURCE_ROOT]);
+      }).pipe(Effect.provide(makeLayer(harness)));
+    },
+  );
+
+  it.effect("rejects a selection sent from the previous Workspace", () => {
+    const harness = baseHarness({ thread: () => thread({ projectId: TARGET_PROJECT }) });
+    return Effect.gen(function* () {
+      const service = yield* AwenSessionService.AwenSessionService;
+      const error = yield* service.selectRef(input).pipe(Effect.flip);
+      assert.strictEqual(error.reason, "assignment-changed");
+      assert.strictEqual(harness.dispatched.length, 0);
+    }).pipe(Effect.provide(makeLayer(harness)));
+  });
+
+  it.effect("refuses checkout while a sibling Agent in the same Workspace is executing", () => {
+    const harness = baseHarness({
+      otherThreads: [
+        thread({
+          id: ThreadId.make("other"),
+          session: { ...readyThreadWithProvider().session!, status: "running" },
+        }),
+      ],
+      git: { listRefs: () => refs(null) },
+    });
+    return Effect.gen(function* () {
+      const service = yield* AwenSessionService.AwenSessionService;
+      const error = yield* service.selectRef(input).pipe(Effect.flip);
+      assert.strictEqual(error.reason, "session-executing");
+    }).pipe(Effect.provide(makeLayer(harness)));
+  });
 });

@@ -4,14 +4,13 @@ import { squashAtomCommandFailure } from "@awen/client-runtime/state/runtime";
 import {
   AgentSessionId,
   DEFAULT_SERVER_SETTINGS,
-  workspaceIdForAwenProject,
   type ScopedProjectRef,
   type ThreadId,
 } from "@awen/contracts";
 import { useParams, useRouter } from "@tanstack/react-router";
 import { useCallback, useMemo } from "react";
 import { DraftId, type DraftThreadEnvMode, useComposerDraftStore } from "../composerDraftStore";
-import { newThreadId } from "../lib/utils";
+import { newThreadId, randomHex } from "../lib/utils";
 import { orderItemsByPreferredIds } from "../components/Sidebar.logic";
 import { getProjectOrderKey } from "../logicalProject";
 import { resolveProjectSettings } from "@awen/shared/projectSettings";
@@ -32,6 +31,8 @@ import { useAtomCommand } from "../state/use-atom-command";
 import { resolveThreadRouteTarget } from "../threadRoutes";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import { NO_PROVIDER_MODEL_SELECTION } from "../providerInstances";
+import { useExecutionPlanStore } from "../executionPlanStore";
+import { buildTemporaryWorktreeBranchName } from "@awen/shared/git";
 import { useWorkbenchStore } from "../workbench/workbenchStore";
 
 interface NewThreadWorkspaceOptions {
@@ -67,10 +68,7 @@ export function useNewThreadHandler() {
             (workspace) => workspace.awenProjectId === projectRef.projectId,
           ),
       );
-      const projectWorkspaces =
-        awenProject?.workspaces.filter(
-          (workspace) => workspace.awenProjectId === projectRef.projectId,
-        ) ?? [];
+      const projectWorkspaces = awenProject?.workspaces ?? [];
       const selectedWorkspace = options?.worktreePath
         ? projectWorkspaces.find(
             (workspace) =>
@@ -78,13 +76,11 @@ export function useNewThreadHandler() {
               normalizeProjectPathForComparison(options.worktreePath!),
           )
         : null;
-      const workspace = selectedWorkspace ??
-        projectWorkspaces.find((candidate) => candidate.role === "main") ??
-        projectWorkspaces[0] ?? {
-          id: workspaceIdForAwenProject(projectRef.projectId),
-          workspaceRoot: project.workspaceRoot,
-          role: "main" as const,
-        };
+      const workspace =
+        selectedWorkspace ??
+        projectWorkspaces.find((candidate) => candidate.awenProjectId === projectRef.projectId);
+      if (!workspace || (options?.worktreePath && !selectedWorkspace)) return null;
+      const assignedProjectRef = scopeProjectRef(projectRef.environmentId, workspace.awenProjectId);
 
       const serverSettings =
         environmentServerConfigs.get(projectRef.environmentId)?.settings ?? DEFAULT_SERVER_SETTINGS;
@@ -116,12 +112,13 @@ export function useNewThreadHandler() {
           globalDefault: projectSettings.settings.defaultThreadEnvMode,
         }));
       const threadId = newThreadId();
+      const threadRef = scopeThreadRef(projectRef.environmentId, threadId);
       // The composer store still holds pending send options, keyed by the same
       // durable Thread identity. It never owns a separate navigation target.
       const draftId = DraftId.make(threadId);
       const createdAt = new Date().toISOString();
       const store = useComposerDraftStore.getState();
-      store.setWorkspaceDraftThreadId(workspace.id, projectRef, draftId, {
+      store.setWorkspaceDraftThreadId(workspace.id, assignedProjectRef, draftId, {
         threadId,
         createdAt,
         branch: options?.branch ?? null,
@@ -136,6 +133,20 @@ export function useNewThreadHandler() {
         runtimeMode,
         interactionMode,
       });
+      if (envMode === "worktree" && !options?.worktreePath) {
+        useExecutionPlanStore.getState().set(threadRef, {
+          kind: "create-worktree",
+          sourceWorkspaceId: workspace.id,
+          baseRef: options?.branch ?? null,
+          startFromOrigin:
+            options?.startFromOrigin ??
+            resolveNewDraftStartFromOrigin({
+              envMode,
+              newWorktreesStartFromOrigin: projectSettings.settings.newWorktreesStartFromOrigin,
+            }),
+          branchName: buildTemporaryWorktreeBranchName(randomHex),
+        });
+      }
       store.applyStickyState(draftId);
       if (selectedModel) {
         store.setModelSelection(draftId, selectedModel, { replaceOptions: true });
@@ -145,22 +156,18 @@ export function useNewThreadHandler() {
         environmentId: projectRef.environmentId,
         input: {
           threadId,
-          projectId: projectRef.projectId,
+          projectId: workspace.awenProjectId,
           title: "New Agent Session",
           modelSelection,
           runtimeMode,
           interactionMode,
           branch: options?.branch ?? null,
-          worktreePath:
-            options?.worktreePath !== undefined
-              ? options.worktreePath
-              : workspace.role === "main"
-                ? null
-                : workspace.workspaceRoot,
+          worktreePath: workspace.role === "main" ? null : workspace.workspaceRoot,
           createdAt,
         },
       });
       if (result._tag === "Failure") {
+        useExecutionPlanStore.getState().set(threadRef, null);
         store.clearDraftThread(draftId);
         throw squashAtomCommandFailure(result);
       }

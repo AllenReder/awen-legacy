@@ -464,7 +464,7 @@ export function AwenSidebar() {
           {
             threadId,
             createdAt,
-            envMode: workspace.role === "main" ? "local" : "worktree",
+            envMode: "local",
             worktreePath: workspace.role === "main" ? null : workspace.workspaceRoot,
             runtimeMode: "full-access",
             interactionMode: "default",

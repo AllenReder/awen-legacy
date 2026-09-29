@@ -1,3 +1,4 @@
+import { useSessionExecutionContext } from "../state/sessionContext";
 import { scaledMotionDuration, skipAutomaticWorkbenchMotion } from "../workbench/workbenchMotion";
 import { scopeProjectRef, scopeThreadRef } from "@awen/client-runtime/environment";
 import type { EnvironmentId, ThreadId } from "@awen/contracts";
@@ -492,7 +493,8 @@ export const BranchToolbar = memo(function BranchToolbar({
   const draftThread = useComposerDraftStore((store) =>
     draftId ? store.getDraftSession(draftId) : store.getDraftThreadByRef(threadRef),
   );
-  const serverThread = useThreadShell(threadRef);
+  const executionContext = useSessionExecutionContext(threadRef, draftThread);
+  const serverThread = executionContext.thread;
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const activeProjectRef = serverThread
     ? scopeProjectRef(serverThread.environmentId, serverThread.projectId)
@@ -501,7 +503,7 @@ export const BranchToolbar = memo(function BranchToolbar({
       : null;
   const activeProject = useProject(activeProjectRef);
   const hasActiveThread = serverThread !== null || draftThread !== null;
-  const activeWorktreePath = serverThread?.worktreePath ?? draftThread?.worktreePath ?? null;
+  const activeWorktreePath = executionContext.worktreePath;
   const effectiveEnvMode =
     effectiveEnvModeOverride ??
     resolveEffectiveEnvMode({
@@ -509,7 +511,12 @@ export const BranchToolbar = memo(function BranchToolbar({
       hasServerThread: serverThread !== null,
       draftThreadEnvMode: draftThread?.envMode,
     });
-  const envModeLocked = envLocked || (serverThread !== null && activeWorktreePath !== null);
+  // The mode picker is available whenever the Session has not begun: message
+  // count and a running turn (envLocked) are the lock, not the Workspace the
+  // Session happens to sit in. A new Session anchored in a worktree Workspace
+  // may still choose New worktree; a begun conversation moves between
+  // worktrees through the branch selector instead.
+  const envModeLocked = envLocked;
 
   // "Previous worktree" hops a draft into the most recently active worktree
   // of this project — the "keep going where I just was" follow-up flow. Only

@@ -15,6 +15,15 @@ export function createEnvironmentSessionCommandAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
 ) {
   return {
+    selectRef: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:session:select-ref",
+      tag: RpcMethods.awenSessionSelectRef,
+      scheduler: sessionCommandScheduler,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.agentSessionId]),
+      },
+    }),
     migrateToWorkspace: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:session:migrate-to-workspace",
       tag: RpcMethods.awenSessionMigrateToWorkspace,

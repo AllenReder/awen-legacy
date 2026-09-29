@@ -250,6 +250,10 @@
     "./file-preview": {
       "types": "./src/filePreview.ts",
       "default": "./src/filePreview.ts"
+    },
+    "./state/sessionContext": {
+      "types": "./src/state/sessionContext.ts",
+      "default": "./src/state/sessionContext.ts"
     }
   },
   "scripts": {

@@ -52,6 +52,7 @@ import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import type { EnvironmentId, WorkspaceId } from "@awen/contracts";
 import { useWorkspaceMutationRefresh } from "../hooks/useWorkspaceMutationRefresh";
 import { useProject, useThread } from "../state/entities";
+import { useSessionExecutionContext } from "../state/sessionContext";
 import { resolveThreadRouteRef } from "../threadRoutes";
 import { useClientSettings, useUpdateClientSettings } from "../hooks/useSettings";
 import { formatShortTimestamp } from "../timestampFormat";
@@ -160,11 +161,11 @@ export default function DiffPanel({
         }
       : null,
   );
-  const activeCwd =
-    workspaceScope?.cwd ?? activeThread?.worktreePath ?? activeProject?.workspaceRoot;
+  const sessionContext = useSessionExecutionContext(routeThreadRef);
+  const activeCwd = workspaceScope?.cwd ?? sessionContext.cwd;
   const activeRepositoryRoot = workspaceScope
     ? undefined
-    : activeThread?.worktreePath
+    : sessionContext.workspace?.role === "worktree"
       ? undefined
       : activeProject?.repositoryIdentity?.rootPath;
   const effectiveEnvironmentId =
@@ -517,7 +518,7 @@ export default function DiffPanel({
         threadRef: workspaceScope ? null : routeThreadRef,
         openWorkspaceFile: onOpenWorkspaceFile,
         filePath,
-        activeCwd,
+        activeCwd: activeCwd ?? undefined,
         repositoryRoot: activeRepositoryRoot,
         openInEditor: (targetPath) => {
           void (async () => {

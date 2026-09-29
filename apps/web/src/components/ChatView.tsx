@@ -1,3 +1,7 @@
+import { AgentSessionId } from "@awen/contracts";
+import { sessionEnvironment } from "../state/projects";
+import { useExecutionPlanStore } from "../executionPlanStore";
+import { useSessionExecutionContext } from "../state/sessionContext";
 import { openSessionFile } from "~/workbench/openSessionFile";
 import { scaledMotionDuration, skipAutomaticWorkbenchMotion } from "../workbench/workbenchMotion";
 import { useLoadBalancedEnvironment } from "../hooks/useLoadBalancedEnvironment";
@@ -897,6 +901,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
   const writeTerminal = useAtomCommand(terminalEnvironment.write, "terminal write");
   const closeTerminalMutation = useAtomCommand(terminalEnvironment.close, "terminal close");
   const draftThread = useComposerDraftStore((store) => store.getDraftThreadByRef(threadRef));
+  const executionContext = useSessionExecutionContext(threadRef);
   const serverThread = useThread(threadRef, { waitForShell: draftThread !== null });
   const projectRef = serverThread
     ? scopeProjectRef(serverThread.environmentId, serverThread.projectId)
@@ -998,7 +1003,9 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
     reconcileTerminalIds(threadRef, serverOrderedTerminalIds);
   }, [reconcileTerminalIds, serverOrderedTerminalIds, terminalUiState.terminalIds, threadRef]);
   const [localFocusRequestId, setLocalFocusRequestId] = useState(0);
-  const worktreePath = serverThread?.worktreePath ?? draftThread?.worktreePath ?? null;
+  const worktreePath = serverThread
+    ? executionContext.worktreePath
+    : (draftThread?.worktreePath ?? null);
   const effectiveWorktreePath = useMemo(() => {
     if (launchContext !== null) {
       return launchContext.worktreePath;
@@ -1273,6 +1280,7 @@ const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPane
   closeShortcutLabel,
 }: PersistentThreadTerminalPanelProps) {
   const draftThread = useComposerDraftStore((store) => store.getDraftThreadByRef(threadRef));
+  const executionContext = useSessionExecutionContext(threadRef);
   const serverThread = useThread(threadRef, { waitForShell: draftThread !== null });
   const projectRef = serverThread
     ? scopeProjectRef(serverThread.environmentId, serverThread.projectId)
@@ -1285,7 +1293,9 @@ const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPane
     environmentId: threadRef.environmentId,
     workspaceId,
   });
-  const threadWorktreePath = serverThread?.worktreePath ?? draftThread?.worktreePath ?? null;
+  const threadWorktreePath = serverThread
+    ? executionContext.worktreePath
+    : (draftThread?.worktreePath ?? null);
   const activeSummary =
     knownTerminalSessions.find((session) => session.target.terminalId === surface.activeTerminalId)
       ?.state.summary ?? null;
@@ -1491,7 +1501,7 @@ export default function ChatView(props: ChatViewProps) {
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
-  const switchGitRef = useAtomCommand(vcsEnvironment.switchRef, { reportFailure: false });
+  const selectSessionRef = useAtomCommand(sessionEnvironment.selectRef, { reportFailure: false });
   const setThreadRuntimeMode = useAtomCommand(threadEnvironment.setRuntimeMode, {
     reportFailure: false,
   });
@@ -1762,13 +1772,6 @@ export default function ChatView(props: ChatViewProps) {
   const [attachmentPreviewHandoffByMessageId, setAttachmentPreviewHandoffByMessageId] = useState<
     Record<string, string[]>
   >({});
-  const [pendingServerThreadEnvMode, setPendingServerThreadEnvMode] =
-    useState<DraftThreadEnvMode | null>(null);
-  const [pendingServerThreadBranch, setPendingServerThreadBranch] = useState<string | null>();
-  const [
-    pendingServerThreadStartFromOriginByThreadId,
-    setPendingServerThreadStartFromOriginByThreadId,
-  ] = useState<Record<string, boolean>>({});
   const [lastInvokedScriptByProjectId, setLastInvokedScriptByProjectId] = useLocalStorage(
     LAST_INVOKED_SCRIPT_BY_PROJECT_KEY,
     {},
@@ -1903,6 +1906,11 @@ export default function ChatView(props: ChatViewProps) {
   // depend on which route is mounted.
   const isServerThread = activeServerThread !== null;
   const activeThread = activeServerThread ?? localDraftThread;
+  const sessionContext = useSessionExecutionContext(routeThreadRef, localDraftThread);
+  const executionPlan = useExecutionPlanStore(
+    (state) => state.plans[scopedThreadKey(routeThreadRef)] ?? null,
+  );
+  const setExecutionPlan = useExecutionPlanStore((state) => state.set);
   const threadError = isServerThread
     ? (localServerError ?? activeServerThread?.session?.lastError ?? null)
     : localDraftError;
@@ -3553,13 +3561,8 @@ export default function ChatView(props: ChatViewProps) {
     captureDraftHeroComposerRect,
   ] = useDraftHeroLayoutTransition(isDraftHeroState);
 
-  const gitCwd = activeProject
-    ? projectScriptCwd({
-        project: { cwd: activeProject.workspaceRoot },
-        worktreePath: activeThread?.worktreePath ?? null,
-      })
-    : null;
-  const gitStatusCwd = activeThread?.worktreePath ?? gitCwd;
+  const gitCwd = sessionContext.cwd;
+  const gitStatusCwd = gitCwd;
   const gitStatusQuery = useEnvironmentQuery(
     gitStatusCwd === null
       ? null
@@ -3633,8 +3636,8 @@ export default function ChatView(props: ChatViewProps) {
     : null;
   const hasTimelineTopBanner = Boolean(visibleThreadError) || visibleProviderStatus !== null;
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
-  const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
-  const activeWorkspaceRoot = activeThreadWorktreePath ?? activeProjectCwd ?? undefined;
+  const activeThreadWorktreePath = sessionContext.worktreePath;
+  const activeWorkspaceRoot = gitCwd ?? undefined;
   useLayoutEffect(() => {
     if (
       threadDetailLoading ||
@@ -4141,7 +4144,7 @@ export default function ChatView(props: ChatViewProps) {
       const isBaseTerminalBusy = runningTerminalIds.includes(baseTerminalId);
       const wantsNewTerminal = Boolean(options?.preferNewTerminal) || isBaseTerminalBusy;
       const shouldCreateNewTerminal = wantsNewTerminal;
-      const targetWorktreePath = options?.worktreePath ?? activeThread.worktreePath ?? null;
+      const targetWorktreePath = options?.worktreePath ?? activeThreadWorktreePath;
 
       setTerminalUiLaunchContext({
         threadId: activeThreadId,
@@ -5632,35 +5635,16 @@ export default function ChatView(props: ChatViewProps) {
     setExpandedImage(null);
   }, []);
 
-  const activeWorktreePath = activeThread?.worktreePath ?? null;
-  const derivedEnvMode: DraftThreadEnvMode = resolveEffectiveEnvMode({
-    activeWorktreePath,
-    hasServerThread: isServerThread,
-    draftThreadEnvMode: isLocalDraftThread ? draftThread?.envMode : undefined,
-  });
+  const activeWorktreePath = activeThreadWorktreePath;
   const canOverrideServerThreadEnvMode = Boolean(
-    isServerThread &&
-    activeThread &&
-    activeThread.messages.length === 0 &&
-    activeThread.worktreePath === null &&
-    !envLocked,
+    activeThread && activeThread.messages.length === 0 && !envLocked,
   );
-  const envMode: DraftThreadEnvMode = canOverrideServerThreadEnvMode
-    ? (pendingServerThreadEnvMode ?? draftThread?.envMode ?? derivedEnvMode)
-    : derivedEnvMode;
+  const envMode: DraftThreadEnvMode =
+    canOverrideServerThreadEnvMode && executionPlan !== null ? "worktree" : "local";
+  const currentGitBranch = gitStatusQuery.data?.refName ?? null;
   const activeThreadBranch =
-    canOverrideServerThreadEnvMode && pendingServerThreadBranch !== undefined
-      ? pendingServerThreadBranch
-      : canOverrideServerThreadEnvMode
-        ? (draftThread?.branch ?? activeThread?.branch ?? null)
-        : (activeThread?.branch ?? null);
-  const startFromOrigin = isLocalDraftThread
-    ? (draftThread?.startFromOrigin ?? false)
-    : canOverrideServerThreadEnvMode
-      ? (pendingServerThreadStartFromOriginByThreadId[activeThread?.id ?? ""] ??
-        draftThread?.startFromOrigin ??
-        activeProjectSettings.settings.newWorktreesStartFromOrigin)
-      : false;
+    envMode === "worktree" ? (executionPlan?.baseRef ?? null) : (activeThread?.branch ?? null);
+  const startFromOrigin = envMode === "worktree" && executionPlan?.startFromOrigin === true;
   const sendEnvMode = resolveSendEnvMode({
     requestedEnvMode: envMode,
     isGitRepo,
@@ -5672,10 +5656,10 @@ export default function ChatView(props: ChatViewProps) {
             effectiveEnvMode: envMode,
             activeWorktreePath,
             activeThreadBranch,
-            currentGitBranch: gitStatusQuery.data?.refName ?? null,
+            currentGitBranch,
           })
         : null,
-    [activeThreadBranch, activeWorktreePath, envMode, gitStatusQuery.data?.refName, isServerThread],
+    [activeThreadBranch, activeWorktreePath, currentGitBranch, envMode, isServerThread],
   );
   const activeComposerTasksProgress = useMemo(() => {
     if (!activeLatestTurn || latestTurnSettled || activePlan?.turnId !== activeLatestTurn.turnId) {
@@ -5974,11 +5958,13 @@ export default function ChatView(props: ChatViewProps) {
       return;
     }
     setIsRestoringThreadBranch(true);
-    const checkoutResult = await switchGitRef({
+    const checkoutResult = await selectSessionRef({
       environmentId,
       input: {
-        cwd: activeProjectCwd,
+        agentSessionId: AgentSessionId.make(activeThread.id),
+        expectedWorkspaceId: workspaceIdForAwenProject(activeThread.projectId),
         refName: localCheckoutBranchMismatch.threadBranch,
+        create: false,
       },
     });
     if (checkoutResult._tag === "Failure") {
@@ -5995,27 +5981,6 @@ export default function ChatView(props: ChatViewProps) {
       return;
     }
 
-    const nextBranch = checkoutResult.value.refName ?? localCheckoutBranchMismatch.threadBranch;
-    if (nextBranch !== activeThread.branch) {
-      const updateResult = await updateThreadMetadata({
-        environmentId,
-        input: { threadId: activeThread.id, branch: nextBranch, worktreePath: null },
-      });
-      if (updateResult._tag === "Failure") {
-        setIsRestoringThreadBranch(false);
-        if (!isAtomCommandInterrupted(updateResult)) {
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: "Checkout switched, but the thread could not be updated",
-              description: chatActionErrorMessage(squashAtomCommandFailure(updateResult)),
-            }),
-          );
-        }
-        gitStatusQuery.refresh();
-        return;
-      }
-    }
     gitStatusQuery.refresh();
     setIsRestoringThreadBranch(false);
     scheduleComposerFocus();
@@ -6027,7 +5992,7 @@ export default function ChatView(props: ChatViewProps) {
     isRestoringThreadBranch,
     localCheckoutBranchMismatch,
     scheduleComposerFocus,
-    switchGitRef,
+    selectSessionRef,
     updateThreadMetadata,
   ]);
   // Background work (subagent fleets, workflow runs, watch loops) can outlive
@@ -6377,17 +6342,21 @@ export default function ChatView(props: ChatViewProps) {
     wokeThreadBannerItem,
   ]);
   useEffect(() => {
-    setPendingServerThreadEnvMode(null);
-    setPendingServerThreadBranch(undefined);
-  }, [activeThread?.id]);
-
-  useEffect(() => {
-    if (canOverrideServerThreadEnvMode) {
-      return;
+    if (
+      activeThread &&
+      activeThread.messages.length > 0 &&
+      !worktreeSetup &&
+      executionPlan !== null
+    ) {
+      setExecutionPlan(routeThreadRef, null);
     }
-    setPendingServerThreadEnvMode(null);
-    setPendingServerThreadBranch(undefined);
-  }, [canOverrideServerThreadEnvMode]);
+  }, [
+    activeThread?.messages.length,
+    executionPlan,
+    routeThreadRef,
+    setExecutionPlan,
+    worktreeSetup,
+  ]);
 
   useEffect(() => {
     if (!activeThreadId) {
@@ -7456,16 +7425,13 @@ export default function ChatView(props: ChatViewProps) {
     }
     const threadIdForSend = activeThread.id;
     const isFirstMessage = !isServerThread || activeThread.messages.length === 0;
-    const baseBranchForWorktree =
-      isFirstMessage && sendEnvMode === "worktree" && !activeThread.worktreePath
-        ? activeThreadBranch
-        : null;
+    const pendingNewWorktree = sendEnvMode === "worktree" && executionPlan !== null;
+    const baseBranchForWorktree = isFirstMessage && pendingNewWorktree ? activeThreadBranch : null;
 
     // In worktree mode, require an explicit base branch so we don't silently
     // fall back to local execution when branch selection is missing.
-    const shouldCreateWorktree =
-      isFirstMessage && sendEnvMode === "worktree" && !activeThread.worktreePath;
-    if (shouldCreateWorktree && !activeThreadBranch) {
+    const shouldCreateWorktree = isFirstMessage && pendingNewWorktree;
+    if (shouldCreateWorktree && !baseBranchForWorktree) {
       setThreadError(threadIdForSend, "Select a base branch before sending in New worktree mode.");
       return;
     }
@@ -7835,7 +7801,7 @@ export default function ChatView(props: ChatViewProps) {
                       runtimeMode,
                       interactionMode: sendInteractionMode,
                       branch: activeThreadBranch,
-                      worktreePath: activeThread.worktreePath,
+                      worktreePath: activeThreadWorktreePath,
                       createdAt: activeThread.createdAt,
                     },
                   }
@@ -7843,9 +7809,10 @@ export default function ChatView(props: ChatViewProps) {
               ...(baseBranchForWorktree
                 ? {
                     prepareWorktree: {
-                      projectCwd: activeProject.workspaceRoot,
+                      sourceWorkspaceId: executionPlan!.sourceWorkspaceId,
                       baseBranch: baseBranchForWorktree,
-                      branch: buildTemporaryWorktreeBranchName(randomHex),
+                      branch:
+                        executionPlan?.branchName ?? buildTemporaryWorktreeBranchName(randomHex),
                       ...(startFromOrigin ? { startFromOrigin: true } : {}),
                     },
                     runSetupScript: true,
@@ -8636,7 +8603,7 @@ export default function ChatView(props: ChatViewProps) {
         runtimeMode: defaultRuntimeMode,
         interactionMode: "default",
         branch: activeThreadBranch,
-        worktreePath: activeThread.worktreePath,
+        worktreePath: activeThreadWorktreePath,
         createdAt,
       },
     });
@@ -8832,40 +8799,31 @@ export default function ChatView(props: ChatViewProps) {
   );
   const onEnvModeChange = useCallback(
     (mode: DraftThreadEnvMode) => {
-      if (canOverrideServerThreadEnvMode) {
-        setPendingServerThreadEnvMode(mode);
-        setDraftThreadContext(composerDraftTarget, {
-          envMode: mode,
-          startFromOrigin: resolveNewDraftStartFromOrigin({
-            envMode: mode,
-            newWorktreesStartFromOrigin: activeProjectSettings.settings.newWorktreesStartFromOrigin,
-          }),
-          ...(mode === "worktree" && draftThread?.worktreePath ? { worktreePath: null } : {}),
-        });
-        scheduleComposerFocus();
-        return;
-      }
-      if (isLocalDraftThread) {
-        setDraftThreadContext(composerDraftTarget, {
-          envMode: mode,
-          startFromOrigin: resolveNewDraftStartFromOrigin({
-            envMode: mode,
-            newWorktreesStartFromOrigin: activeProjectSettings.settings.newWorktreesStartFromOrigin,
-          }),
-          ...(mode === "worktree" && draftThread?.worktreePath ? { worktreePath: null } : {}),
-        });
-      }
+      if (!activeProject) return;
+      setExecutionPlan(
+        routeThreadRef,
+        mode === "worktree"
+          ? {
+              kind: "create-worktree",
+              sourceWorkspaceId: workspaceIdForAwenProject(activeProject.id),
+              baseRef: executionPlan?.baseRef ?? currentGitBranch,
+              startFromOrigin:
+                executionPlan?.startFromOrigin ??
+                activeProjectSettings.settings.newWorktreesStartFromOrigin,
+              branchName: executionPlan?.branchName ?? buildTemporaryWorktreeBranchName(randomHex),
+            }
+          : null,
+      );
       scheduleComposerFocus();
     },
     [
-      canOverrideServerThreadEnvMode,
-      composerDraftTarget,
-      draftThread?.worktreePath,
-      isLocalDraftThread,
+      activeProject,
+      routeThreadRef,
+      executionPlan,
+      currentGitBranch,
       activeProjectSettings.settings.newWorktreesStartFromOrigin,
-      setPendingServerThreadEnvMode,
+      setExecutionPlan,
       scheduleComposerFocus,
-      setDraftThreadContext,
     ],
   );
 
@@ -8920,7 +8878,7 @@ export default function ChatView(props: ChatViewProps) {
     if (sendEnvMode !== "local") {
       // The draft is back; switch it to the project checkout and let the next
       // render resend.
-      setDraftThreadContext(composerDraftTarget, { envMode: "local", startFromOrigin: false });
+      setExecutionPlan(routeThreadRef, null);
       return;
     }
     setWorkLocallyResendDraftId(null);
@@ -8933,21 +8891,8 @@ export default function ChatView(props: ChatViewProps) {
     workLocallyResendReady,
   ]);
 
-  const onStartFromOriginChange = (nextStartFromOrigin: boolean) => {
-    if (canOverrideServerThreadEnvMode && activeThread) {
-      setDraftThreadContext(composerDraftTarget, { startFromOrigin: nextStartFromOrigin });
-      setPendingServerThreadStartFromOriginByThreadId((current) =>
-        current[activeThread.id] === nextStartFromOrigin
-          ? current
-          : { ...current, [activeThread.id]: nextStartFromOrigin },
-      );
-      return;
-    }
-    if (isLocalDraftThread) {
-      setDraftThreadContext(composerDraftTarget, {
-        startFromOrigin: nextStartFromOrigin,
-      });
-    }
+  const onStartFromOriginChange = (startFromOrigin: boolean) => {
+    if (executionPlan) setExecutionPlan(routeThreadRef, { ...executionPlan, startFromOrigin });
   };
 
   const onExpandTimelineImage = useCallback((preview: ExpandedImagePreview) => {
@@ -9647,8 +9592,11 @@ export default function ChatView(props: ChatViewProps) {
                                   ? {
                                       activeThreadBranchOverride: activeThreadBranch,
                                       onActiveThreadBranchOverrideChange: (branch) => {
-                                        setPendingServerThreadBranch(branch);
-                                        setDraftThreadContext(composerDraftTarget, { branch });
+                                        if (executionPlan)
+                                          setExecutionPlan(routeThreadRef, {
+                                            ...executionPlan,
+                                            baseRef: branch,
+                                          });
                                       },
                                     }
                                   : {})}

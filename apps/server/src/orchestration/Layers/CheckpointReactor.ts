@@ -1073,6 +1073,24 @@ const make = Effect.gen(function* () {
       );
       return;
     }
+
+    if (event.type === "thread.meta-updated" && event.payload.branch !== undefined) {
+      if (event.payload.branch !== null) {
+        const newRef = event.payload.branch.startsWith("refs/heads/")
+          ? event.payload.branch
+          : `refs/heads/${event.payload.branch}`;
+        yield* executionContexts.relinkHeadRef(event.payload.threadId, newRef).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("checkpoint reactor failed to relink headRef after branch update", {
+              threadId: event.payload.threadId,
+              branch: event.payload.branch,
+              cause: Cause.pretty(cause),
+            }),
+          ),
+        );
+      }
+      return;
+    }
   });
 
   const processRuntimeEvent = Effect.fn("processRuntimeEvent")(function* (

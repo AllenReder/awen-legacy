@@ -60,9 +60,15 @@ vi.mock("../composerDraftStore", () => ({
   DraftId: { make: (value: string) => value },
   useComposerDraftStore: Object.assign(() => null, { getState: () => state.store }),
 }));
-vi.mock("../lib/utils", () => ({ newThreadId: () => state.nextThreadId() }));
+vi.mock("../lib/utils", () => ({
+  newThreadId: () => state.nextThreadId(),
+  randomHex: () => "12345678",
+}));
 vi.mock("../state/entities", () => ({
-  readProjects: () => [{ id: "project", environmentId: "env", workspaceRoot: "/project" }],
+  readProjects: () => [
+    { id: "project", environmentId: "env", workspaceRoot: "/project" },
+    { id: "project-test", environmentId: "env", workspaceRoot: "/project-test" },
+  ],
   readThreadShell: () => null,
   useAwenProjects: () => [
     {
@@ -73,6 +79,12 @@ vi.mock("../state/entities", () => ({
           awenProjectId: "project",
           workspaceRoot: "/project",
           role: "main",
+        },
+        {
+          id: "workspace-test",
+          awenProjectId: "project-test",
+          workspaceRoot: "/project-test",
+          role: "worktree",
         },
       ],
     },
@@ -167,5 +179,24 @@ describe("creating Agent Sessions", () => {
     await expect(createSession(projectRef)).rejects.toBeDefined();
     expect(state.store.clearDraftThread).toHaveBeenCalledWith("thread-2");
     expect(state.openTarget).toHaveBeenCalledTimes(1);
+  });
+
+  it("binds a new Session to the selected sibling Workspace identity", async () => {
+    const createSession = useNewThreadHandler();
+    await createSession(projectRef, { worktreePath: "/project-test", branch: "test" });
+    expect(state.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: expect.objectContaining({
+          projectId: "project-test",
+          worktreePath: "/project-test",
+        }),
+      }),
+    );
+    expect(state.store.setWorkspaceDraftThreadId).toHaveBeenCalledWith(
+      "workspace-test",
+      { environmentId: "env", projectId: "project-test" },
+      expect.anything(),
+      expect.anything(),
+    );
   });
 });

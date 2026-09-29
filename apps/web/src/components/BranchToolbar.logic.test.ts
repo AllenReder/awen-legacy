@@ -149,7 +149,6 @@ describe("resolveBranchToolbarValue", () => {
     expect(
       resolveBranchToolbarValue({
         envMode: "worktree",
-        activeWorktreePath: null,
         activeThreadBranch: null,
         currentGitBranch: "main",
       }),
@@ -160,7 +159,6 @@ describe("resolveBranchToolbarValue", () => {
     expect(
       resolveBranchToolbarValue({
         envMode: "worktree",
-        activeWorktreePath: null,
         activeThreadBranch: "feature/base",
         currentGitBranch: "main",
       }),
@@ -171,7 +169,6 @@ describe("resolveBranchToolbarValue", () => {
     expect(
       resolveBranchToolbarValue({
         envMode: "local",
-        activeWorktreePath: null,
         activeThreadBranch: "feature/base",
         currentGitBranch: "main",
       }),
@@ -183,7 +180,6 @@ describe("resolveBranchTriggerLabel", () => {
   it("shows the origin ref when a new worktree will start from origin", () => {
     expect(
       resolveBranchTriggerLabel({
-        activeWorktreePath: null,
         effectiveEnvMode: "worktree",
         resolvedActiveBranch: "main",
         resolvedActiveBranchIsRemote: false,
@@ -195,7 +191,6 @@ describe("resolveBranchTriggerLabel", () => {
   it("shows the origin ref for local branch names that contain slashes", () => {
     expect(
       resolveBranchTriggerLabel({
-        activeWorktreePath: null,
         effectiveEnvMode: "worktree",
         resolvedActiveBranch: "feature/demo",
         resolvedActiveBranchIsRemote: false,
@@ -207,7 +202,6 @@ describe("resolveBranchTriggerLabel", () => {
   it("shows the local ref when start from origin is disabled", () => {
     expect(
       resolveBranchTriggerLabel({
-        activeWorktreePath: null,
         effectiveEnvMode: "worktree",
         resolvedActiveBranch: "main",
         resolvedActiveBranchIsRemote: false,
@@ -219,7 +213,6 @@ describe("resolveBranchTriggerLabel", () => {
   it("does not duplicate the origin prefix for an explicit remote ref", () => {
     expect(
       resolveBranchTriggerLabel({
-        activeWorktreePath: null,
         effectiveEnvMode: "worktree",
         resolvedActiveBranch: "origin/feature/demo",
         resolvedActiveBranchIsRemote: true,
@@ -231,7 +224,6 @@ describe("resolveBranchTriggerLabel", () => {
   it("preserves an explicit ref from a non-origin remote", () => {
     expect(
       resolveBranchTriggerLabel({
-        activeWorktreePath: null,
         effectiveEnvMode: "worktree",
         resolvedActiveBranch: "upstream/feature/demo",
         resolvedActiveBranchIsRemote: true,
@@ -243,7 +235,6 @@ describe("resolveBranchTriggerLabel", () => {
   it("keeps current-checkout labels and empty state unchanged", () => {
     expect(
       resolveBranchTriggerLabel({
-        activeWorktreePath: null,
         effectiveEnvMode: "local",
         resolvedActiveBranch: "main",
         resolvedActiveBranchIsRemote: false,
@@ -252,7 +243,6 @@ describe("resolveBranchTriggerLabel", () => {
     ).toBe("main");
     expect(
       resolveBranchTriggerLabel({
-        activeWorktreePath: null,
         effectiveEnvMode: "worktree",
         resolvedActiveBranch: null,
         resolvedActiveBranchIsRemote: null,
@@ -264,7 +254,6 @@ describe("resolveBranchTriggerLabel", () => {
   it("does not fabricate an origin ref while branch metadata is loading", () => {
     expect(
       resolveBranchTriggerLabel({
-        activeWorktreePath: null,
         effectiveEnvMode: "worktree",
         resolvedActiveBranch: "upstream/feature/demo",
         resolvedActiveBranchIsRemote: null,
@@ -490,6 +479,25 @@ describe("resolveEffectiveEnvMode", () => {
         draftThreadEnvMode: "worktree",
       }),
     ).toBe("worktree");
+  });
+
+  it("treats the mode of a server thread as a pending choice, not its worktree anchor", () => {
+    // An unstarted Session anchored in a worktree Workspace may still pick New
+    // worktree; the anchor is shown by the workspace labels, not the mode.
+    expect(
+      resolveEffectiveEnvMode({
+        activeWorktreePath: "/repo/.awen/worktrees/feature-a",
+        hasServerThread: true,
+        draftThreadEnvMode: undefined,
+      }),
+    ).toBe("local");
+    expect(
+      resolveEffectiveEnvMode({
+        activeWorktreePath: null,
+        hasServerThread: true,
+        draftThreadEnvMode: undefined,
+      }),
+    ).toBe("local");
   });
 });
 
