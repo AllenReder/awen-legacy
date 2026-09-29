@@ -3,6 +3,7 @@ import { EnvironmentId } from "@awen/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -476,6 +477,63 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
         );
       }
     }).pipe(Effect.provide(Layer.merge(makeSessionStoreLayer(), TestClock.layer()))),
+  );
+
+  it.effect("consumes a websocket token after one successful verification", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const issued = yield* sessions.issue(remoteSessionInput);
+      const websocket = yield* sessions.issueWebSocketToken(issued.sessionId);
+
+      expect((yield* sessions.verifyWebSocketToken(websocket.token)).sessionId).toBe(
+        issued.sessionId,
+      );
+      expect(yield* Effect.flip(sessions.verifyWebSocketToken(websocket.token))).toMatchObject({
+        _tag: "WebSocketTokenAlreadyUsedError",
+        sessionId: issued.sessionId,
+      });
+    }).pipe(Effect.provide(makeSessionStoreLayer())),
+  );
+
+  it.effect("consumes a websocket token once under concurrent verification", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const issued = yield* sessions.issue(remoteSessionInput);
+      const websocket = yield* sessions.issueWebSocketToken(issued.sessionId);
+
+      const results = yield* Effect.all(
+        [
+          sessions.verifyWebSocketToken(websocket.token).pipe(Effect.exit),
+          sessions.verifyWebSocketToken(websocket.token).pipe(Effect.exit),
+        ],
+        { concurrency: "unbounded" },
+      );
+
+      expect(results.filter(Exit.isSuccess)).toHaveLength(1);
+      const [failure] = results.filter(Exit.isFailure);
+      expect(failure?.cause.toString()).toContain("WebSocketTokenAlreadyUsedError");
+    }).pipe(Effect.provide(makeSessionStoreLayer())),
+  );
+
+  it.effect("invalidates websocket tickets issued by a previous store instance", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "awen-websocket-epoch-" });
+      const firstLayer = yield* makeDiskSessionStoreLayer(baseDir);
+      const ticket = yield* Effect.gen(function* () {
+        const sessions = yield* SessionStore.SessionStore;
+        const issued = yield* sessions.issue(remoteSessionInput);
+        return yield* sessions.issueWebSocketToken(issued.sessionId);
+      }).pipe(Effect.provide(firstLayer), Effect.scoped);
+
+      const restartedLayer = yield* makeDiskSessionStoreLayer(baseDir);
+      yield* Effect.gen(function* () {
+        const sessions = yield* SessionStore.SessionStore;
+        expect(yield* Effect.flip(sessions.verifyWebSocketToken(ticket.token))).toMatchObject({
+          _tag: "WebSocketTokenInvalidatedError",
+        });
+      }).pipe(Effect.provide(restartedLayer), Effect.scoped);
+    }),
   );
 
   it.effect("lists active sessions, tracks connectivity, and revokes other sessions", () =>
