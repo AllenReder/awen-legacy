@@ -11,9 +11,18 @@ export {
   isPublicFaviconHost,
 } from "@awen/shared/hostClassification";
 
+/** Thrown when a loopback preview target has no connected environment to route through. */
+export class PreviewEnvironmentUnavailableError extends Error {
+  override readonly name = "PreviewEnvironmentUnavailableError";
+}
+
 const readEnvironmentUrl = (environmentId: EnvironmentId): URL => {
   const connection = readPreparedConnection(environmentId);
-  if (!connection) throw new Error(`Environment ${environmentId} is not connected.`);
+  if (!connection) {
+    throw new PreviewEnvironmentUnavailableError(
+      "The environment is not connected, so its local servers cannot be previewed.",
+    );
+  }
   return new URL(connection.httpBaseUrl);
 };
 
@@ -72,23 +81,30 @@ export function resolveBrowserNavigationTarget(
 }
 
 export function resolveDiscoveredServerUrl(environmentId: EnvironmentId, rawUrl: string): string {
+  let normalizedUrl: string;
+  let parsed: URL;
   try {
-    const normalizedUrl = normalizePreviewUrl(rawUrl);
-    const parsed = new URL(normalizedUrl);
-    if (!isLoopbackHost(parsed.hostname)) return normalizedUrl;
-    return resolveEnvironmentPortTarget(
-      environmentId,
-      {
-        kind: "environment-port",
-        port: Number(parsed.port || (parsed.protocol === "https:" ? 443 : 80)),
-        protocol: parsed.protocol === "https:" ? "https" : "http",
-        path: `${parsed.pathname}${parsed.search}${parsed.hash}`,
-      },
-      readEnvironmentUrl(environmentId),
-      rawUrl,
-      parsed,
-    ).resolvedUrl;
+    normalizedUrl = normalizePreviewUrl(rawUrl);
+    parsed = new URL(normalizedUrl);
   } catch {
+    // Malformed input takes the normal navigation error path.
     return rawUrl;
   }
+  if (!isLoopbackHost(parsed.hostname)) return normalizedUrl;
+  // A loopback target only means something on the environment's own machine.
+  // Let a missing or unusable connection throw instead of returning the raw
+  // `http://localhost:<port>` URL, which the desktop webview would open against
+  // *this* machine rather than the environment.
+  return resolveEnvironmentPortTarget(
+    environmentId,
+    {
+      kind: "environment-port",
+      port: Number(parsed.port || (parsed.protocol === "https:" ? 443 : 80)),
+      protocol: parsed.protocol === "https:" ? "https" : "http",
+      path: `${parsed.pathname}${parsed.search}${parsed.hash}`,
+    },
+    readEnvironmentUrl(environmentId),
+    rawUrl,
+    parsed,
+  ).resolvedUrl;
 }

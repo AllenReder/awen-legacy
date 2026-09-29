@@ -225,13 +225,22 @@ export function PreviewView({
 
   const handleOpenServerUrl = useCallback(
     async (next: string) => {
+      let resolved: string;
       try {
-        const resolved = resolveDiscoveredServerUrl(threadRef.environmentId, next);
-        if (await navigateToResolvedUrl(resolved)) {
-          recordVisitForThread(threadRef, next);
-        }
-      } catch {
-        // Server-side `failed` event renders the unreachable view.
+        resolved = resolveDiscoveredServerUrl(threadRef.environmentId, next);
+      } catch (error) {
+        // A discovered loopback server is only reachable through its
+        // environment; without that connection there is no target to open,
+        // and the raw localhost URL would open this machine's port instead.
+        toastManager.add({
+          type: "error",
+          title: "Unable to open browser",
+          description: error instanceof Error ? error.message : String(error),
+        });
+        return;
+      }
+      if (await navigateToResolvedUrl(resolved)) {
+        recordVisitForThread(threadRef, next);
       }
     },
     [navigateToResolvedUrl, threadRef],

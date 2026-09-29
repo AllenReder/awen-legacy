@@ -32,16 +32,39 @@ export function useDiscoveredLocalServers(
   return useMemo(
     () =>
       mergeServers({
-        scanner: scannerState.servers.map((server) => ({
-          ...server,
-          url: resolveDiscoveredServerUrl(input.environmentId, server.url),
-          requestedUrl: server.url,
-        })),
+        scanner: resolveReachableScannerServers(input.environmentId, scannerState.servers),
         configuredUrls: input.configuredUrls ?? [],
         configuredUrlProbing: scannerState.configuredUrlProbing,
       }),
     [input.environmentId, scannerState, input.configuredUrls],
   );
+}
+
+/**
+ * Resolves the scanner's raw loopback URLs against their environment.
+ *
+ * Entries whose environment is not connected are dropped rather than offered:
+ * a loopback URL only means something on the environment's own machine, and
+ * navigating to the raw value would open this machine's port instead.
+ */
+export function resolveReachableScannerServers(
+  environmentId: EnvironmentId,
+  servers: ReadonlyArray<DiscoveredLocalServer>,
+): ReadonlyArray<DiscoveredLocalServer & { readonly requestedUrl: string }> {
+  const resolved: Array<DiscoveredLocalServer & { requestedUrl: string }> = [];
+  for (const server of servers) {
+    try {
+      resolved.push({
+        ...server,
+        url: resolveDiscoveredServerUrl(environmentId, server.url),
+        requestedUrl: server.url,
+      });
+    } catch {
+      // Unreachable right now; the live scan will offer it again once the
+      // environment is connected.
+    }
+  }
+  return resolved;
 }
 
 export function mergeServers(input: {
