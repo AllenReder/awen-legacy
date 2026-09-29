@@ -10605,6 +10605,105 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
   );
 
+  it.effect("keeps the claimed worktree for the pinned-name retry when setup is interrupted", () =>
+    Effect.gen(function* () {
+      const registration = makeBootstrapWorkspaceRegistration({
+        projectId: defaultProjectId,
+        mainRoot: "/tmp/project",
+      });
+      const createWorktreeStarted = yield* Deferred.make<void>();
+      const removeWorktree = vi.fn(() => Effect.void);
+      const createWorktree = vi.fn(
+        (
+          input: Parameters<GitVcsDriver.GitVcsDriver["Service"]["createWorktree"]>[0],
+          options: Parameters<GitVcsDriver.GitVcsDriver["Service"]["createWorktree"]>[1],
+        ) =>
+          // The claim fires once `git worktree add` completes; a wedged
+          // submodule step then holds the setup open until the timeout fires.
+          Deferred.succeed(createWorktreeStarted, undefined).pipe(
+            Effect.andThen(
+              options?.progress?.onWorktreeClaimed?.(input.path ?? "/tmp/wt") ?? Effect.void,
+            ),
+            Effect.andThen(Effect.never),
+          ),
+      );
+
+      yield* buildAppUnderTest({
+        config: { worktreeSetupTimeout: Duration.millis(50) },
+        layers: {
+          vcsDriver: {
+            isInsideWorkTree: () => Effect.succeed(true),
+          },
+          gitVcsDriver: {
+            execute: () => Effect.succeed(SUCCESSFUL_GIT_EXECUTION),
+            createWorktree,
+            removeWorktree,
+            ...registration.layers.gitVcsDriver,
+          },
+          vcsDriverRegistry: registration.layers.vcsDriverRegistry,
+          projectionSnapshotQuery: registration.layers.projectionSnapshotQuery,
+          orchestrationEngine: {
+            dispatch: registration.dispatchRecording([]),
+            readEvents: () => Stream.empty,
+          },
+        },
+      });
+
+      const createdAt = "2026-01-01T00:00:00.000Z";
+      const threadId = ThreadId.make("thread-bootstrap-keep-worktree");
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const dispatchFiber = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+            type: "thread.turn.start",
+            commandId: CommandId.make("cmd-bootstrap-keep-worktree"),
+            threadId,
+            message: {
+              messageId: MessageId.make("msg-bootstrap-keep-worktree"),
+              role: "user",
+              text: "hello",
+              attachments: [],
+            },
+            modelSelection: defaultModelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            bootstrap: {
+              createThread: {
+                projectId: defaultProjectId,
+                title: "Bootstrap Thread",
+                modelSelection: defaultModelSelection,
+                runtimeMode: "full-access",
+                interactionMode: "default",
+                branch: "main",
+                worktreePath: null,
+                createdAt,
+              },
+              prepareWorktree: {
+                projectCwd: "/tmp/project",
+                baseBranch: "main",
+                branch: "awen/bootstrap-refName",
+              },
+              runSetupScript: false,
+            },
+            createdAt,
+          }),
+        ).pipe(Effect.result),
+      ).pipe(Effect.forkChild);
+
+      yield* Deferred.await(createWorktreeStarted).pipe(Effect.timeout(Duration.seconds(10)));
+      const result = yield* Fiber.join(dispatchFiber);
+      assertTrue(result._tag === "Failure");
+      assertTrue(result.failure._tag === "OrchestrationDispatchCommandError");
+      assert.include(result.failure.message, "timed out");
+      // The claimed directory survives the interrupt: the pinned branch is
+      // checked out there, so removing the directory would orphan the branch
+      // and fail the pinned-name retry with branch-exists. The retry instead
+      // reuses the directory through AwenWorkspaceService's managed-root
+      // reuse, the same convergence as a registration failure.
+      assert.equal(removeWorktree.mock.calls.length, 0);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
+  );
+
   it.effect("drains deletion cleanup through the re-created thread event", () =>
     Effect.gen(function* () {
       // A draft retry reuses the thread id its failed bootstrap deleted. The

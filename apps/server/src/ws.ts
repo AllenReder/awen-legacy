@@ -13,7 +13,6 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
-import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import {
@@ -1205,17 +1204,9 @@ const makeWsRpcLayer = (
             let targetProjectId = bootstrap?.createThread?.projectId;
             let targetProjectCwd = bootstrap?.prepareWorktree?.projectCwd;
             let targetWorktreePath = bootstrap?.createThread?.worktreePath ?? null;
-            // Set once AwenWorkspaceService has registered the created
-            // worktree: from here the directory is a real Workspace, so cancel
-            // and failure cleanup leave it for the user instead of deleting a
-            // registered directory out from under the Sidebar.
-            let worktreeRegistered = false;
             // Set by the setup-timeout watcher so the interrupt handler can
             // report a failure with a reason instead of a user cancel.
             let worktreeSetupTimedOut = false;
-            // The setup script's terminal, once started. Cancel closes only this
-            // one so terminals the user opened meanwhile survive.
-            let setupTerminalId: string | null = null;
 
             // Set once the checkout starts; see the session.set below.
             let preparingSessionSet = false;
@@ -1401,7 +1392,6 @@ const makeWsRpcLayer = (
                             ),
                           ).pipe(Effect.as(null));
                         }
-                        setupTerminalId = setupResult.terminalId;
                         return recordSetupScriptStarted({
                           requestedAt,
                           worktreePath,
@@ -1706,7 +1696,6 @@ const makeWsRpcLayer = (
                     },
                   },
                 );
-                worktreeRegistered = true;
                 const checkoutEndedAt = yield* nowIso;
                 yield* worktreeSetupTracker.update(threadId, (snapshot) => ({
                   ...snapshot,
@@ -1842,37 +1831,17 @@ const makeWsRpcLayer = (
                 const interruptedMessage = worktreeSetupTimedOut
                   ? `Worktree setup timed out after ${Duration.toMinutes(worktreeSetupTimeout)} minutes.`
                   : "Worktree setup cancelled.";
-                const closeSetupTerminal = setupTerminalId
-                  ? terminalManager.close({
-                      ...(targetProjectId
-                        ? { workspaceId: workspaceIdForAwenProject(targetProjectId) }
-                        : {}),
-                      terminalId: setupTerminalId,
-                      deleteHistory: true,
-                    })
-                  : Effect.void;
-                // Once registered, the worktree is a real Workspace listed in
-                // the Sidebar; removing it is the user's explicit action, not
-                // cleanup. Only an unregistered half-made directory is
-                // removed here.
-                const removeCreatedWorktree =
-                  tracked && targetWorktreePath && !worktreeRegistered && bootstrap?.prepareWorktree
-                    ? closeSetupTerminal.pipe(
-                        Effect.ignoreCause({ log: true }),
-                        Effect.andThen(
-                          gitWorkflow
-                            .removeWorktree({
-                              cwd: bootstrap.prepareWorktree.projectCwd,
-                              path: targetWorktreePath,
-                              force: true,
-                            })
-                            .pipe(
-                              Effect.retry({ times: 4, schedule: Schedule.spaced("500 millis") }),
-                            ),
-                        ),
-                        Effect.ignoreCause({ log: true }),
-                      )
-                    : Effect.void;
+                // A claimed worktree is kept, registered or not. The claim
+                // fires only after `git worktree add` completed, so the
+                // checkout is whole and the pinned branch name is checked out
+                // there. Removing the directory would orphan that branch and
+                // make the pinned-name retry fail with branch-exists; keeping
+                // it lets the retry reuse the directory through
+                // AwenWorkspaceService's managed-root reuse semantics — the
+                // same "Git succeeded but registration failed" convergence a
+                // registration failure relies on. Once registered it is a
+                // real Workspace listed in the Sidebar regardless, so
+                // removing it is the user's explicit action, never cleanup.
                 return Effect.uninterruptible(
                   track(
                     worktreeSetupTracker
@@ -1887,7 +1856,6 @@ const makeWsRpcLayer = (
                         ),
                       ),
                   ).pipe(
-                    Effect.andThen(removeCreatedWorktree),
                     Effect.andThen(
                       tracked
                         ? cleanupAndResolveError(
