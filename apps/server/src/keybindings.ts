@@ -41,6 +41,7 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as Semaphore from "effect/Semaphore";
 import * as ServerConfig from "./config.ts";
+import { subscribeChanges } from "./utils/subscribeBeforeSnapshot.ts";
 import { writeFileStringAtomically } from "./atomicWrite.ts";
 import { fromJsonStringPretty, fromLenientJson } from "@awen/shared/schemaJson";
 import {
@@ -243,6 +244,17 @@ export class Keybindings extends Context.Service<
      * Stream of keybindings config change events.
      */
     readonly streamChanges: Stream.Stream<KeybindingsChangeEvent>;
+
+    /**
+     * Subscribes to keybindings config change events before returning the
+     * stream, so callers can order the subscription against a snapshot read
+     * and no change can slip through the gap between them.
+     */
+    readonly subscribeChanges: Effect.Effect<
+      Stream.Stream<KeybindingsChangeEvent>,
+      never,
+      Scope.Scope
+    >;
 
     /**
      * Upsert a keybinding rule and persist the resulting configuration.
@@ -615,6 +627,9 @@ const make = Effect.gen(function* () {
     getSnapshot: loadConfigStateFromCacheOrDisk,
     get streamChanges() {
       return Stream.fromPubSub(changesPubSub);
+    },
+    get subscribeChanges() {
+      return subscribeChanges(changesPubSub);
     },
     upsertKeybindingRule: (input) =>
       upsertSemaphore.withPermits(1)(

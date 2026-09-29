@@ -123,6 +123,7 @@ import * as ServerSelfUpdate from "./service/selfUpdate.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServerSettings from "./serverSettings.ts";
+import { changesAfterSnapshot } from "./utils/subscribeBeforeSnapshot.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import { withTerminalOutputWindow } from "./terminal/OutputProtocol.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
@@ -3732,8 +3733,20 @@ const makeWsRpcLayer = (
               WS_METHODS.subscribeServerConfig,
               Effect.gen(function* () {
                 const usageLimitsCommand = input.usageLimitsCommand === true;
+                // Subscribe before reading the snapshot: the settings and
+                // keybindings streams are live PubSub subscriptions with no
+                // replay, so a change landing between the snapshot read and the
+                // stream's own subscription would never reach the client.
+                const settingsChanges = yield* serverSettings.subscribeChanges;
+                const keybindingsChanges = yield* keybindings.subscribeChanges;
                 const config = yield* loadServerConfig({ usageLimitsCommand });
-                const keybindingsUpdates = keybindings.streamChanges.pipe(
+                // The subscription can carry a change the snapshot already
+                // accounts for: seed with the snapshot and drop the repeat, so
+                // a change that landed during the read still reaches the client.
+                const keybindingsUpdates = changesAfterSnapshot(
+                  { keybindings: config.keybindings, issues: config.issues },
+                  keybindingsChanges,
+                ).pipe(
                   Stream.map((event) => ({
                     version: 1 as const,
                     type: "keybindingsUpdated" as const,
@@ -3805,8 +3818,14 @@ const makeWsRpcLayer = (
                         })),
                       )
                     : Stream.empty;
-                const settingsUpdates = serverSettings.streamChanges.pipe(
-                  Stream.map((settings) => ServerSettings.redactServerSettingsForClient(settings)),
+                const settingsUpdates = changesAfterSnapshot(
+                  config.settings,
+                  settingsChanges.pipe(
+                    Stream.map((settings) =>
+                      ServerSettings.redactServerSettingsForClient(settings),
+                    ),
+                  ),
+                ).pipe(
                   Stream.map((settings) => ({
                     version: 1 as const,
                     type: "settingsUpdated" as const,
@@ -3858,11 +3877,18 @@ const makeWsRpcLayer = (
             observeRpcStreamEffect(
               WS_METHODS.subscribeAuthAccess,
               Effect.gen(function* () {
+                // Subscribe before reading the snapshot: both stores publish
+                // on live PubSub subscriptions with no replay, so a change
+                // landing between the snapshot read and the stream's own
+                // subscription would otherwise never reach the client. Replayed
+                // events are idempotent: the client upserts or removes by id.
+                const bootstrapChanges = yield* bootstrapCredentials.subscribeChanges;
+                const sessionChanges = yield* sessions.subscribeChanges;
                 const initialSnapshot = yield* loadAuthAccessSnapshot();
                 const revisionRef = yield* Ref.make(1);
                 const accessChanges: Stream.Stream<
                   PairingGrantStore.BootstrapCredentialChange | SessionStore.SessionCredentialChange
-                > = Stream.merge(bootstrapCredentials.streamChanges, sessions.streamChanges);
+                > = Stream.merge(bootstrapChanges, sessionChanges);
 
                 const liveEvents: Stream.Stream<AuthAccessStreamEvent> = accessChanges.pipe(
                   Stream.mapEffect((change) =>
