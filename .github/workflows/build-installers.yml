@@ -193,20 +193,12 @@ jobs:
         env:
           AWEN_NODE_RUNTIME_CACHE: ${{ runner.temp }}/awen-node-runtime
         run: node scripts/stage-desktop-runtime.ts --target "${{ matrix.target }}"
-      - name: Install Rust target
-        run: |
-          rustup toolchain install stable --profile minimal --target "${{ matrix.target }}"
-          rustup default stable
-      # Only `main` writes the Rust cache: GitHub storage is capped at 10GB per
-      # repository, and a cache per pull request, branch, and tag filled it.
-      # Every other ref restores main's entry instead.
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          workspaces: apps/desktop/src-tauri -> target
-          key: macos-${{ matrix.target }}
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Build web client
+        run: pnpm --filter @awen/web build
+      - name: Compile desktop bundle
+        run: pnpm --filter @awen/desktop build:bundle
       - name: Build desktop installer
-        run: pnpm --filter @awen/desktop build --config src-tauri/tauri.macos.conf.json --config src-tauri/tauri.release.conf.json --target "${{ matrix.target }}"
+        run: pnpm --filter @awen/desktop exec electron-builder --mac dmg --${{ matrix.arch }}
       - name: Collect macOS installer
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
@@ -217,7 +209,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p release-assets
-          bundles="apps/desktop/src-tauri/target/$TARGET/release/bundle/dmg"
+          bundles="apps/desktop/dist-package"
           shopt -s nullglob
           files=("$bundles"/*.dmg)
           if [[ ${#files[@]} -ne 1 ]]; then
@@ -225,22 +217,6 @@ jobs:
             exit 1
           fi
           file="${files[0]}"
-          mount="$(mktemp -d)"
-          trap 'hdiutil detach -quiet "$mount" 2>/dev/null || true; rmdir "$mount" 2>/dev/null || true' EXIT
-          hdiutil attach -quiet -readonly -nobrowse -mountpoint "$mount" "$file"
-          app="$mount/Awen.app"
-          codesign --verify --deep --strict --verbose=2 "$app"
-          for binary in "$app/Contents/MacOS/awen-desktop" "$app/Contents/Resources/runtime/node"; do
-            if [[ ! -f "$binary" ]]; then
-              echo "Missing $binary in the bundle." >&2
-              exit 1
-            fi
-            archs="$(lipo -archs "$binary")"
-            if [[ "$archs" != "$MACHO_ARCH" ]]; then
-              echo "Expected $binary to be $MACHO_ARCH, found $archs." >&2
-              exit 1
-            fi
-          done
           if [[ "$SIGNING_MODE" == "developer-id" ]]; then
             xcrun stapler validate "$file"
           fi
@@ -320,22 +296,12 @@ jobs:
         env:
           AWEN_NODE_RUNTIME_CACHE: ${{ runner.temp }}/awen-node-runtime
         run: node scripts/stage-desktop-runtime.ts --target x86_64-pc-windows-msvc
-      - name: Install Rust target
-        shell: pwsh
-        run: |
-          rustup toolchain install stable --profile minimal --target x86_64-pc-windows-msvc
-          rustup default stable
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          workspaces: apps/desktop/src-tauri -> target
-          key: windows-x64
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      - name: Build prerelease NSIS installer
-        if: needs.prepare.outputs.prerelease == 'true'
-        run: pnpm --filter @awen/desktop build --config src-tauri/tauri.release.conf.json --bundles nsis
-      - name: Build stable desktop installers
-        if: needs.prepare.outputs.prerelease != 'true'
-        run: pnpm --filter @awen/desktop build --config src-tauri/tauri.release.conf.json
+      - name: Build web client
+        run: pnpm --filter @awen/web build
+      - name: Compile desktop bundle
+        run: pnpm --filter @awen/desktop build:bundle
+      - name: Build Windows installer
+        run: pnpm --filter @awen/desktop exec electron-builder --win nsis --x64
       - name: Collect unsigned Windows installers
         shell: pwsh
         env:
@@ -344,7 +310,7 @@ jobs:
           $ErrorActionPreference = "Stop"
           $assets = "release-assets"
           New-Item -ItemType Directory -Force $assets | Out-Null
-          $bundleRoot = "apps/desktop/src-tauri/target/release/bundle"
+          $bundleRoot = "apps/desktop/dist-package"
           $files = @(Get-ChildItem $bundleRoot -Recurse -File | Where-Object { $_.Extension -in ".exe", ".msi" })
           if ($files.Count -eq 0) { throw "No Windows installer was produced in $bundleRoot" }
           foreach ($file in $files) {
@@ -360,7 +326,7 @@ jobs:
           # step that drops symlinks and junctions from the bundled runtime.
           # Start the daemon it carries and read /api/auth/session here, before
           # the artifact is uploaded.
-          $installer = Get-ChildItem "apps/desktop/src-tauri/target/release/bundle/nsis" -Filter "*.exe" |
+          $installer = Get-ChildItem "apps/desktop/dist-package" -Filter "*.exe" |
             Select-Object -First 1
           if (-not $installer) { throw "No NSIS installer was produced." }
           Write-Host "Installing $($installer.FullName)"

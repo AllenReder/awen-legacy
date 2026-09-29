@@ -377,25 +377,25 @@ export interface SignalEndpoint {
 export const resolveSignalEndpoint = (
   otel: OtelEnvironment,
   signal: SignalName,
-  t3: { readonly url: string | undefined; readonly export: SignalExport },
+  awen: { readonly url: string | undefined; readonly export: SignalExport },
   ...fallbackUrls: ReadonlyArray<string | undefined>
 ): SignalEndpoint | undefined => {
   if (otel.disabled) {
     return undefined;
   }
-  const t3Url = blankAsUnset(t3.url);
-  if (t3Url !== undefined) {
-    return { url: t3Url, export: t3.export };
+  const awenUrl = blankAsUnset(awen.url);
+  if (awenUrl !== undefined) {
+    return { url: awenUrl, export: awen.export };
   }
   return OtelSignal.$match(otel[signal], {
     Export: ({ url, protocol, headers }): SignalEndpoint => ({
       url,
-      export: { protocol, headers, exportIntervalMs: t3.export.exportIntervalMs },
+      export: { protocol, headers, exportIntervalMs: awen.export.exportIntervalMs },
     }),
     Off: () => undefined,
     Unset: () => {
       const url = fallbackUrls.map(blankAsUnset).find((candidate) => candidate !== undefined);
-      return url === undefined ? undefined : { url, export: t3.export };
+      return url === undefined ? undefined : { url, export: awen.export };
     },
   });
 };

@@ -31,11 +31,21 @@ export class ElectronPowerMonitor extends Context.Service<
 const onSimpleEvent: ElectronPowerMonitor["Service"]["onSimpleEvent"] = (eventName, listener) =>
   Effect.acquireRelease(
     Effect.sync(() => {
-      Electron.powerMonitor.on(eventName as any, listener as any);
+      (
+        Electron.powerMonitor.on as (
+          event: string,
+          handler: (...args: unknown[]) => void,
+        ) => void
+      )(eventName, listener as unknown as (...args: unknown[]) => void);
     }),
     () =>
       Effect.sync(() => {
-        Electron.powerMonitor.removeListener(eventName as any, listener as any);
+        (
+          Electron.powerMonitor.removeListener as (
+            event: string,
+            handler: (...args: unknown[]) => void,
+          ) => void
+        )(eventName, listener as unknown as (...args: unknown[]) => void);
       }),
   ).pipe(Effect.asVoid);
 

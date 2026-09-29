@@ -89,11 +89,19 @@ const addScopedAppListener = <Args extends ReadonlyArray<unknown>>(
 ): Effect.Effect<void, never, Scope.Scope> =>
   Effect.acquireRelease(
     Effect.sync(() => {
-      Electron.app.on(eventName as any, listener as any);
+      (Electron.app.on as (event: string, handler: (...args: unknown[]) => void) => void)(
+        eventName,
+        listener as unknown as (...args: unknown[]) => void,
+      );
     }),
     () =>
       Effect.sync(() => {
-        Electron.app.removeListener(eventName as any, listener as any);
+        (
+          Electron.app.removeListener as (
+            event: string,
+            handler: (...args: unknown[]) => void,
+          ) => void
+        )(eventName, listener as unknown as (...args: unknown[]) => void);
       }),
   ).pipe(Effect.asVoid);
 

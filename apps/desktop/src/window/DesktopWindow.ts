@@ -285,7 +285,15 @@ function syncWindowAppearance(
       return;
     }
 
-    window.setBackgroundColor(getInitialWindowBackgroundColor(shouldUseDarkColors));
+    if (platform === "darwin") {
+      window.setVibrancy("under-window");
+      window.setBackgroundColor("#00000000");
+    } else if (platform === "win32") {
+      window.setBackgroundMaterial("acrylic");
+      window.setBackgroundColor("#00000000");
+    } else {
+      window.setBackgroundColor(getInitialWindowBackgroundColor(shouldUseDarkColors));
+    }
     const { titleBarOverlay } = getWindowTitleBarOptions(shouldUseDarkColors, platform);
     if (typeof titleBarOverlay === "object") {
       window.setTitleBarOverlay(titleBarOverlay);
@@ -394,6 +402,8 @@ export const make = Effect.gen(function* () {
     if (persistedBounds !== null && initialBounds === DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE) {
       yield* logWindowWarning("saved main window bounds could not be restored; using defaults");
     }
+    const isTranslucentPlatform =
+      environment.platform === "darwin" || environment.platform === "win32";
     const window = yield* electronWindow.create({
       ...initialBounds,
       minWidth: 840,
@@ -401,7 +411,14 @@ export const make = Effect.gen(function* () {
       show: false,
       autoHideMenuBar: true,
       ...(environment.platform === "darwin" ? { disableAutoHideCursor: true } : {}),
-      backgroundColor: getInitialWindowBackgroundColor(shouldUseDarkColors),
+      transparent: isTranslucentPlatform,
+      backgroundColor: isTranslucentPlatform
+        ? "#00000000"
+        : getInitialWindowBackgroundColor(shouldUseDarkColors),
+      ...(environment.platform === "darwin"
+        ? { vibrancy: "under-window", visualEffectState: "active" }
+        : {}),
+      ...(environment.platform === "win32" ? { backgroundMaterial: "acrylic" } : {}),
       ...iconOption,
       title: environment.displayName,
       ...getWindowTitleBarOptions(shouldUseDarkColors, environment.platform),

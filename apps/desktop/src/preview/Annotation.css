@@ -1,55 +1,55 @@
 @import "tailwindcss";
 
 @theme inline {
-  --font-sans: var(--t3-font-sans);
-  --font-mono: var(--t3-font-mono);
-  --color-background: var(--t3-background);
-  --color-foreground: var(--t3-foreground);
-  --color-popover: var(--t3-popover);
-  --color-popover-foreground: var(--t3-popover-foreground);
-  --color-primary: var(--t3-primary);
-  --color-primary-foreground: var(--t3-primary-foreground);
-  --color-muted: var(--t3-muted);
-  --color-muted-foreground: var(--t3-muted-foreground);
-  --color-accent: var(--t3-accent);
-  --color-accent-foreground: var(--t3-accent-foreground);
-  --color-border: var(--t3-border);
-  --color-input: var(--t3-input);
-  --color-ring: var(--t3-ring);
-  --radius-sm: calc(var(--t3-radius) - 4px);
-  --radius-md: calc(var(--t3-radius) - 2px);
-  --radius-lg: var(--t3-radius);
-  --radius-xl: calc(var(--t3-radius) + 4px);
-  --radius-2xl: calc(var(--t3-radius) + 8px);
+  --font-sans: var(--awen-font-sans);
+  --font-mono: var(--awen-font-mono);
+  --color-background: var(--awen-background);
+  --color-foreground: var(--awen-foreground);
+  --color-popover: var(--awen-popover);
+  --color-popover-foreground: var(--awen-popover-foreground);
+  --color-primary: var(--awen-primary);
+  --color-primary-foreground: var(--awen-primary-foreground);
+  --color-muted: var(--awen-muted);
+  --color-muted-foreground: var(--awen-muted-foreground);
+  --color-accent: var(--awen-accent);
+  --color-accent-foreground: var(--awen-accent-foreground);
+  --color-border: var(--awen-border);
+  --color-input: var(--awen-input);
+  --color-ring: var(--awen-ring);
+  --radius-sm: calc(var(--awen-radius) - 4px);
+  --radius-md: calc(var(--awen-radius) - 2px);
+  --radius-lg: var(--awen-radius);
+  --radius-xl: calc(var(--awen-radius) + 4px);
+  --radius-2xl: calc(var(--awen-radius) + 8px);
 }
 
 :host {
-  --t3-font-sans:
+  --awen-font-sans:
     "DM Sans Variable", "DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
     sans-serif;
-  --t3-font-mono:
+  --awen-font-mono:
     "SF Mono", "SFMono-Regular", "JetBrains Mono", Consolas, "Liberation Mono", Menlo, monospace;
-  --t3-radius: 0.625rem;
-  --t3-background: white;
-  --t3-foreground: oklch(0.269 0 0);
-  --t3-popover: white;
-  --t3-popover-foreground: oklch(0.269 0 0);
-  --t3-primary: oklch(0.488 0.217 264);
-  --t3-primary-foreground: white;
-  --t3-muted: rgb(0 0 0 / 4%);
-  --t3-muted-foreground: oklch(0.556 0 0);
-  --t3-accent: rgb(0 0 0 / 4%);
-  --t3-accent-foreground: oklch(0.269 0 0);
-  --t3-border: rgb(0 0 0 / 8%);
-  --t3-input: rgb(0 0 0 / 10%);
-  --t3-ring: oklch(0.488 0.217 264);
-  color: var(--t3-foreground);
-  font-family: var(--t3-font-sans);
+  --awen-radius: 0.625rem;
+  --awen-background: white;
+  --awen-foreground: oklch(0.269 0 0);
+  --awen-popover: white;
+  --awen-popover-foreground: oklch(0.269 0 0);
+  --awen-primary: oklch(0.488 0.217 264);
+  --awen-primary-foreground: white;
+  --awen-muted: rgb(0 0 0 / 4%);
+  --awen-muted-foreground: oklch(0.556 0 0);
+  --awen-accent: rgb(0 0 0 / 4%);
+  --awen-accent-foreground: oklch(0.269 0 0);
+  --awen-border: rgb(0 0 0 / 8%);
+  --awen-input: rgb(0 0 0 / 10%);
+  --awen-ring: oklch(0.488 0.217 264);
+  color: var(--awen-foreground);
+  font-family: var(--awen-font-sans);
 }
 
 * {
   box-sizing: border-box;
-  border-color: var(--t3-border);
+  border-color: var(--awen-border);
 }
 
 button,
@@ -63,6 +63,6 @@ button:focus-visible,
 input:focus-visible,
 select:focus-visible,
 textarea:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--t3-ring) 72%, transparent);
+  outline: 2px solid color-mix(in srgb, var(--awen-ring) 72%, transparent);
   outline-offset: 1px;
 }

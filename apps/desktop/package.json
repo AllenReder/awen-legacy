@@ -8,6 +8,7 @@
     "ensure:electron": "node scripts/ensure-electron-runtime.mjs",
     "start": "node scripts/start-electron.mjs",
     "build:bundle": "vp pack",
+    "package": "electron-builder",
     "typecheck": "tsc --noEmit",
     "test": "vp test run --passWithNoTests",
     "smoke-test": "node scripts/smoke-test.mjs"
@@ -39,5 +40,26 @@
     "tailwindcss": "catalog:",
     "vite-plus": "catalog:"
   },
-  "productName": "Awen"
+  "productName": "Awen",
+  "build": {
+    "appId": "com.allenreder.awen",
+    "productName": "Awen",
+    "directories": {
+      "output": "dist-package"
+    },
+    "files": [
+      "dist-electron/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "target": ["dmg"],
+      "category": "public.app-category.developer-tools"
+    },
+    "win": {
+      "target": ["nsis"]
+    },
+    "linux": {
+      "target": ["AppImage", "deb"]
+    }
+  }
 }

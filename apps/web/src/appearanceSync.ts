@@ -41,6 +41,15 @@ export function isNativeGlassPlatform(): boolean {
 }
 
 export async function syncNativeWindowGlass(enabled: boolean, blurRadius: number) {
+  if (typeof window !== "undefined" && window.desktopBridge?.setWindowGlassEnabled) {
+    try {
+      await window.desktopBridge.setWindowGlassEnabled(enabled);
+      await window.desktopBridge.setWindowBackgroundBlur?.(blurRadius);
+      return;
+    } catch {
+      // Desktop bridge invocation failed
+    }
+  }
   try {
     const { invoke } = await import("@tauri-apps/api/core");
     await invoke("set_window_glass_enabled", { enabled });

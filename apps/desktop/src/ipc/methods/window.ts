@@ -244,6 +244,35 @@ export const pickFolder = DesktopIpc.makeIpcMethod({
   }),
 });
 
+const PickFileInput = Schema.Struct({
+  filters: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        name: Schema.String,
+        extensions: Schema.Array(Schema.String),
+      }),
+    ),
+  ),
+  initialPath: Schema.optionalKey(Schema.String),
+});
+
+export const pickFile = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PICK_FILE_CHANNEL,
+  payload: Schema.optionalKey(PickFileInput),
+  result: Schema.NullOr(Schema.String),
+  handler: Effect.fn("desktop.ipc.window.pickFile")(function* (options) {
+    const dialog = yield* ElectronDialog.ElectronDialog;
+    const electronWindow = yield* ElectronWindow.ElectronWindow;
+    const selected = yield* dialog.pickFiles({
+      owner: yield* electronWindow.focusedMainOrFirst,
+      defaultPath: Option.fromNullishOr(options?.initialPath),
+      filters: options?.filters?.map((f) => ({ name: f.name, extensions: [...f.extensions] })) ?? [],
+      multiple: false,
+    });
+    return selected[0] ?? null;
+  }),
+});
+
 export const pickProjectFavicon = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PICK_PROJECT_FAVICON_CHANNEL,
   payload: Schema.UndefinedOr(Schema.String),
