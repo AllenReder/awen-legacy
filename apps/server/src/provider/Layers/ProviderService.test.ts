@@ -2710,6 +2710,121 @@ routing.layer("ProviderServiceLive routing", (it) => {
     }),
   );
 
+  it.effect("does not recover a session while a stop for the thread is in flight", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const runtimeRepository = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+      const threadId = asThreadId("thread-stop-race");
+
+      yield* provider.startSession(threadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId,
+        cwd: fixtureCwd("project-stop-race"),
+        runtimeMode: "full-access",
+      });
+
+      const stopEntered = yield* Deferred.make<void>();
+      const releaseStop = yield* Deferred.make<void>();
+      const sendLookup = yield* Deferred.make<void>();
+      // The stop's session lookup still sees the live session; the queued
+      // send's lookup happens after the adapter session is gone, which is
+      // exactly the window where the old code recovered and restarted it.
+      routing.codex.hasSession
+        .mockImplementationOnce(() => Effect.succeed(true))
+        .mockImplementationOnce(() =>
+          Deferred.succeed(sendLookup, undefined).pipe(Effect.as(false)),
+        );
+      const defaultStopSession = routing.codex.stopSession.getMockImplementation();
+      routing.codex.stopSession.mockImplementationOnce(() =>
+        Effect.gen(function* () {
+          // Mimic the real adapter ordering: the session disappears while the
+          // stop is still in flight, before `stopped` is persisted.
+          if (defaultStopSession) {
+            yield* defaultStopSession(threadId);
+          }
+          yield* Deferred.succeed(stopEntered, undefined);
+          yield* Deferred.await(releaseStop);
+        }),
+      );
+
+      const stopFiber = yield* provider.stopSession({ threadId }).pipe(Effect.forkChild);
+      yield* Deferred.await(stopEntered);
+      routing.codex.startSession.mockClear();
+      routing.codex.sendTurn.mockClear();
+
+      const sendFiber = yield* provider
+        .sendTurn({ threadId, input: "queued before stop", attachments: [] })
+        .pipe(Effect.flip, Effect.forkChild);
+      yield* Deferred.await(sendLookup);
+      // Let the queued send reach the thread lifecycle lock. It must park
+      // there instead of opening a competing session while the stop runs; the
+      // lock makes that hold no matter how the scheduler interleaves, so this
+      // cannot flake, while a missing lock reaches a session within a few
+      // scheduling turns.
+      for (let turn = 0; turn < 20; turn += 1) {
+        yield* Effect.yieldNow;
+      }
+      assert.equal(routing.codex.startSession.mock.calls.length, 0);
+
+      yield* Deferred.succeed(releaseStop, undefined);
+      yield* Fiber.join(stopFiber);
+      const refused = yield* Fiber.join(sendFiber);
+      assert.instanceOf(refused, ProviderValidationError);
+      assert.include(refused.message, "stopped while the operation was being routed");
+      assert.equal(routing.codex.startSession.mock.calls.length, 0);
+      assert.equal(routing.codex.sendTurn.mock.calls.length, 0);
+      const binding = yield* runtimeRepository.getByThreadId({ threadId });
+      assert.equal(Option.isSome(binding), true);
+      if (Option.isSome(binding)) {
+        assert.equal(binding.value.status, "stopped");
+      }
+    }),
+  );
+
+  it.effect("does not let a turn that starts during a stop resurrect the binding", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const runtimeRepository = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+      const threadId = asThreadId("thread-turn-stop-race");
+
+      yield* provider.startSession(threadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId,
+        cwd: fixtureCwd("project-turn-stop-race"),
+        runtimeMode: "full-access",
+      });
+
+      const turnEntered = yield* Deferred.make<void>();
+      const releaseTurn = yield* Deferred.make<void>();
+      routing.codex.sendTurn.mockImplementationOnce(() =>
+        Effect.gen(function* () {
+          yield* Deferred.succeed(turnEntered, undefined);
+          yield* Deferred.await(releaseTurn);
+          return { threadId, turnId: asTurnId(`turn-${String(threadId)}`) };
+        }),
+      );
+
+      const sendFiber = yield* provider
+        .sendTurn({ threadId, input: "racing turn", attachments: [] })
+        .pipe(Effect.flip, Effect.forkChild);
+      yield* Deferred.await(turnEntered);
+      // The stop completes while the adapter is still accepting the turn.
+      yield* provider.stopSession({ threadId });
+      yield* Deferred.succeed(releaseTurn, undefined);
+
+      const refused = yield* Fiber.join(sendFiber);
+      assert.instanceOf(refused, ProviderValidationError);
+      assert.include(refused.message, "stopped while the turn was starting");
+      const binding = yield* runtimeRepository.getByThreadId({ threadId });
+      assert.equal(Option.isSome(binding), true);
+      if (Option.isSome(binding)) {
+        assert.equal(binding.value.status, "stopped");
+      }
+    }),
+  );
+
   it.effect("routes explicit claudeAgent provider session starts to the claude adapter", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService.ProviderService;
