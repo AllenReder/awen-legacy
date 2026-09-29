@@ -5649,10 +5649,9 @@ export default function ChatView(props: ChatViewProps) {
     canOverrideServerThreadEnvMode && pendingServerThreadBranch !== undefined
       ? pendingServerThreadBranch
       : canOverrideServerThreadEnvMode
-        ? (draftThread?.branch ??
-          (envMode === "worktree"
-            ? (currentGitBranch ?? activeThread?.branch ?? null)
-            : (activeThread?.branch ?? null)))
+        ? envMode === "worktree"
+          ? (draftThread?.branch ?? currentGitBranch ?? activeThread?.branch ?? null)
+          : (activeThread?.branch ?? null)
         : (activeThread?.branch ?? null);
   const startFromOrigin = isLocalDraftThread
     ? (draftThread?.startFromOrigin ?? false)
@@ -7463,9 +7462,7 @@ export default function ChatView(props: ChatViewProps) {
     // worktree (worktreePath set), which must not create anything.
     const pendingNewWorktree =
       sendEnvMode === "worktree" && (canOverrideServerThreadEnvMode || !activeThread.worktreePath);
-    const effectiveBaseBranch =
-      activeThreadBranch ?? (pendingNewWorktree ? (currentGitBranch ?? null) : null);
-    const baseBranchForWorktree = isFirstMessage && pendingNewWorktree ? effectiveBaseBranch : null;
+    const baseBranchForWorktree = isFirstMessage && pendingNewWorktree ? activeThreadBranch : null;
 
     // In worktree mode, require an explicit base branch so we don't silently
     // fall back to local execution when branch selection is missing.
@@ -8852,15 +8849,15 @@ export default function ChatView(props: ChatViewProps) {
             ? (currentGitBranch ?? null)
             : undefined;
         setPendingServerThreadEnvMode(mode);
-        if (defaultBranch !== undefined && defaultBranch !== null) {
+        if (mode === "local") {
+          setPendingServerThreadBranch(undefined);
+        } else if (defaultBranch !== undefined && defaultBranch !== null) {
           setPendingServerThreadBranch(defaultBranch);
         }
         setDraftThreadContext(composerDraftTarget, {
           envMode: mode,
           worktreeBranchName,
-          ...(defaultBranch !== undefined && defaultBranch !== null
-            ? { branch: defaultBranch }
-            : {}),
+          branch: mode === "local" ? null : (defaultBranch ?? draftThread?.branch ?? null),
           startFromOrigin: resolveNewDraftStartFromOrigin({
             envMode: mode,
             newWorktreesStartFromOrigin: activeProjectSettings.settings.newWorktreesStartFromOrigin,
@@ -8874,6 +8871,7 @@ export default function ChatView(props: ChatViewProps) {
         setDraftThreadContext(composerDraftTarget, {
           envMode: mode,
           worktreeBranchName,
+          ...(mode === "local" ? { branch: null } : {}),
           startFromOrigin: resolveNewDraftStartFromOrigin({
             envMode: mode,
             newWorktreesStartFromOrigin: activeProjectSettings.settings.newWorktreesStartFromOrigin,

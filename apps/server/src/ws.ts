@@ -1661,34 +1661,14 @@ const makeWsRpcLayer = (
                     return matchedProject.id;
                   }
 
-                  // 2. Direct lookup by AwenProjectId (e.g. if candidateId is already an AwenProjectId).
+                  // 2. Direct lookup by AwenProjectId (e.g. for mocked unit tests).
                   const getProjectById = projectionSnapshotQuery.getAwenProjectById;
                   if (getProjectById) {
-                    const byIdDirect = yield* getProjectById(
-                      candidateId as unknown as AwenProjectId,
-                    ).pipe(Effect.catchCause(() => Effect.succeedNone));
-                    if (Option.isSome(byIdDirect)) {
-                      return byIdDirect.value.id;
-                    }
-
-                    const byIdConstructed = yield* getProjectById(
+                    const byId = yield* getProjectById(
                       awenProjectIdForAwenProject(candidateId),
                     ).pipe(Effect.catchCause(() => Effect.succeedNone));
-                    if (Option.isSome(byIdConstructed)) {
-                      return byIdConstructed.value.id;
-                    }
-                  }
-
-                  // 3. If candidateId is an orchestration ProjectId of a workspace,
-                  // getAwenProjectByAwenProjectId resolves the owning Awen navigation Project.
-                  const getProjectByAwenProjectId =
-                    projectionSnapshotQuery.getAwenProjectByAwenProjectId;
-                  if (getProjectByAwenProjectId) {
-                    const byAwenProjectId = yield* getProjectByAwenProjectId(candidateId).pipe(
-                      Effect.catchCause(() => Effect.succeedNone),
-                    );
-                    if (Option.isSome(byAwenProjectId)) {
-                      return byAwenProjectId.value.id;
+                    if (Option.isSome(byId)) {
+                      return byId.value.id;
                     }
                   }
 
