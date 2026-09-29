@@ -1,7 +1,11 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NetService from "@awen/shared/Net";
-import { HostProcessArchitecture, HostProcessPlatform } from "@awen/shared/hostProcess";
+import {
+  HostProcessArchitecture,
+  HostProcessEnvironment,
+  HostProcessPlatform,
+} from "@awen/shared/hostProcess";
 import {
   SERVER_RELEASE_CHECKSUMS_FILE,
   serverReleaseArchiveName,
@@ -32,6 +36,7 @@ import {
   SshMissingRunnerError,
   describeReadinessCause,
   issueRemotePairingToken,
+  localServerPackageCacheDir,
   launchOrReuseRemoteServer,
   parseRemotePackageStageHome,
   parseSshEnvironmentInspection,
@@ -43,6 +48,16 @@ import {
 const TEST_NODE_ENGINE_RANGE = "^22.16 || ^23.11 || >=24.10";
 
 describe("remote package upload", () => {
+  it.effect("uses USERPROFILE for the local server package cache on Windows", () =>
+    Effect.gen(function* () {
+      const cacheDir = yield* localServerPackageCacheDir("1.2.3").pipe(
+        Effect.provideService(HostProcessPlatform, "win32"),
+        Effect.provideService(HostProcessEnvironment, { USERPROFILE: "/home/awen" }),
+      );
+      assert.equal(cacheDir, "/home/awen/.awen/caches/server-packages/1.2.3");
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it("reads the absolute Awen home used by the remote staging command", () => {
     assert.equal(
       parseRemotePackageStageHome("login banner\nAWEN_STAGE_HOME=/home/allen/.awen\n"),
