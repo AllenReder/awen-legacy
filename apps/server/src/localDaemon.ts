@@ -266,40 +266,50 @@ export async function withLocalDaemonLaunchLock<A>(
   const ownerId = NodeCrypto.randomUUID();
   const deadline = Date.now() + LOCK_TIMEOUT_MS;
 
-  for (;;) {
+  // Publish a complete owner record atomically. Opening the shared path with
+  // "wx" first leaves an empty, unrecoverable lock if the launcher is killed
+  // before writeFile. A crash before link leaves only a private candidate;
+  // a crash after link leaves a valid PID record that dead-owner recovery handles.
+  const candidatePath = `${paths.launchLockPath}.${ownerId}`;
+  try {
+    const handle = await NodeFSP.open(candidatePath, "wx", 0o600);
     try {
-      const handle = await NodeFSP.open(paths.launchLockPath, "wx", 0o600);
-      try {
-        await handle.writeFile(`${JSON.stringify({ ownerId, pid: process.pid })}\n`, "utf8");
-        await handle.sync();
-      } finally {
-        await handle.close();
-      }
-      break;
-    } catch (cause) {
-      if (!(cause instanceof Error && "code" in cause && cause.code === "EEXIST")) {
-        throw cause;
-      }
-
-      const existing = await readLockRecord(paths.launchLockPath);
-      if (existing === undefined && Date.now() >= deadline) {
-        throw new LocalDaemonError(
-          "launch-lock-timeout",
-          "The local daemon launch lock is invalid and did not clear; refusing to start another daemon.",
-        );
-      }
-      if (existing && !isProcessAlive(existing.pid)) {
-        await NodeFSP.rm(paths.launchLockPath, { force: true });
-        continue;
-      }
-      if (Date.now() >= deadline) {
-        throw new LocalDaemonError(
-          "launch-lock-timeout",
-          "Another local daemon operation did not finish before the launch lock expired.",
-        );
-      }
-      await delay(LOCK_WAIT_MS);
+      await handle.writeFile(`${JSON.stringify({ ownerId, pid: process.pid })}\n`, "utf8");
+      await handle.sync();
+    } finally {
+      await handle.close();
     }
+    for (;;) {
+      try {
+        await NodeFSP.link(candidatePath, paths.launchLockPath);
+        break;
+      } catch (cause) {
+        if (!(cause instanceof Error && "code" in cause && cause.code === "EEXIST")) {
+          throw cause;
+        }
+
+        const existing = await readLockRecord(paths.launchLockPath);
+        if (existing === undefined && Date.now() >= deadline) {
+          throw new LocalDaemonError(
+            "launch-lock-timeout",
+            "The local daemon launch lock is invalid and did not clear; refusing to start another daemon.",
+          );
+        }
+        if (existing && !isProcessAlive(existing.pid)) {
+          await NodeFSP.rm(paths.launchLockPath, { force: true });
+          continue;
+        }
+        if (Date.now() >= deadline) {
+          throw new LocalDaemonError(
+            "launch-lock-timeout",
+            "Another local daemon operation did not finish before the launch lock expired.",
+          );
+        }
+        await delay(LOCK_WAIT_MS);
+      }
+    }
+  } finally {
+    await NodeFSP.rm(candidatePath, { force: true });
   }
 
   try {

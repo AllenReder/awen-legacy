@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as NodeTimersPromises from "node:timers/promises";
 import { beforeEach, vi } from "vite-plus/test";
 
 const { handleMock, netFetchMock, unhandleMock } = vi.hoisted(() => ({
@@ -139,6 +140,50 @@ describe("ElectronProtocol", () => {
       assert.isNull(forwardedHeaders.get("sec-fetch-site"));
       assert.deepEqual(unhandleMock.mock.calls, [["awen-dev"]]);
     }).pipe(Effect.provide(protocolLayer)),
+  );
+
+  it.effect("bounds concurrent dev module fetches and releases permits after failures", () =>
+    Effect.gen(function* () {
+      let handler: ((request: Request) => Promise<Response>) | undefined;
+      handleMock.mockImplementation((_scheme, nextHandler) => {
+        handler = nextHandler;
+      });
+      let active = 0;
+      let peak = 0;
+      netFetchMock.mockImplementation(async () => {
+        active++;
+        peak = Math.max(peak, active);
+        await NodeTimersPromises.setTimeout(5);
+        active--;
+        // Chromium rejects a burst rather than queueing it for custom protocols.
+        if (peak > 32) throw new Error("net::ERR_INSUFFICIENT_RESOURCES");
+        return new Response("export default 1", { headers: { "content-type": "text/javascript" } });
+      });
+      const protocol = yield* ElectronProtocol.ElectronProtocol;
+      yield* protocol.registerDesktopProtocol({
+        scheme: "awen-dev",
+        targetOrigin: new URL("http://127.0.0.1:5733/"),
+      });
+      const requests = Array.from(
+        { length: 100 },
+        (_, index) => new Request(`awen-dev://app/module-${index}.js`),
+      );
+      const responses = yield* Effect.promise(() =>
+        Promise.all(requests.map((request) => handler!(request))),
+      );
+      assert.equal(responses.length, 100);
+      assert.isAtMost(peak, 32);
+      assert.equal(active, 0);
+
+      netFetchMock.mockRejectedValue(new Error("offline"));
+      const failures = yield* Effect.promise(() =>
+        Promise.allSettled(requests.map((request) => handler!(request))),
+      );
+      assert.isTrue(failures.every((result) => result.status === "rejected"));
+      netFetchMock.mockResolvedValue(new Response("recovered"));
+      const recovered = yield* Effect.promise(() => handler!(requests[0]!));
+      assert.equal(yield* Effect.promise(() => recovered.text()), "recovered");
+    }).pipe(Effect.provide(protocolLayer), Effect.scoped),
   );
 
   it.effect("rejects custom protocol requests for another host", () =>

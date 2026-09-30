@@ -10,6 +10,7 @@ import Mime from "@effect/platform-node/Mime";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
+import * as Semaphore from "effect/Semaphore";
 
 import * as Electron from "electron";
 
@@ -226,6 +227,11 @@ async function fetchWithTransientRetry(url: string, init: RequestInit): Promise<
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const registered = yield* Ref.make(false);
+  // Unbundled Vite can fan out into thousands of module imports (for example,
+  // lucide icons). Custom-protocol net.fetch requests bypass Chromium's usual
+  // renderer request scheduling and fail with ERR_INSUFFICIENT_RESOURCES.
+  // Queue the upstream fetches instead of retrying the entire burst at once.
+  const proxyRequests = yield* Semaphore.make(32);
   const context = yield* Effect.context<FileSystem.FileSystem | Path.Path>();
   const runPromise = Effect.runPromiseWith(context);
 
@@ -255,7 +261,13 @@ export const make = Effect.gen(function* () {
                   contentSecurityPolicy,
                 );
               }
-              return proxyRequest(request, input.targetOrigin, contentSecurityPolicy);
+              return runPromise(
+                proxyRequests.withPermit(
+                  Effect.promise(() =>
+                    proxyRequest(request, input.targetOrigin, contentSecurityPolicy),
+                  ),
+                ),
+              );
             });
           },
           catch: (cause) => new ElectronProtocolRegistrationError({ scheme: input.scheme, cause }),

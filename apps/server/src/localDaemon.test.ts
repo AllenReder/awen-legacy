@@ -5,6 +5,7 @@ import * as NodeHttp from "node:http";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeNet from "node:net";
 import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 
 import { describe, expect, it } from "vite-plus/test";
 
@@ -87,6 +88,43 @@ describe("local daemon discovery", () => {
 });
 
 describe("local daemon launch lock", () => {
+  it("does not leave an unreadable lock if the launcher exits before writing its owner", async () => {
+    const root = await NodeFSP.mkdtemp(NodePath.join("/tmp", "awen-interrupted-lock-"));
+    const moduleUrl = new URL("./localDaemon.ts", import.meta.url).href;
+    const script = `
+      import fs from "node:fs/promises";
+      import { syncBuiltinESMExports } from "node:module";
+      const open = fs.open;
+      fs.open = async (...args) => {
+        const handle = await open(...args);
+        if (String(args[0]).includes("daemon-launch.lock")) process.exit(0);
+        return handle;
+      };
+      syncBuiltinESMExports();
+      const { withLocalDaemonLaunchLock } = await import(${JSON.stringify(moduleUrl)});
+      await withLocalDaemonLaunchLock(${JSON.stringify(root)}, async () => {});
+    `;
+    try {
+      const result = NodeChildProcess.spawnSync(
+        process.execPath,
+        ["--input-type=module", "-e", script],
+        {
+          cwd: NodeURL.fileURLToPath(new URL("../", import.meta.url)),
+          encoding: "utf8",
+          timeout: 10_000,
+        },
+      );
+      expect(result.status, result.stderr).toBe(0);
+      const lock = await NodeFSP.readFile(
+        deriveLocalDaemonPaths(root).launchLockPath,
+        "utf8",
+      ).catch(() => undefined);
+      expect(lock).toBeUndefined();
+    } finally {
+      await NodeFSP.rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("serializes concurrent work for one data root", async () => {
     const root = await NodeFSP.mkdtemp(NodePath.join("/tmp", "awen-local-daemon-lock-"));
     const order: string[] = [];
@@ -343,6 +381,7 @@ const writeFakeDaemon = async (
 import * as NodeFS from "node:fs/promises";
 import * as NodeHttp from "node:http";
 import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 
 const port = Number(process.env.AWEN_PORT);
 const origin = \`http://127.0.0.1:\${port}/\`;
