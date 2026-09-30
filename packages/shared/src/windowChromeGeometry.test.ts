@@ -24,10 +24,10 @@ describe("window chrome geometry", () => {
     { ...desktopMac, isMac: false },
   ])("removes native reservations when native macOS controls are absent: %j", (input) => {
     const geometry = resolveWindowChromeGeometry(input);
-    expect(geometry.triggerLeft).toBe(12);
-    expect(geometry.collapsedActionLeft).toBe(42);
-    expect(geometry.minimumSidebarWidth).toBe(76);
-    expect(geometry.collapsedTabsInset).toBe(89);
+    expect(geometry.triggerLeft).toBe(6);
+    expect(geometry.collapsedActionLeft).toBe(36);
+    expect(geometry.minimumSidebarWidth).toBe(70);
+    expect(geometry.collapsedTabsInset).toBe(83);
   });
 
   it.each([0.8, 1, 1.25, 2])(

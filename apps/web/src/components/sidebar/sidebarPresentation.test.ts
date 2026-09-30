@@ -112,8 +112,8 @@ it("uses exact shared endpoints and updates geometry without rebuilding the spri
     zoomFactor: 1,
   });
   update({ open: false, geometry: fullscreen });
-  expect(read("--sidebar-motion-action-left")).toBe(42);
-  expect(read("--sidebar-motion-tabs-inset")).toBe(89);
+  expect(read("--sidebar-motion-action-left")).toBe(36);
+  expect(read("--sidebar-motion-tabs-inset")).toBe(83);
   presentation.dispose();
 });
 

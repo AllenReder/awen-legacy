@@ -69,7 +69,7 @@ describe("window chrome store", () => {
     const { store, properties, emit } = fixture();
     store.initialize();
     emit({ zoomFactor: 2, fullscreen: true });
-    expect(store.getSnapshot().triggerLeft).toBe(12);
+    expect(store.getSnapshot().triggerLeft).toBe(6);
     expect(properties.get("--chrome-native-controls-left")).toBe("0px");
     emit({ zoomFactor: 2, fullscreen: false });
     expect(properties.get("--chrome-native-controls-left")).toBe("38px");
@@ -82,7 +82,7 @@ describe("window chrome store", () => {
   ])("does not reserve native space for isMac=%s bridge=%s", (isMac, withBridge) => {
     const { store, properties } = fixture(isMac, withBridge);
     store.initialize();
-    expect(store.getSnapshot().triggerLeft).toBe(12);
+    expect(store.getSnapshot().triggerLeft).toBe(6);
     expect(properties.get("--chrome-native-controls-left")).toBe("0px");
     store.dispose();
   });
