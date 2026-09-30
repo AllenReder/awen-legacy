@@ -116,27 +116,73 @@ function runChecked(command, args) {
   );
 }
 
+function isSchannelCurl() {
+  const result = NodeChildProcess.spawnSync("curl", ["--version"], {
+    encoding: "utf8",
+  });
+
+  return result.status === 0 && `${result.stdout}`.includes("Schannel");
+}
+
+function downloadElectronZip(version, zipPath) {
+  const url = `https://github.com/electron/electron/releases/download/v${version}/electron-v${version}-${hostPlatform}-${hostArch}.zip`;
+  const args = ["-fsSL"];
+
+  // Windows' Schannel-backed curl enforces certificate revocation (CRL/OCSP)
+  // and aborts the TLS handshake with CRYPT_E_REVOCATION_OFFLINE when the CA
+  // endpoint is unreachable, which is common on restricted networks. macOS'
+  // curl does not check revocation by default, so opt out on Schannel to match
+  // it. The backend probe keeps a non-Schannel Windows curl working, since that
+  // one rejects `--ssl-no-revoke`.
+  if (hostPlatform === "win32" && isSchannelCurl()) {
+    args.push("--ssl-no-revoke");
+  }
+
+  args.push(url, "-o", zipPath);
+  runChecked("curl", args);
+}
+
+function extractElectronZip(zipPath, destination) {
+  NodeFS.mkdirSync(destination, { recursive: true });
+
+  if (hostPlatform === "darwin") {
+    runChecked("ditto", ["-x", "-k", zipPath, destination]);
+    return;
+  }
+
+  if (hostPlatform === "win32") {
+    // `python3` is frequently the Microsoft Store stub on Windows, so use
+    // Windows PowerShell instead. The script is passed as UTF-16LE base64
+    // because paths containing spaces break `-Command` argument binding.
+    const script = [
+      "$ProgressPreference='SilentlyContinue'",
+      `Expand-Archive -LiteralPath '${zipPath.replaceAll("'", "''")}' -DestinationPath '${destination.replaceAll("'", "''")}' -Force`,
+    ].join("; ");
+
+    runChecked("powershell", [
+      "-NoProfile",
+      "-NonInteractive",
+      "-EncodedCommand",
+      Buffer.from(script, "utf16le").toString("base64"),
+    ]);
+    return;
+  }
+
+  runChecked("python3", [
+    "-c",
+    "import os, sys, zipfile; os.makedirs(sys.argv[2], exist_ok=True); zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])",
+    zipPath,
+    destination,
+  ]);
+}
+
 function installElectronRuntime(electronDir, version) {
   const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-electron-"));
   const zipPath = NodePath.join(tempDir, `electron-v${version}-${hostPlatform}-${hostArch}.zip`);
 
   try {
-    runChecked("curl", [
-      "-fsSL",
-      `https://github.com/electron/electron/releases/download/v${version}/electron-v${version}-${hostPlatform}-${hostArch}.zip`,
-      "-o",
-      zipPath,
-    ]);
-    if (hostPlatform === "darwin") {
-      runChecked("ditto", ["-x", "-k", zipPath, NodePath.join(electronDir, "dist")]);
-    } else {
-      runChecked("python3", [
-        "-c",
-        "import os, sys, zipfile; os.makedirs(sys.argv[2], exist_ok=True); zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])",
-        zipPath,
-        NodePath.join(electronDir, "dist"),
-      ]);
-    }
+    downloadElectronZip(version, zipPath);
+    extractElectronZip(zipPath, NodePath.join(electronDir, "dist"));
   } finally {
     NodeFS.rmSync(tempDir, { recursive: true, force: true });
   }
