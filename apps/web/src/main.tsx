@@ -10,8 +10,12 @@ import {
   syncDocumentElectronPlatformClasses,
   syncDocumentWindowControlsOverlayClass,
 } from "./lib/windowControlsOverlay";
+import { initializeWindowChrome } from "./lib/windowChrome";
 import { AppRoot } from "./AppRoot";
 import { clearChunkReloadGuard, reloadOnceForChunkLoadError } from "./lib/chunkReloadGuard";
+
+const disposeWindowChrome = initializeWindowChrome();
+import.meta.hot?.dispose(disposeWindowChrome);
 
 // Native shells load the app from a file-backed asset protocol, so hash
 // history avoids path resolution issues. Browser dev keeps normal URLs.

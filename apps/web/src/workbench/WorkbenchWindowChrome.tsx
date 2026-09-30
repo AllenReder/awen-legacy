@@ -180,7 +180,7 @@ export function WorkbenchWindowChrome({ snapshot, projects }: WorkbenchWindowChr
   return (
     <MaterialSurface
       kind="topbar"
-      className="wco:pr-[var(--workspace-native-controls-inset)] drag-region flex h-[var(--workbench-titlebar-height,36px)] w-full shrink-0 items-center border-b border-[var(--material-edge)] z-30"
+      className="wco:pr-[var(--workspace-native-controls-inset)] drag-region flex h-[var(--workspace-topbar-height)] w-full shrink-0 items-center border-b border-[var(--material-edge)] z-30"
       data-workbench-window-chrome=""
       onDoubleClick={handleTopbarDoubleClick}
     >

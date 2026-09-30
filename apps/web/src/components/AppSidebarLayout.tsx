@@ -5,13 +5,18 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  useCallback,
   useSyncExternalStore,
   type CSSProperties,
   type ReactNode,
 } from "react";
 import { useCanGoBack, useLocation, useNavigate } from "@tanstack/react-router";
 
-import { getLocalStorageItem, removeLocalStorageItem } from "../hooks/useLocalStorage";
+import {
+  getLocalStorageItem,
+  removeLocalStorageItem,
+  setLocalStorageItem,
+} from "../hooks/useLocalStorage";
 import { PanelLeftCloseIcon, PanelLeftIcon } from "lucide-react";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import { SidebarTitlebarButton } from "./sidebar/SidebarTitlebarControl";
@@ -21,7 +26,8 @@ import { getPrefersReducedMotion } from "../workbench/workbenchMotion";
 import { useClientSettings } from "../hooks/useSettings";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { isMacPlatform } from "../lib/utils";
-import { resolveWorkbenchTitlebarStyle } from "../lib/windowControlsOverlay";
+import { useWindowChromeGeometry } from "../lib/windowChrome";
+import type { WindowChromeGeometry } from "@awen/shared/windowChromeGeometry";
 import { primaryServerKeybindingsAtom } from "../state/server";
 import {
   PanelAnimationSuppressionProvider,
@@ -37,18 +43,15 @@ import {
   resolveInitialThreadSidebarWidth,
   resolveThreadSidebarMaximumWidth,
   THREAD_MAIN_CONTENT_MIN_WIDTH,
-  THREAD_SIDEBAR_MIN_WIDTH,
   THREAD_SIDEBAR_WIDTH_STORAGE_KEY,
 } from "./threadSidebarWidth";
 import {
   Sidebar,
   SidebarProvider,
   SidebarRail,
-  SidebarTrigger,
   useSidebar,
   useSidebarVisibility,
 } from "./ui/sidebar";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
 function subscribeToViewportWidth(onChange: () => void): () => void {
   window.addEventListener("resize", onChange);
@@ -59,15 +62,12 @@ function readViewportWidth(): number {
   return window.innerWidth;
 }
 
-function readInitialThreadSidebarWidth(): number {
+function readPreferredThreadSidebarWidth(): number | null {
   try {
-    return resolveInitialThreadSidebarWidth(
-      getLocalStorageItem(THREAD_SIDEBAR_WIDTH_STORAGE_KEY, Schema.Finite),
-      window.innerWidth,
-    );
+    return getLocalStorageItem(THREAD_SIDEBAR_WIDTH_STORAGE_KEY, Schema.Finite);
   } catch (error) {
     console.error("Could not read persisted thread sidebar width.", error);
-    return resolveInitialThreadSidebarWidth(null, window.innerWidth);
+    return null;
   }
 }
 
@@ -101,12 +101,10 @@ function SidebarControl() {
 
   return (
     <div
-      className="pointer-events-none fixed top-0 z-50 flex h-[var(--workbench-titlebar-height,36px)] items-center [-webkit-app-region:no-drag]"
+      className="pointer-events-none fixed top-0 z-50 flex h-[var(--workspace-topbar-height)] items-center [-webkit-app-region:no-drag]"
       data-sidebar-control=""
       style={{
-        left: isMac
-          ? "var(--sidebar-controls-left, 76px)"
-          : "var(--sidebar-controls-left-win, 12px)",
+        left: "var(--sidebar-trigger-left)",
       }}
     >
       <SidebarTitlebarButton
@@ -137,31 +135,42 @@ function SidebarMotionController({
   enabled,
   width,
   durationMs,
+  geometry,
+  onPresentationReady,
 }: {
   enabled: boolean;
   width: number;
   durationMs: number;
+  geometry: WindowChromeGeometry;
+  onPresentationReady: (presentation: ReturnType<typeof createSidebarPresentation>) => void;
 }) {
   const open = useSidebarVisibility();
   const marker = useRef<HTMLSpanElement>(null);
-  const motion = useRef<ReturnType<typeof createSidebarPresentation> | null>(null);
+  const presentation = useRef<ReturnType<typeof createSidebarPresentation> | null>(null);
+  const latest = useRef({ geometry, open });
+  useLayoutEffect(() => {
+    latest.current = { geometry, open };
+  }, [geometry, open]);
   useLayoutEffect(() => {
     const wrapper = marker.current?.closest<HTMLElement>("[data-slot='sidebar-wrapper']");
     if (!wrapper) return;
-    motion.current = createSidebarPresentation(wrapper, isMacPlatform(navigator.platform), open);
+    const current = latest.current;
+    presentation.current = createSidebarPresentation(wrapper, current.geometry, current.open);
+    onPresentationReady(presentation.current);
     return () => {
-      motion.current?.dispose();
-      motion.current = null;
+      presentation.current?.dispose();
+      presentation.current = null;
     };
-  }, []);
+  }, [onPresentationReady]);
   useLayoutEffect(() => {
-    motion.current?.update({
+    presentation.current?.update({
       open,
       enabled: enabled && !getPrefersReducedMotion(),
       width,
       durationMs,
+      geometry,
     });
-  }, [durationMs, enabled, open, width]);
+  }, [durationMs, enabled, geometry, open, width]);
   return <span ref={marker} hidden />;
 }
 
@@ -178,35 +187,49 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
   const panelAnimationsSuppressed = usePanelNavigationSuppression(pathname);
   const routePanelAnimationsActive = panelAnimationsActive && !panelAnimationsSuppressed;
   const isOnSettings = pathname === "/settings" || pathname.startsWith("/settings/");
-  const isMacosDesktop = window.desktopBridge !== undefined && isMacPlatform(navigator.platform);
-  const [sidebarWidth, setSidebarWidth] = useState(readInitialThreadSidebarWidth);
+  const geometry = useWindowChromeGeometry();
+  const sidebarMotion = useRef<ReturnType<typeof createSidebarPresentation> | null>(null);
+  const onPresentationReady = useCallback(
+    (presentation: ReturnType<typeof createSidebarPresentation>) => {
+      sidebarMotion.current = presentation;
+    },
+    [],
+  );
+  const [preferredSidebarWidth, setPreferredSidebarWidth] = useState(
+    readPreferredThreadSidebarWidth,
+  );
   // Subscribed rather than read once: the clamp must track live window size,
   // and a clamped drag ends with an unchanged width, which skips the re-render
   // that would otherwise refresh a render-time snapshot.
   const viewportWidth = useSyncExternalStore(subscribeToViewportWidth, readViewportWidth);
-  const sidebarMaximumWidth = resolveThreadSidebarMaximumWidth(viewportWidth);
+  const sidebarMaximumWidth = resolveThreadSidebarMaximumWidth(
+    viewportWidth,
+    geometry.minimumSidebarWidth,
+  );
+  const sidebarWidth = resolveInitialThreadSidebarWidth(
+    preferredSidebarWidth,
+    viewportWidth,
+    geometry.minimumSidebarWidth,
+  );
+  const commitSidebarWidth = (width: number) => {
+    setPreferredSidebarWidth(width);
+    try {
+      setLocalStorageItem(THREAD_SIDEBAR_WIDTH_STORAGE_KEY, width, Schema.Finite);
+    } catch (error) {
+      console.error("Could not persist sidebar width.", error);
+    }
+  };
   const resetSidebarWidth = () => {
     try {
       removeLocalStorageItem(THREAD_SIDEBAR_WIDTH_STORAGE_KEY);
     } catch (error) {
       console.error("Could not clear persisted thread sidebar width.", error);
     }
-    setSidebarWidth(resolveInitialThreadSidebarWidth(null, viewportWidth));
+    setPreferredSidebarWidth(null);
   };
-  const [isWindowFullscreen, setIsWindowFullscreen] = useState(() => {
-    const getWindowFullscreenState = window.desktopBridge?.getWindowFullscreenState;
-    return isMacosDesktop && typeof getWindowFullscreenState === "function"
-      ? getWindowFullscreenState()
-      : false;
-  });
   const sidebarProviderStyle = {
     "--sidebar-width": `${sidebarWidth}px`,
     "--panel-animation-duration": `${panelAnimationDurationMs}ms`,
-    ...resolveWorkbenchTitlebarStyle({
-      hasDesktopBridge: window.desktopBridge !== undefined,
-      platform: navigator.platform,
-      fullscreen: isWindowFullscreen,
-    }),
   } as CSSProperties;
 
   useLayoutEffect(() => {
@@ -217,23 +240,6 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
     document.documentElement.dataset.motionOff =
       animationDurationScale === 0 || prefersReducedMotion ? "true" : "false";
   }, [animationDurationScale, prefersReducedMotion]);
-
-  useEffect(() => {
-    if (!isMacosDesktop) return;
-    const bridge = window.desktopBridge;
-    if (!bridge) return;
-    const { getWindowFullscreenState, onWindowFullscreenStateChange } = bridge;
-    if (
-      typeof getWindowFullscreenState !== "function" ||
-      typeof onWindowFullscreenStateChange !== "function"
-    ) {
-      return;
-    }
-
-    const unsubscribe = onWindowFullscreenStateChange(setIsWindowFullscreen);
-    setIsWindowFullscreen(getWindowFullscreenState());
-    return unsubscribe;
-  }, [isMacosDesktop]);
 
   useEffect(() => {
     const onMenuAction = window.desktopBridge?.onMenuAction;
@@ -302,6 +308,8 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
             enabled={routePanelAnimationsActive}
             width={sidebarWidth}
             durationMs={panelAnimationDurationMs}
+            geometry={geometry}
+            onPresentationReady={onPresentationReady}
           />
           <ProjectProjectionRetention />
           <Sidebar
@@ -311,12 +319,12 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
             className="border-0! text-sidebar-foreground"
             resizable={{
               maxWidth: sidebarMaximumWidth,
-              minWidth: THREAD_SIDEBAR_MIN_WIDTH,
+              minWidth: geometry.minimumSidebarWidth,
               shouldAcceptWidth: ({ currentWidth, nextWidth, wrapper }) =>
                 nextWidth <= currentWidth ||
                 wrapper.clientWidth - nextWidth >= THREAD_MAIN_CONTENT_MIN_WIDTH,
-              storageKey: THREAD_SIDEBAR_WIDTH_STORAGE_KEY,
-              onResize: setSidebarWidth,
+              onResize: commitSidebarWidth,
+              onResizeFrame: (width) => sidebarMotion.current?.resize(width),
             }}
           >
             {/* Paint the translucent edge over the tint, not over the bare Glass Stage. */}

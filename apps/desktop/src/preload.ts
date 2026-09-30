@@ -7,8 +7,9 @@ import type {
   DesktopPreviewTabState,
   DesktopSnapShotEvent,
   DesktopUpdateChannel,
+  WindowChromeMetrics,
 } from "@awen/contracts";
-import { contextBridge, ipcRenderer, webFrame, webUtils } from "electron";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
 
 import * as IpcChannels from "./ipc/channels.ts";
 
@@ -33,19 +34,6 @@ function isSnapShotEvent(value: unknown): value is DesktopSnapShotEvent {
 const clientPlatform = process.platform;
 const nativeTrackpadSupported =
   clientPlatform === "darwin" && ipcRenderer.sendSync("desktop:get-trackpad-supported") === true;
-
-if (clientPlatform === "darwin") {
-  // Native window buttons do not scale with Chromium zoom. Keep their reserved
-  // space in native points, including when a zoomed page is reloaded.
-  const syncWindowControlInset = () => {
-    document.documentElement.style.setProperty(
-      "--desktop-window-controls-inset",
-      `${90 / webFrame.getZoomFactor()}px`,
-    );
-  };
-  window.addEventListener("DOMContentLoaded", syncWindowControlInset, { once: true });
-  window.addEventListener("resize", syncWindowControlInset);
-}
 
 function unwrapEnsureSshEnvironmentResult(result: unknown) {
   if (
@@ -299,6 +287,24 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     return () => {
       ipcRenderer.removeListener(IpcChannels.QUIT_SHORTCUT_CHANNEL, wrappedListener);
     };
+  },
+  getWindowChromeMetrics: () => ipcRenderer.sendSync(IpcChannels.GET_WINDOW_CHROME_METRICS_CHANNEL),
+  onWindowChromeMetricsChange: (listener) => {
+    const wrappedListener = (_event: Electron.IpcRendererEvent, value: unknown) => {
+      if (typeof value !== "object" || value === null) return;
+      const metrics = value as Partial<WindowChromeMetrics>;
+      if (
+        typeof metrics.zoomFactor !== "number" ||
+        !Number.isFinite(metrics.zoomFactor) ||
+        metrics.zoomFactor <= 0 ||
+        typeof metrics.fullscreen !== "boolean"
+      )
+        return;
+      listener({ zoomFactor: metrics.zoomFactor, fullscreen: metrics.fullscreen });
+    };
+    ipcRenderer.on(IpcChannels.WINDOW_CHROME_METRICS_CHANNEL, wrappedListener);
+    return () =>
+      ipcRenderer.removeListener(IpcChannels.WINDOW_CHROME_METRICS_CHANNEL, wrappedListener);
   },
   getWindowFullscreenState: () =>
     ipcRenderer.sendSync(IpcChannels.GET_WINDOW_FULLSCREEN_STATE_CHANNEL) === true,

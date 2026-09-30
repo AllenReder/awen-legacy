@@ -9,6 +9,7 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 
 import * as Electron from "electron";
+import { WINDOW_CHROME } from "@awen/shared/windowChromeGeometry";
 
 import { type DesktopSnapShotEvent, DEFAULT_CLIENT_SETTINGS } from "@awen/contracts";
 
@@ -27,6 +28,7 @@ import {
   TRACKPAD_SCROLL_END_CHANNEL,
   TRACKPAD_SCROLL_PHASE_CHANNEL,
   WINDOW_FULLSCREEN_STATE_CHANNEL,
+  WINDOW_CHROME_METRICS_CHANNEL,
 } from "../ipc/channels.ts";
 import * as PreviewManager from "../preview/Manager.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
@@ -45,21 +47,22 @@ export function isWindowGlassSupported(
   return major > 10 || (major === 10 && build >= 22621);
 }
 
-const TITLEBAR_HEIGHT = 36;
-// Matches --workspace-topbar-height in apps/web/src/index.css. Native macOS
-// buttons are 14 points tall and do not scale with the renderer's zoom.
-const MACOS_WORKSPACE_TOPBAR_HEIGHT = 36;
-const MACOS_WINDOW_BUTTON_RADIUS = 7;
-const MACOS_WINDOW_BUTTON_LEFT_INSET = 10;
-
-function syncMacosWindowButtons(window: Electron.BrowserWindow): void {
+export function syncMacosWindowButtons(window: Electron.BrowserWindow): void {
   if (window.isDestroyed() || window.isFullScreen()) return;
   window.setWindowButtonPosition({
-    x: MACOS_WINDOW_BUTTON_LEFT_INSET,
+    x: WINDOW_CHROME.macWindowButtonLeftPoints,
     y: Math.round(
-      (MACOS_WORKSPACE_TOPBAR_HEIGHT * window.webContents.getZoomFactor()) / 2 -
-        MACOS_WINDOW_BUTTON_RADIUS,
+      (WINDOW_CHROME.titlebarHeight * window.webContents.getZoomFactor()) / 2 -
+        WINDOW_CHROME.macWindowButtonRadiusPoints,
     ),
+  });
+}
+
+function sendWindowChromeMetrics(window: Electron.BrowserWindow): void {
+  if (window.isDestroyed()) return;
+  window.webContents.send(WINDOW_CHROME_METRICS_CHANNEL, {
+    zoomFactor: window.webContents.getZoomFactor(),
+    fullscreen: window.isFullScreen(),
   });
 }
 
@@ -275,8 +278,8 @@ function getWindowTitleBarOptions(
     return {
       titleBarStyle: "hiddenInset",
       trafficLightPosition: {
-        x: MACOS_WINDOW_BUTTON_LEFT_INSET,
-        y: MACOS_WORKSPACE_TOPBAR_HEIGHT / 2 - MACOS_WINDOW_BUTTON_RADIUS,
+        x: WINDOW_CHROME.macWindowButtonLeftPoints,
+        y: WINDOW_CHROME.titlebarHeight / 2 - WINDOW_CHROME.macWindowButtonRadiusPoints,
       },
     };
   }
@@ -285,7 +288,7 @@ function getWindowTitleBarOptions(
     titleBarStyle: "hidden",
     titleBarOverlay: {
       color: TITLEBAR_COLOR,
-      height: TITLEBAR_HEIGHT,
+      height: WINDOW_CHROME.titlebarHeight,
       symbolColor: shouldUseDarkColors ? TITLEBAR_DARK_SYMBOL_COLOR : TITLEBAR_LIGHT_SYMBOL_COLOR,
     },
   };
@@ -767,15 +770,18 @@ export const make = Effect.gen(function* () {
       runFork(flushBoundsPersist);
     });
 
-    if (environment.platform === "darwin") {
-      window.on("enter-full-screen", () => {
+    window.on("enter-full-screen", () => {
+      if (environment.platform === "darwin")
         window.webContents.send(WINDOW_FULLSCREEN_STATE_CHANNEL, true);
-      });
-      window.on("leave-full-screen", () => {
+      sendWindowChromeMetrics(window);
+    });
+    window.on("leave-full-screen", () => {
+      if (environment.platform === "darwin") {
         syncMacosWindowButtons(window);
         window.webContents.send(WINDOW_FULLSCREEN_STATE_CHANNEL, false);
-      });
-    }
+      }
+      sendWindowChromeMetrics(window);
+    });
 
     let developmentLoadRetryIndex = 0;
     let developmentLoadRetryFiber: Fiber.Fiber<void, never> | undefined;
@@ -834,6 +840,7 @@ export const make = Effect.gen(function* () {
       developmentLoadRetryIndex = 0;
       window.setTitle(environment.displayName);
       if (environment.platform === "darwin") syncMacosWindowButtons(window);
+      sendWindowChromeMetrics(window);
     });
     window.webContents.on(
       "did-fail-load",
@@ -1105,6 +1112,7 @@ export const make = Effect.gen(function* () {
         direction === "reset" ? 0 : webContents.getZoomLevel() + (direction === "in" ? 0.5 : -0.5),
       );
       if (environment.platform === "darwin") syncMacosWindowButtons(window.value);
+      sendWindowChromeMetrics(window.value);
       // Chromium pushes the new level down to embedded guests, which would zoom
       // the previewed page along with the app UI. The preview browser keeps its
       // own zoom, so put each guest back where the preview left it.

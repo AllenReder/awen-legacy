@@ -1,5 +1,6 @@
 import {
   ContextMenuItemSchema,
+  WindowChromeMetricsSchema,
   DesktopAppBrandingSchema,
   DesktopEnvironmentBootstrapSchema,
   DesktopThemeSchema,
@@ -79,6 +80,24 @@ export const getSystemLocale = DesktopIpc.makeSyncIpcMethod({
   handler: Effect.fn("desktop.ipc.window.getSystemLocale")(function* () {
     const electronApp = yield* ElectronApp.ElectronApp;
     return yield* electronApp.systemLocale;
+  }),
+});
+
+export const getWindowChromeMetrics = DesktopIpc.makeSyncIpcMethod({
+  channel: IpcChannels.GET_WINDOW_CHROME_METRICS_CHANNEL,
+  result: WindowChromeMetricsSchema,
+  handler: Effect.fn("desktop.ipc.window.getWindowChromeMetrics")(function* () {
+    const electronWindow = yield* ElectronWindow.ElectronWindow;
+    const window = yield* electronWindow.currentMainOrFirst;
+    if (Option.isNone(window) || window.value.isDestroyed())
+      return { zoomFactor: 1, fullscreen: false };
+    // Renderer resize also observes direct Chromium zoom changes outside zoomMain.
+    const environment = yield* DesktopEnvironment.DesktopEnvironment;
+    if (environment.platform === "darwin") DesktopWindow.syncMacosWindowButtons(window.value);
+    return {
+      zoomFactor: window.value.webContents.getZoomFactor(),
+      fullscreen: window.value.isFullScreen(),
+    };
   }),
 });
 

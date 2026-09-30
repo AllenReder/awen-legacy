@@ -4,7 +4,8 @@ The client shell adopts a full-height, left-through ("贯通式") Sidebar from t
 
 ## Status
 
-Accepted.
+Accepted. ADR-0032 supersedes the unified spacing unit and fixed minimum
+Sidebar width below; the full-height Sidebar and dual-chrome arrangement remain.
 
 ## Context
 

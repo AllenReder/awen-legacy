@@ -14,7 +14,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vp test run",
     "smoke-test": "node scripts/smoke-test.mjs",
-    "check:appearance": "node scripts/check-renderer-appearance.mjs"
+    "check:appearance": "node scripts/check-renderer-appearance.mjs",
+    "check:chrome": "node scripts/check-renderer-appearance.mjs --chrome-only"
   },
   "dependencies": {
     "@awen/client-runtime": "workspace:*",

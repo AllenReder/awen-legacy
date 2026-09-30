@@ -33,12 +33,9 @@ export function DesktopAuthWindowChrome({ children, operations }: DesktopAuthWin
       <MaterialSurface
         kind="topbar"
         style={{
-          paddingLeft:
-            window.desktopBridge?.getClientPlatform?.() === "darwin"
-              ? "var(--desktop-window-controls-inset, 80px)"
-              : undefined,
+          paddingLeft: "var(--chrome-native-controls-left)",
         }}
-        className="wco:pr-[var(--workspace-native-controls-inset)] drag-region fixed inset-x-0 top-0 z-50 flex h-[var(--workbench-titlebar-height,36px)] items-center border-b border-[var(--material-edge)]"
+        className="wco:pr-[var(--workspace-native-controls-inset)] drag-region fixed inset-x-0 top-0 z-50 flex h-[var(--workspace-topbar-height)] items-center border-b border-[var(--material-edge)]"
         data-slot="desktop-auth-window-chrome"
         onDoubleClick={(event) => handleTopbarDoubleClick(event, operations)}
       >

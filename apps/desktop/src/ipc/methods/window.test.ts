@@ -23,11 +23,13 @@ import * as DesktopBackendManager from "../../backend/DesktopBackendManager.ts";
 import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
 import * as ElectronDialog from "../../electron/ElectronDialog.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
+import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
 import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
 import type { DesktopSettings } from "../../settings/DesktopAppSettings.ts";
 import {
   getLocalEnvironmentBootstraps,
   getWindowFullscreenState,
+  getWindowChromeMetrics,
   pasteAsText,
   pickProjectFavicon,
   probeRemoteEditors,
@@ -150,6 +152,93 @@ describe("getLocalEnvironmentBootstraps", () => {
       assert.deepEqual(result, []);
     }).pipe(Effect.provide(DesktopBackendPool.layerTest([stoppedInstance])));
   });
+});
+
+describe("getWindowChromeMetrics", () => {
+  it.effect("reads native zoom and realigns titlebar controls", () => {
+    const window = {
+      isDestroyed: () => false,
+      isFullScreen: () => false,
+      webContents: { getZoomFactor: () => 1.25 },
+      setWindowButtonPosition: vi.fn(),
+    } as unknown as Electron.BrowserWindow;
+    return Effect.gen(function* () {
+      assert.deepEqual(yield* getWindowChromeMetrics.handler(), {
+        zoomFactor: 1.25,
+        fullscreen: false,
+      });
+      assert.deepEqual((window.setWindowButtonPosition as ReturnType<typeof vi.fn>).mock.lastCall, [
+        { x: 10, y: 16 },
+      ]);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.mock(ElectronWindow.ElectronWindow)({
+            currentMainOrFirst: Effect.succeedSome(window),
+          }),
+          Layer.succeed(
+            DesktopEnvironment.DesktopEnvironment,
+            DesktopEnvironment.DesktopEnvironment.of({
+              platform: "darwin",
+            } as DesktopEnvironment.DesktopEnvironment["Service"]),
+          ),
+        ),
+      ),
+    );
+  });
+
+  it.effect("reports fullscreen without moving hidden titlebar controls", () => {
+    const window = {
+      isDestroyed: () => false,
+      isFullScreen: () => true,
+      webContents: { getZoomFactor: () => 1 },
+      setWindowButtonPosition: vi.fn(),
+    } as unknown as Electron.BrowserWindow;
+    return Effect.gen(function* () {
+      assert.deepEqual(yield* getWindowChromeMetrics.handler(), {
+        zoomFactor: 1,
+        fullscreen: true,
+      });
+      assert.equal(
+        (window.setWindowButtonPosition as ReturnType<typeof vi.fn>).mock.calls.length,
+        0,
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.mock(ElectronWindow.ElectronWindow)({
+            currentMainOrFirst: Effect.succeedSome(window),
+          }),
+          Layer.succeed(
+            DesktopEnvironment.DesktopEnvironment,
+            DesktopEnvironment.DesktopEnvironment.of({
+              platform: "darwin",
+            } as DesktopEnvironment.DesktopEnvironment["Service"]),
+          ),
+        ),
+      ),
+    );
+  });
+  it.effect("uses safe defaults when no main window exists", () =>
+    Effect.gen(function* () {
+      assert.deepEqual(yield* getWindowChromeMetrics.handler(), {
+        zoomFactor: 1,
+        fullscreen: false,
+      });
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.mock(ElectronWindow.ElectronWindow)({ currentMainOrFirst: Effect.succeedNone }),
+          Layer.succeed(
+            DesktopEnvironment.DesktopEnvironment,
+            DesktopEnvironment.DesktopEnvironment.of({
+              platform: "darwin",
+            } as DesktopEnvironment.DesktopEnvironment["Service"]),
+          ),
+        ),
+      ),
+    ),
+  );
 });
 
 describe("getWindowFullscreenState", () => {

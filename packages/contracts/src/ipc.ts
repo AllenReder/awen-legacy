@@ -1311,6 +1311,12 @@ export interface DesktopTrackpadInput {
   readonly y: number;
 }
 
+export const WindowChromeMetricsSchema = Schema.Struct({
+  zoomFactor: Schema.Finite.check(Schema.isGreaterThan(0)),
+  fullscreen: Schema.Boolean,
+});
+export type WindowChromeMetrics = typeof WindowChromeMetricsSchema.Type;
+
 export interface DesktopBridge {
   getAppBranding: () => DesktopAppBranding | null;
   /** The desktop client's OS platform, read from Electron's preload process. */
@@ -1449,6 +1455,8 @@ export interface DesktopBridge {
    * them.
    */
   onQuitShortcut?: (listener: (event: QuitShortcutHintEvent) => void) => () => void;
+  getWindowChromeMetrics: () => WindowChromeMetrics;
+  onWindowChromeMetricsChange: (listener: (metrics: WindowChromeMetrics) => void) => () => void;
   getWindowFullscreenState: () => boolean;
   onWindowFullscreenStateChange: (listener: (fullscreen: boolean) => void) => () => void;
   getUpdateState: () => Promise<DesktopUpdateState>;

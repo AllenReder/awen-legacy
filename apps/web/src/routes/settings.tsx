@@ -161,7 +161,7 @@ function SettingsContentLayout() {
     >
       <MaterialSurface
         kind="topbar"
-        className="drag-region flex h-[var(--workbench-titlebar-height,36px)] shrink-0 items-center border-b border-[var(--material-edge)]"
+        className="drag-region flex h-[var(--workspace-topbar-height)] shrink-0 items-center border-b border-[var(--material-edge)]"
         onDoubleClick={handleTopbarDoubleClick}
       >
         <TopbarInset />

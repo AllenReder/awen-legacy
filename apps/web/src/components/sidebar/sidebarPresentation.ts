@@ -1,29 +1,22 @@
+import type { WindowChromeGeometry } from "@awen/shared/windowChromeGeometry";
 import { createMotionValue } from "../../workbench/motionValue";
-import {
-  COLLAPSED_TABS_INSET_MAC,
-  COLLAPSED_TABS_INSET_WIN,
-  DOCK_LEFT_MAC,
-  DOCK_LEFT_WIN,
-  EXPANDED_ACTION_RIGHT_OFFSET,
-  EXPANDED_TABS_INSET,
-} from "./sidebarGeometry";
 
 export interface SidebarPresentationInput {
   readonly open: boolean;
   readonly enabled: boolean;
   readonly width: number;
   readonly durationMs: number;
+  readonly geometry: WindowChromeGeometry;
 }
 
 /** Keeps the Sidebar, its gap, and titlebar controls on one presentation value. */
 export function createSidebarPresentation(
   wrapper: HTMLElement,
-  isMac: boolean,
+  initialGeometry: WindowChromeGeometry,
   initiallyOpen: boolean,
 ) {
   const spring = createMotionValue(initiallyOpen ? 1 : 0);
-  const collapsedInset = isMac ? COLLAPSED_TABS_INSET_MAC : COLLAPSED_TABS_INSET_WIN;
-  const dockLeft = isMac ? DOCK_LEFT_MAC : DOCK_LEFT_WIN;
+  let geometry = initialGeometry;
   let width = 0;
   const write = (fraction: number) => {
     if (Math.abs(fraction - spring.target) > 0.001) {
@@ -35,22 +28,28 @@ export function createSidebarPresentation(
     wrapper.style.setProperty("--sidebar-motion-progress", `${fraction}`);
     wrapper.style.setProperty(
       "--sidebar-motion-tabs-inset",
-      `${collapsedInset + (EXPANDED_TABS_INSET - collapsedInset) * fraction}px`,
+      `${geometry.collapsedTabsInset * (1 - fraction)}px`,
     );
+    const expandedLeft = width - geometry.buttonSize - geometry.actionRightGap;
     wrapper.style.setProperty(
       "--sidebar-motion-action-left",
-      `${dockLeft + (width - EXPANDED_ACTION_RIGHT_OFFSET - dockLeft) * fraction}px`,
+      `${geometry.collapsedActionLeft + (expandedLeft - geometry.collapsedActionLeft) * fraction}px`,
     );
   };
   const unsubscribe = spring.subscribe(write);
   return {
     update(input: SidebarPresentationInput) {
+      geometry = input.geometry;
       width = input.width;
       // A critically damped spring reaches about 98% at 5.83 / frequency.
       spring.setFrequency(5830 / Math.max(25, input.durationMs));
       if (input.enabled) spring.setTarget(input.open ? 1 : 0);
       else spring.setDirect(input.open ? 1 : 0);
       write(spring.value);
+    },
+    resize(nextWidth: number) {
+      width = nextWidth;
+      spring.setDirect(1);
     },
     dispose() {
       unsubscribe();

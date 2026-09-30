@@ -6,15 +6,18 @@ import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import { _electron as electron } from "playwright-core";
 import { DEFAULT_CLIENT_SETTINGS } from "@awen/contracts/settings";
+import { verifyWindowChrome } from "../../../scripts/window-chrome-checks.mjs";
 import { resolveElectronLaunchCommand } from "./electron-launcher.mjs";
 
 // This probe owns an isolated Electron profile and daemon. It never attaches to
 // an existing app or changes the user's settings. Build the web client first.
+// oxlint-disable-next-line awen/no-global-process-runtime -- Standalone Electron UI probe selects the real host platform without an Effect runtime.
+const hostPlatform = NodeOS.platform();
 const desktopDir = NodePath.resolve(import.meta.dirname, "..");
 const assetsUrl = NodeURL.pathToFileURL(
   NodePath.resolve(desktopDir, "../web/dist") + NodePath.sep,
 ).href;
-const url = process.argv[2] ?? "awen://app";
+const url = process.argv.slice(2).find((argument) => !argument.startsWith("--")) ?? "awen://app";
 const scratch = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "awen-appearance-"));
 const artifacts = NodePath.join(scratch, "artifacts");
 await NodeFSP.mkdir(artifacts);
@@ -80,254 +83,317 @@ try {
   await page.addLocatorHandler(dismiss, async (button) => button.click());
   if (await dismiss.count()) await dismiss.click();
 
-  const spread = (values) =>
-    Math.max(...values.map((p) => p[2])) - Math.min(...values.map((p) => p[2]));
-  const pixels = async (points) =>
-    app.evaluate(
-      async ({ BrowserWindow }, input) => {
-        const w = BrowserWindow.getAllWindows().find((w) =>
-          w.webContents.getURL().startsWith(input.url),
+  if (process.argv.includes("--chrome-only")) {
+    await app.evaluate(({ BrowserWindow }) => {
+      BrowserWindow.getAllWindows()
+        .find((window) => window.webContents.getURL().startsWith("awen://app/"))
+        ?.setContentSize(2400, 1600);
+    });
+    for (const zoomFactor of [0.8, 1, 1.25, 2]) {
+      await app.evaluate(({ BrowserWindow }, zoom) => {
+        BrowserWindow.getAllWindows()
+          .find((window) => window.webContents.getURL().startsWith("awen://app/"))
+          ?.webContents.setZoomFactor(zoom);
+      }, zoomFactor);
+      await page.waitForFunction(
+        (zoom) => window.desktopBridge.getWindowChromeMetrics().zoomFactor === zoom,
+        zoomFactor,
+      );
+      await verifyWindowChrome(page, { nativeMac: hostPlatform === "darwin", zoomFactor });
+      if (hostPlatform === "darwin") {
+        const position = await app.evaluate(({ BrowserWindow }) =>
+          BrowserWindow.getAllWindows()
+            .find((window) => window.webContents.getURL().startsWith("awen://app/"))
+            ?.getWindowButtonPosition(),
         );
-        const shot = await w.webContents.capturePage();
-        const size = shot.getSize();
-        const bitmap = shot.toBitmap();
-        const scale = size.width / input.width;
-        return input.points.map(([x, y]) => {
-          const offset = (Math.floor(y * scale) * size.width + Math.floor(x * scale)) * 4;
-          return [...bitmap.subarray(offset, offset + 4)];
-        });
-      },
-      { url, width: await page.evaluate(() => innerWidth), points },
-    );
+        NodeAssert.deepEqual(position, { x: 10, y: Math.round(18 * zoomFactor - 7) });
+      }
+    }
+    await app.evaluate(({ BrowserWindow }) => {
+      const window = BrowserWindow.getAllWindows().find((entry) =>
+        entry.webContents.getURL().startsWith("awen://app/"),
+      );
+      window?.webContents.setZoomFactor(1);
+      window?.setFullScreen(true);
+    });
+    await page.waitForFunction(() => window.desktopBridge.getWindowChromeMetrics().fullscreen);
+    await verifyWindowChrome(page, { zoomFactor: 1 });
+    await app.evaluate(({ BrowserWindow }) => {
+      BrowserWindow.getAllWindows()
+        .find((window) => window.webContents.getURL().startsWith("awen://app/"))
+        ?.setFullScreen(false);
+    });
+    await page.waitForFunction(() => !window.desktopBridge.getWindowChromeMetrics().fullscreen);
+    await verifyWindowChrome(page, { nativeMac: hostPlatform === "darwin", zoomFactor: 1 });
+    await page.reload();
+    await page.getByTestId("fixed-sidebar-trigger").waitFor();
+    await verifyWindowChrome(page, { nativeMac: hostPlatform === "darwin", zoomFactor: 1 });
+    await page.goto(`${url}/#/chrome-probe-missing-route`);
+    await page.locator("[data-slot=desktop-auth-window-chrome]").waitFor();
+    const auth = await page
+      .locator("[data-slot=desktop-auth-window-chrome]")
+      .evaluate((element) => ({
+        height: element.getBoundingClientRect().height,
+        left: parseFloat(getComputedStyle(element).paddingLeft),
+      }));
+    NodeAssert.equal(auth.left, hostPlatform === "darwin" ? 76 : 0);
+    NodeAssert.ok(auth.height > 0, "Auth titlebar must have a height");
+    await page.screenshot({ path: NodePath.join(artifacts, "chrome-auth.png") });
+    console.log("PASS native zoom, fullscreen, reload and auth chrome");
+  } else {
+    const spread = (values) =>
+      Math.max(...values.map((p) => p[2])) - Math.min(...values.map((p) => p[2]));
+    const pixels = async (points) =>
+      app.evaluate(
+        async ({ BrowserWindow }, input) => {
+          const w = BrowserWindow.getAllWindows().find((w) =>
+            w.webContents.getURL().startsWith(input.url),
+          );
+          const shot = await w.webContents.capturePage();
+          const size = shot.getSize();
+          const bitmap = shot.toBitmap();
+          const scale = size.width / input.width;
+          return input.points.map(([x, y]) => {
+            const offset = (Math.floor(y * scale) * size.width + Math.floor(x * scale)) * 4;
+            return [...bitmap.subarray(offset, offset + 4)];
+          });
+        },
+        { url, width: await page.evaluate(() => innerWidth), points },
+      );
 
-  const checkColorTransmission = async (bounds, name) => {
-    await page.evaluate(
-      (midpoint) => {
-        document.documentElement.style.setProperty("--glass-blur", "16px");
-        document.querySelector("#appearance-probe").style.background =
-          `linear-gradient(90deg, rgba(255,60,30,.7) ${midpoint}px, rgba(30,90,255,.7) ${midpoint}px)`;
-      },
-      bounds.x + bounds.width / 2,
+    const checkColorTransmission = async (bounds, name) => {
+      await page.evaluate(
+        (midpoint) => {
+          document.documentElement.style.setProperty("--glass-blur", "16px");
+          document.querySelector("#appearance-probe").style.background =
+            `linear-gradient(90deg, rgba(255,60,30,.7) ${midpoint}px, rgba(30,90,255,.7) ${midpoint}px)`;
+        },
+        bounds.x + bounds.width / 2,
+      );
+      await page.waitForTimeout(200);
+      const [left, right] = await pixels([
+        [bounds.x + bounds.width / 4, bounds.y + 12],
+        [bounds.x + (bounds.width * 3) / 4, bounds.y + 12],
+      ]);
+      const difference = Math.max(
+        ...left.slice(0, 3).map((channel, i) => Math.abs(channel - right[i])),
+      );
+      NodeAssert.ok(
+        difference > 60,
+        `${name} material hides broad background colors (${difference})`,
+      );
+      await page.screenshot({ path: NodePath.join(artifacts, `${name}-colors.png`) });
+      console.log(`PASS ${name} background color transmission: channel difference ${difference}`);
+    };
+
+    // Sample the material itself, not just text, throughout popup entry and exit.
+    await page.evaluate(() => {
+      window.__overlayFrames = [];
+      const record = () => {
+        const popup = document.querySelector(
+          '[data-context-menu], [data-slot="command-dialog-popup"]',
+        );
+        const glass = popup?.querySelector(".material-surface-overlay");
+        if (glass) {
+          const style = getComputedStyle(glass);
+          window.__overlayFrames.push({
+            opacity: Number(style.opacity),
+            scale: style.scale,
+            background: style.backgroundColor,
+            kind: popup.hasAttribute("data-context-menu") ? "menu" : "dialog",
+            ending: popup.hasAttribute("data-ending-style"),
+          });
+        }
+        requestAnimationFrame(record);
+      };
+      requestAnimationFrame(record);
+    });
+    await page.locator('[data-testid="sidebar-add-project"]').click();
+    await page.waitForSelector('[data-slot="command-dialog-popup"]');
+    await page.waitForTimeout(400);
+    const materialFrames = await page.evaluate(() => window.__overlayFrames);
+    NodeAssert.ok(
+      materialFrames.some((frame) => frame.opacity < 0.95),
+      "Popup glass appears instantly; only its text animates",
     );
-    await page.waitForTimeout(200);
-    const [left, right] = await pixels([
-      [bounds.x + bounds.width / 4, bounds.y + 12],
-      [bounds.x + (bounds.width * 3) / 4, bounds.y + 12],
-    ]);
-    const difference = Math.max(
-      ...left.slice(0, 3).map((channel, i) => Math.abs(channel - right[i])),
+    const restMaterial = materialFrames.at(-1);
+    const tintAlpha = Number(restMaterial.background.match(/[,/]\s*([\d.]+)\s*\)$/)?.[1] ?? 1);
+    NodeAssert.ok(tintAlpha < 0.15, `Dark popup tint hides its backdrop (alpha=${tintAlpha})`);
+
+    await page.evaluate(() => {
+      const stripe = document.createElement("div");
+      stripe.id = "appearance-probe";
+      stripe.style.cssText =
+        "position:fixed;inset:0;z-index:10;background:repeating-linear-gradient(90deg,transparent 0px,transparent 4px,rgba(255,255,255,.7) 4px,rgba(255,255,255,.7) 8px)";
+      document.querySelector("#root").append(stripe);
+    });
+    const popup = await page.locator('[data-slot="command-dialog-popup"]').boundingBox();
+    const dialogSamples = Array.from({ length: 80 }, (_, i) => [popup.x + 20 + i, popup.y + 6]);
+    const dialogContrasts = [];
+    for (const radius of [16, 0]) {
+      await page.evaluate(
+        (r) => document.documentElement.style.setProperty("--glass-blur", `${r}px`),
+        radius,
+      );
+      await page.waitForTimeout(300);
+      dialogContrasts.push(spread(await pixels(dialogSamples)));
+      await page.screenshot({ path: NodePath.join(artifacts, `add-project-${radius}.png`) });
+    }
+    NodeAssert.ok(
+      dialogContrasts[0] < 5 && dialogContrasts[1] > 8,
+      `Add Project blur absent: pixel contrast 16px/0px=${dialogContrasts}`,
+    );
+    console.log(`PASS Add Project pixel blur: contrast ${dialogContrasts.join("/")} (16px/0px)`);
+    await checkColorTransmission(popup, "add-project");
+    await page.evaluate(() => {
+      document.querySelector("#appearance-probe").remove();
+      document.documentElement.style.setProperty("--glass-blur", "16px");
+    });
+    await page.keyboard.press("Escape");
+    await page.waitForSelector('[data-slot="command-dialog-popup"]', { state: "detached" });
+    const dialogExit = await page.evaluate(() =>
+      window.__overlayFrames.filter((frame) => frame.kind === "dialog" && frame.ending),
     );
     NodeAssert.ok(
-      difference > 60,
-      `${name} material hides broad background colors (${difference})`,
-    );
-    await page.screenshot({ path: NodePath.join(artifacts, `${name}-colors.png`) });
-    console.log(`PASS ${name} background color transmission: channel difference ${difference}`);
-  };
-
-  // Sample the material itself, not just text, throughout popup entry and exit.
-  await page.evaluate(() => {
-    window.__overlayFrames = [];
-    const record = () => {
-      const popup = document.querySelector(
-        '[data-context-menu], [data-slot="command-dialog-popup"]',
-      );
-      const glass = popup?.querySelector(".material-surface-overlay");
-      if (glass) {
-        const style = getComputedStyle(glass);
-        window.__overlayFrames.push({
-          opacity: Number(style.opacity),
-          scale: style.scale,
-          background: style.backgroundColor,
-          kind: popup.hasAttribute("data-context-menu") ? "menu" : "dialog",
-          ending: popup.hasAttribute("data-ending-style"),
-        });
-      }
-      requestAnimationFrame(record);
-    };
-    requestAnimationFrame(record);
-  });
-  await page.locator('[data-testid="sidebar-add-project"]').click();
-  await page.waitForSelector('[data-slot="command-dialog-popup"]');
-  await page.waitForTimeout(400);
-  const materialFrames = await page.evaluate(() => window.__overlayFrames);
-  NodeAssert.ok(
-    materialFrames.some((frame) => frame.opacity < 0.95),
-    "Popup glass appears instantly; only its text animates",
-  );
-  const restMaterial = materialFrames.at(-1);
-  const tintAlpha = Number(restMaterial.background.match(/[,/]\s*([\d.]+)\s*\)$/)?.[1] ?? 1);
-  NodeAssert.ok(tintAlpha < 0.15, `Dark popup tint hides its backdrop (alpha=${tintAlpha})`);
-
-  await page.evaluate(() => {
-    const stripe = document.createElement("div");
-    stripe.id = "appearance-probe";
-    stripe.style.cssText =
-      "position:fixed;inset:0;z-index:10;background:repeating-linear-gradient(90deg,transparent 0px,transparent 4px,rgba(255,255,255,.7) 4px,rgba(255,255,255,.7) 8px)";
-    document.querySelector("#root").append(stripe);
-  });
-  const popup = await page.locator('[data-slot="command-dialog-popup"]').boundingBox();
-  const dialogSamples = Array.from({ length: 80 }, (_, i) => [popup.x + 20 + i, popup.y + 6]);
-  const dialogContrasts = [];
-  for (const radius of [16, 0]) {
-    await page.evaluate(
-      (r) => document.documentElement.style.setProperty("--glass-blur", `${r}px`),
-      radius,
-    );
-    await page.waitForTimeout(300);
-    dialogContrasts.push(spread(await pixels(dialogSamples)));
-    await page.screenshot({ path: NodePath.join(artifacts, `add-project-${radius}.png`) });
-  }
-  NodeAssert.ok(
-    dialogContrasts[0] < 5 && dialogContrasts[1] > 8,
-    `Add Project blur absent: pixel contrast 16px/0px=${dialogContrasts}`,
-  );
-  console.log(`PASS Add Project pixel blur: contrast ${dialogContrasts.join("/")} (16px/0px)`);
-  await checkColorTransmission(popup, "add-project");
-  await page.evaluate(() => {
-    document.querySelector("#appearance-probe").remove();
-    document.documentElement.style.setProperty("--glass-blur", "16px");
-  });
-  await page.keyboard.press("Escape");
-  await page.waitForSelector('[data-slot="command-dialog-popup"]', { state: "detached" });
-  const dialogExit = await page.evaluate(() =>
-    window.__overlayFrames.filter((frame) => frame.kind === "dialog" && frame.ending),
-  );
-  NodeAssert.ok(
-    dialogExit.some(
-      (frame) => frame.opacity > 0.05 && frame.opacity < 0.95 && Number(frame.scale) < 1,
-    ),
-    "Dialog material disappears without fade/shrink",
-  );
-  console.log(`PASS dialog material entry/exit, dark tint alpha=${tintAlpha}`);
-  await page.getByRole("button", { name: "New tab", exact: true }).click();
-  await page.waitForTimeout(300);
-  const before = await page
-    .locator('[role="tab"][aria-selected="true"]')
-    .getAttribute("data-tab-id");
-  NodeAssert.equal(
-    await page.evaluate(() => typeof window.desktopBridge?.onTrackpadInput),
-    "function",
-    "Native trackpad addon did not attach",
-  );
-  const stage = await page.locator(".workbench-viewport-container").boundingBox();
-  await page.mouse.move(stage.x + stage.width - 8, stage.y + stage.height / 2);
-  await page.mouse.down({ button: "right" });
-  await page.mouse.move(stage.x - 8, stage.y + stage.height / 2, { steps: 12 });
-  await page.waitForTimeout(50);
-  NodeAssert.notEqual(
-    await page.locator('[role="tab"][aria-selected="true"]').getAttribute("data-tab-id"),
-    before,
-    "Full-width right drag did not activate at its checkpoint",
-  );
-  await page.mouse.up({ button: "right" });
-  console.log("PASS full-width right drag activates before release");
-  await page.waitForTimeout(400);
-  await page
-    .locator('.workbench-viewport:not([style*="display: none"]) [data-workbench-pane-drag-handle]')
-    .first()
-    .click({ button: "right" });
-  await page.waitForSelector("[data-context-menu]", { timeout: 15000 });
-  await page.mouse.move(0, 0);
-  await page.waitForTimeout(250);
-  const menuEntry = await page.evaluate(() =>
-    window.__overlayFrames.filter((frame) => frame.kind === "menu" && !frame.ending),
-  );
-  NodeAssert.ok(
-    menuEntry.some((frame) => frame.opacity < 0.95 && Number(frame.scale) < 1),
-    "Context menu glass appears without fade/scale",
-  );
-  const menu = await page.locator("[data-context-menu]").boundingBox();
-  await page.evaluate(() => {
-    const stripe = document.createElement("div");
-    stripe.id = "appearance-probe";
-    stripe.style.cssText =
-      "position:fixed;inset:0;z-index:10;background:repeating-linear-gradient(90deg,transparent 0px,transparent 4px,rgba(255,255,255,.7) 4px,rgba(255,255,255,.7) 8px)";
-    document.querySelector("#root").append(stripe);
-  });
-  const menuContrasts = [];
-  for (const radius of [16, 0]) {
-    await page.evaluate(
-      (r) => document.documentElement.style.setProperty("--glass-blur", `${r}px`),
-      radius,
-    );
-    await page.waitForTimeout(300);
-    menuContrasts.push(
-      spread(await pixels(Array.from({ length: 80 }, (_, i) => [menu.x + 20 + i, menu.y + 6]))),
-    );
-    await page.screenshot({ path: NodePath.join(artifacts, `context-menu-${radius}.png`) });
-  }
-  NodeAssert.ok(
-    menuContrasts[0] < 5 && menuContrasts[1] > 8,
-    `Context menu blur absent: ${menuContrasts}`,
-  );
-  console.log(`PASS context menu transparent-source blur: ${menuContrasts.join("/")}`);
-  await checkColorTransmission(menu, "context-menu");
-  await page.evaluate(() => {
-    document.querySelector("#appearance-probe").remove();
-    document.documentElement.style.setProperty("--glass-blur", "16px");
-  });
-  await page.keyboard.press("Escape");
-  await page.waitForSelector("[data-context-menu]", { state: "detached" });
-  const menuExit = await page.evaluate(() =>
-    window.__overlayFrames.filter((frame) => frame.kind === "menu" && frame.ending),
-  );
-  NodeAssert.ok(
-    menuExit.some(
-      (frame) => frame.opacity > 0.05 && frame.opacity < 0.95 && Number(frame.scale) < 1,
-    ),
-    "Context menu material disappears without fade/shrink",
-  );
-  console.log("PASS context menu material entry/exit");
-  NodeAssert.equal(
-    await page.locator("[data-glass-sampling-underlay]").count(),
-    0,
-    "Popup sampling underlay leaked after closing",
-  );
-  await page.emulateMedia({ reducedMotion: "reduce" });
-  await page
-    .locator('.workbench-viewport:not([style*="display: none"]) [data-workbench-pane-drag-handle]')
-    .first()
-    .focus();
-  const closedPane = await page
-    .locator('.workbench-viewport:not([style*="display: none"]) .workbench-pane')
-    .first()
-    .getAttribute("data-pane-id");
-  await page.keyboard.press("Shift+F10");
-  await page.waitForSelector("[data-context-menu]", { timeout: 15000 });
-  NodeAssert.equal(
-    await page
-      .locator("[data-context-menu] .overlay-content")
-      .evaluate((element) => getComputedStyle(element).transitionDuration),
-    "0s",
-  );
-  await page.keyboard.press("ArrowDown");
-  await page.keyboard.press("Enter");
-  await page.waitForSelector("[data-context-menu]", { state: "detached" });
-  await page.waitForFunction(
-    (previous) =>
-      !Array.from(document.querySelectorAll(".workbench-pane")).some(
-        (element) => element.getAttribute("data-pane-id") === previous,
+      dialogExit.some(
+        (frame) => frame.opacity > 0.05 && frame.opacity < 0.95 && Number(frame.scale) < 1,
       ),
-    closedPane,
-  );
-  await page.emulateMedia({ reducedMotion: "no-preference" });
-  console.log("PASS context menu keyboard selection with reduced motion");
-  await page.goto(`${url}/#/settings/appearance`);
-  await page.reload();
-  await page.waitForSelector("#content-backdrop-blur");
-  await page.waitForTimeout(300);
-  const baseline = (await pixels([[40, 350]]))[0];
-  await page.locator("#content-backdrop-blur").fill("24");
-  await page.waitForTimeout(300);
-  const changed = (await pixels([[40, 350]]))[0];
-  NodeAssert.ok(
-    baseline.every((v, i) => Math.abs(v - changed[i]) <= 1),
-    `Blur slider changed Sidebar tint: ${baseline} -> ${changed}`,
-  );
-  NodeAssert.equal(await page.locator('[data-slot$="backdrop"]').count(), 0);
-  await page.screenshot({ path: NodePath.join(artifacts, "settings.png") });
-  console.log(`PASS blur slider leaves Sidebar RGBA unchanged: ${baseline}`);
+      "Dialog material disappears without fade/shrink",
+    );
+    console.log(`PASS dialog material entry/exit, dark tint alpha=${tintAlpha}`);
+    await page.getByRole("button", { name: "New tab", exact: true }).click();
+    await page.waitForTimeout(300);
+    const before = await page
+      .locator('[role="tab"][aria-selected="true"]')
+      .getAttribute("data-tab-id");
+    NodeAssert.equal(
+      await page.evaluate(() => typeof window.desktopBridge?.onTrackpadInput),
+      "function",
+      "Native trackpad addon did not attach",
+    );
+    const stage = await page.locator(".workbench-viewport-container").boundingBox();
+    await page.mouse.move(stage.x + stage.width - 8, stage.y + stage.height / 2);
+    await page.mouse.down({ button: "right" });
+    await page.mouse.move(stage.x - 8, stage.y + stage.height / 2, { steps: 12 });
+    await page.waitForTimeout(50);
+    NodeAssert.notEqual(
+      await page.locator('[role="tab"][aria-selected="true"]').getAttribute("data-tab-id"),
+      before,
+      "Full-width right drag did not activate at its checkpoint",
+    );
+    await page.mouse.up({ button: "right" });
+    console.log("PASS full-width right drag activates before release");
+    await page.waitForTimeout(400);
+    await page
+      .locator(
+        '.workbench-viewport:not([style*="display: none"]) [data-workbench-pane-drag-handle]',
+      )
+      .first()
+      .click({ button: "right" });
+    await page.waitForSelector("[data-context-menu]", { timeout: 15000 });
+    await page.mouse.move(0, 0);
+    await page.waitForTimeout(250);
+    const menuEntry = await page.evaluate(() =>
+      window.__overlayFrames.filter((frame) => frame.kind === "menu" && !frame.ending),
+    );
+    NodeAssert.ok(
+      menuEntry.some((frame) => frame.opacity < 0.95 && Number(frame.scale) < 1),
+      "Context menu glass appears without fade/scale",
+    );
+    const menu = await page.locator("[data-context-menu]").boundingBox();
+    await page.evaluate(() => {
+      const stripe = document.createElement("div");
+      stripe.id = "appearance-probe";
+      stripe.style.cssText =
+        "position:fixed;inset:0;z-index:10;background:repeating-linear-gradient(90deg,transparent 0px,transparent 4px,rgba(255,255,255,.7) 4px,rgba(255,255,255,.7) 8px)";
+      document.querySelector("#root").append(stripe);
+    });
+    const menuContrasts = [];
+    for (const radius of [16, 0]) {
+      await page.evaluate(
+        (r) => document.documentElement.style.setProperty("--glass-blur", `${r}px`),
+        radius,
+      );
+      await page.waitForTimeout(300);
+      menuContrasts.push(
+        spread(await pixels(Array.from({ length: 80 }, (_, i) => [menu.x + 20 + i, menu.y + 6]))),
+      );
+      await page.screenshot({ path: NodePath.join(artifacts, `context-menu-${radius}.png`) });
+    }
+    NodeAssert.ok(
+      menuContrasts[0] < 5 && menuContrasts[1] > 8,
+      `Context menu blur absent: ${menuContrasts}`,
+    );
+    console.log(`PASS context menu transparent-source blur: ${menuContrasts.join("/")}`);
+    await checkColorTransmission(menu, "context-menu");
+    await page.evaluate(() => {
+      document.querySelector("#appearance-probe").remove();
+      document.documentElement.style.setProperty("--glass-blur", "16px");
+    });
+    await page.keyboard.press("Escape");
+    await page.waitForSelector("[data-context-menu]", { state: "detached" });
+    const menuExit = await page.evaluate(() =>
+      window.__overlayFrames.filter((frame) => frame.kind === "menu" && frame.ending),
+    );
+    NodeAssert.ok(
+      menuExit.some(
+        (frame) => frame.opacity > 0.05 && frame.opacity < 0.95 && Number(frame.scale) < 1,
+      ),
+      "Context menu material disappears without fade/shrink",
+    );
+    console.log("PASS context menu material entry/exit");
+    NodeAssert.equal(
+      await page.locator("[data-glass-sampling-underlay]").count(),
+      0,
+      "Popup sampling underlay leaked after closing",
+    );
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page
+      .locator(
+        '.workbench-viewport:not([style*="display: none"]) [data-workbench-pane-drag-handle]',
+      )
+      .first()
+      .focus();
+    const closedPane = await page
+      .locator('.workbench-viewport:not([style*="display: none"]) .workbench-pane')
+      .first()
+      .getAttribute("data-pane-id");
+    await page.keyboard.press("Shift+F10");
+    await page.waitForSelector("[data-context-menu]", { timeout: 15000 });
+    NodeAssert.equal(
+      await page
+        .locator("[data-context-menu] .overlay-content")
+        .evaluate((element) => getComputedStyle(element).transitionDuration),
+      "0s",
+    );
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Enter");
+    await page.waitForSelector("[data-context-menu]", { state: "detached" });
+    await page.waitForFunction(
+      (previous) =>
+        !Array.from(document.querySelectorAll(".workbench-pane")).some(
+          (element) => element.getAttribute("data-pane-id") === previous,
+        ),
+      closedPane,
+    );
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+    console.log("PASS context menu keyboard selection with reduced motion");
+    await page.goto(`${url}/#/settings/appearance`);
+    await page.reload();
+    await page.waitForSelector("#content-backdrop-blur");
+    await page.waitForTimeout(300);
+    const baseline = (await pixels([[40, 350]]))[0];
+    await page.locator("#content-backdrop-blur").fill("24");
+    await page.waitForTimeout(300);
+    const changed = (await pixels([[40, 350]]))[0];
+    NodeAssert.ok(
+      baseline.every((v, i) => Math.abs(v - changed[i]) <= 1),
+      `Blur slider changed Sidebar tint: ${baseline} -> ${changed}`,
+    );
+    NodeAssert.equal(await page.locator('[data-slot$="backdrop"]').count(), 0);
+    await page.screenshot({ path: NodePath.join(artifacts, "settings.png") });
+    console.log(`PASS blur slider leaves Sidebar RGBA unchanged: ${baseline}`);
+  }
   passed = true;
 } catch (error) {
   if (page) {

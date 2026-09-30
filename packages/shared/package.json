@@ -314,6 +314,10 @@
     "./daemonPort": {
       "types": "./src/daemonPort.ts",
       "import": "./src/daemonPort.ts"
+    },
+    "./windowChromeGeometry": {
+      "types": "./src/windowChromeGeometry.ts",
+      "import": "./src/windowChromeGeometry.ts"
     }
   },
   "scripts": {

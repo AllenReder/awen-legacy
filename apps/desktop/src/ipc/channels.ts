@@ -117,3 +117,6 @@ export const MAC_PERMISSION_HELPER_CHANNEL = "desktop:mac-permission-helper";
 export const CHECK_SYSTEM_PERMISSION_CHANNEL = "desktop:check-system-permission";
 
 export const PREVIEW_RECORDING_INPUT_CHANNEL = "desktop:preview-recording-input";
+
+export const GET_WINDOW_CHROME_METRICS_CHANNEL = "desktop:get-window-chrome-metrics";
+export const WINDOW_CHROME_METRICS_CHANNEL = "desktop:window-chrome-metrics";

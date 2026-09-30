@@ -12,6 +12,7 @@ import { createProcessTreePort, stopProcessTree } from "./lib/process-tree.ts";
 import { nodeEntryInvocation, withNodeModulesBin } from "./lib/spawn-command.ts";
 import { removePathWithRetry, runTeardownSteps } from "./lib/teardown-steps.ts";
 import { verifyWorkbenchFiles } from "./workbench-file-checks.mjs";
+import { verifyWindowChrome, verifyMobileSidebar } from "./window-chrome-checks.mjs";
 import { verifyWorkbenchAppearance } from "./workbench-appearance-checks.mjs";
 
 // This suite never sends an Agent turn. Promotion coverage must use the ACP
@@ -462,6 +463,12 @@ async function main() {
     });
     NodeAssert.equal(await page.locator(".sidebar-stage-backdrop").count(), 0);
     NodeAssert.equal(await page.getByText("Awen", { exact: true }).count(), 0);
+
+    if (process.argv.includes("--chrome-only")) {
+      await verifyWindowChrome(page);
+      await verifyMobileSidebar(page);
+      return;
+    }
 
     if (process.env.WORKBENCH_E2E_FILES_ONLY === "1") {
       await verifyWorkbenchFiles(page, repositoryRoot);

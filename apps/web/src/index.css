@@ -117,19 +117,15 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(awen-mob
   --glass-opacity: 80%;
   --glass-saturation: 1.14;
   --desktop-window-right-resize-inset: 0px;
-  --workspace-topbar-height: 36px;
+  --workspace-topbar-height: var(--chrome-titlebar-base-height);
   --workspace-controls-top: 0px;
-  --workspace-controls-left: calc(env(safe-area-inset-left) + 0.75rem);
+  --workspace-controls-left: calc(env(safe-area-inset-left) + var(--sidebar-trigger-left));
   --workspace-controls-right: calc(env(safe-area-inset-right) + 0.75rem);
   --workspace-native-controls-inset: 0px;
-  --workspace-titlebar-control-size: 1.75rem;
-  --workspace-titlebar-control-gap: 0.75rem;
-  --sidebar-base-spacing: 12px;
-  --sidebar-controls-left: 76px;
-  --sidebar-controls-left-win: 12px;
-  --sidebar-controls-right: 12px;
-  --workbench-titlebar-height: 36px;
-  --workbench-titlebar-center: calc(var(--workbench-titlebar-height) / 2);
+  --workspace-titlebar-content-left: calc(
+    var(--workspace-controls-left) + var(--workspace-titlebar-control-size) +
+      var(--workspace-titlebar-control-gap)
+  );
   --workspace-titlebar-scroll-fade-height: 1.5rem;
   --window-control-close-hover: #e81123;
   --window-control-close-active: #c4101f;
@@ -172,9 +168,9 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(awen-mob
 }
 
 .wco {
-  --workspace-topbar-height: env(titlebar-area-height, 36px);
+  --workspace-topbar-height: env(titlebar-area-height, var(--chrome-titlebar-base-height));
   --workspace-controls-top: env(titlebar-area-y, 0px);
-  --workspace-controls-left: calc(env(titlebar-area-x, 0px) + 0.75rem);
+  --workspace-controls-left: calc(env(titlebar-area-x, 0px) + var(--sidebar-trigger-left));
   --workspace-controls-right: calc(
     100vw - env(titlebar-area-width, 100vw) - env(titlebar-area-x, 0px) + 0.75rem
   );
@@ -1855,12 +1851,6 @@ html[data-workbench-dragging] {
 html[data-workbench-dragging] * {
   user-select: none;
   -webkit-user-select: none;
-}
-
-/* The Workbench title strip sits alongside the full-height Sidebar. */
-html[data-workbench-window-chrome] {
-  --workbench-titlebar-height: 36px;
-  --workbench-titlebar-center: calc(var(--workbench-titlebar-height) / 2);
 }
 
 /* Scrollbar styling */

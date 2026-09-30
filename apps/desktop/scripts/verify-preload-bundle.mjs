@@ -8,6 +8,8 @@ import { parse } from "acorn";
 
 const expectedDesktopBridgeApis = [
   "getClientPlatform",
+  "getWindowChromeMetrics",
+  "onWindowChromeMetricsChange",
   "getLocalEnvironmentBootstraps",
   "getPathForFile",
   "pickFolder",

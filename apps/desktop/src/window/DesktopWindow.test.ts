@@ -53,6 +53,7 @@ import {
   TRACKPAD_SCROLL_END_CHANNEL,
   TRACKPAD_SCROLL_PHASE_CHANNEL,
   WINDOW_FULLSCREEN_STATE_CHANNEL,
+  WINDOW_CHROME_METRICS_CHANNEL,
 } from "../ipc/channels.ts";
 import * as DesktopServerExposure from "../backend/DesktopServerExposure.ts";
 import * as DesktopWindow from "./DesktopWindow.ts";
@@ -867,6 +868,10 @@ describe("DesktopWindow", () => {
 
         for (const direction of ["in", "in", "out", "reset", "out"] as const) {
           yield* desktopWindow.zoomMain(direction);
+          assert.deepEqual(fakeWindow.send.mock.lastCall, [
+            WINDOW_CHROME_METRICS_CHANNEL,
+            { zoomFactor: fakeWindow.window.webContents.getZoomFactor(), fullscreen: false },
+          ]);
           const position = fakeWindow.setWindowButtonPosition.mock.lastCall?.[0];
           assert.isDefined(position);
           // The 14-point native buttons should share the zoomed 36px header's center.
@@ -1358,11 +1363,15 @@ describe("DesktopWindow", () => {
           return yield* Effect.die("fullscreen listeners were not registered");
         }
 
+        fakeWindow.isFullScreen.mockReturnValue(true);
         enterFullscreen();
+        fakeWindow.isFullScreen.mockReturnValue(false);
         leaveFullscreen();
         assert.deepEqual(fakeWindow.send.mock.calls, [
           [WINDOW_FULLSCREEN_STATE_CHANNEL, true],
+          [WINDOW_CHROME_METRICS_CHANNEL, { zoomFactor: 1, fullscreen: true }],
           [WINDOW_FULLSCREEN_STATE_CHANNEL, false],
+          [WINDOW_CHROME_METRICS_CHANNEL, { zoomFactor: 1, fullscreen: false }],
         ]);
       }).pipe(Effect.provide(layer));
     }),

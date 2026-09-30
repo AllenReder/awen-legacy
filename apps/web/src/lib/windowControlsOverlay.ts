@@ -1,4 +1,4 @@
-import { isMacPlatform, isWindowsPlatform } from "./utils";
+import { isWindowsPlatform } from "./utils";
 
 const WCO_CLASS_NAME = "wco";
 const ELECTRON_CLASS_NAME = "electron";
@@ -62,17 +62,5 @@ export function syncDocumentElectronPlatformClasses(platform: string): () => voi
   document.documentElement.classList.add(...classNames);
   return () => {
     document.documentElement.classList.remove(...classNames);
-  };
-}
-
-export function resolveWorkbenchTitlebarStyle(input: {
-  readonly hasDesktopBridge: boolean;
-  readonly platform: string;
-  readonly fullscreen: boolean;
-}): Readonly<Record<string, string>> {
-  if (!input.hasDesktopBridge || input.fullscreen || !isMacPlatform(input.platform)) return {};
-  return {
-    "--workspace-controls-left": "var(--desktop-window-controls-inset, 80px)",
-    "--workbench-titlebar-height": "36px",
   };
 }

@@ -7,6 +7,8 @@ const validPreload = `
   const PICK_FOLDER_CHANNEL = "desktop:pick-folder";
   electron.contextBridge.exposeInMainWorld("desktopBridge", {
     getClientPlatform: () => process.platform,
+    getWindowChromeMetrics: () => ({ zoomFactor: 1, fullscreen: false }),
+    onWindowChromeMetricsChange: () => () => {},
     getLocalEnvironmentBootstraps: () => [],
     getPathForFile: () => "",
     pickFolder: (options) => electron.ipcRenderer.invoke(PICK_FOLDER_CHANNEL, options),

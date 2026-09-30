@@ -48,7 +48,7 @@ export function SidebarTitlebarButton({
             onPointerEnter={onPointerEnter}
             onFocus={onFocus}
             className={cn(
-              "flex size-7 shrink-0 items-center justify-center rounded-[var(--control-radius)] text-muted-foreground transition-all [transition-duration:calc(150ms*var(--motion-duration-scale,1))] ease-out hover:bg-sidebar-row-hover hover:text-foreground active:scale-[0.98] active:bg-sidebar-row-active [-webkit-app-region:no-drag]",
+              "flex size-[var(--workspace-titlebar-control-size)] shrink-0 items-center justify-center rounded-[var(--control-radius)] text-muted-foreground transition-all [transition-duration:calc(150ms*var(--motion-duration-scale,1))] ease-out hover:bg-sidebar-row-hover hover:text-foreground active:scale-[0.98] active:bg-sidebar-row-active [-webkit-app-region:no-drag]",
               className,
             )}
           >

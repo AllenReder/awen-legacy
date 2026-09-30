@@ -1,5 +1,3 @@
-import { SEPARATOR_RIGHT_GAP } from "../components/sidebar/sidebarGeometry";
-
 /** Shared window-control reservation for Tabs and Settings navigation. */
 export function TopbarInset() {
   return (
@@ -11,7 +9,7 @@ export function TopbarInset() {
       <div
         className="flex h-full w-full items-center justify-end"
         style={{
-          paddingRight: `${SEPARATOR_RIGHT_GAP}px`,
+          paddingRight: "var(--sidebar-separator-right-gap)",
           opacity: "calc(1 - var(--sidebar-motion-progress, 1))",
         }}
       >

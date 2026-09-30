@@ -194,7 +194,9 @@ _Avoid_: Pane layout, Shell, Global panel
 The client-owned navigation tree that exposes Projects, their Workspaces, and
 each Workspace's Sessions. It is a full-height column ("贯通式") running from
 the top of the window to the bottom, and houses primary window and settings
-controls when expanded.
+controls when expanded. Its controls reserve space for native window buttons
+only when those buttons are present, and share their geometry with the Topbar
+Surface when collapsed.
 It is a navigator for work and references, not another Tab or Pane.
 _Avoid_: Rail, Workspace panel
 
