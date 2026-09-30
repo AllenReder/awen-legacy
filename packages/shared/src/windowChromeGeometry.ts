@@ -4,7 +4,7 @@ export const WINDOW_CHROME = {
   buttonSize: 28,
   sidebarEdgeWidth: 1,
   controlGap: 12,
-  triggerLeft: 12,
+  triggerLeft: 6,
   macTriggerLeftPoints: 76,
   buttonGap: 2,
   actionRightGap: 6,
