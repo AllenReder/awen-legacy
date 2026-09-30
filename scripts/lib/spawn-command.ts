@@ -59,7 +59,7 @@ export function nodeEntryInvocation(
 }
 
 /**
- * Resolve an installed entry point such as `@tauri-apps/cli/tauri.js` from the
+ * Resolve an installed entry point such as `electron/cli.js` from the
  * package that depends on it.
  */
 export function resolvePackageEntry(specifier: string, packageDirectory: string): string {

@@ -44,7 +44,6 @@ function makeElectronAppLayer(
     setDockIcon: () => Effect.void,
     appendCommandLineSwitch: () => Effect.void,
     removeCommandLineSwitch: () => Effect.void,
-    onBeforeQuitForUpdate: () => Effect.void,
     on: () => Effect.void,
   } satisfies ElectronApp.ElectronApp["Service"]);
 }
@@ -385,83 +384,6 @@ describe("DesktopTelemetryPublisher", () => {
         );
         assert.equal(concurrentEventSnapshot.power.locked, "true");
         assert.equal(concurrentEventSnapshot.power.thermalState, "critical");
-      }).pipe(Effect.provide(layer));
-    }),
-  );
-
-  it.effect("routes requestDesktopUpdate control messages and replays update reports", () =>
-    Effect.gen(function* () {
-      const powerLayer = Layer.succeed(
-        ElectronPowerMonitor.ElectronPowerMonitor,
-        ElectronPowerMonitor.ElectronPowerMonitor.of({
-          isOnBatteryPower: Effect.succeed(false),
-          getSystemIdleTime: Effect.succeed(0),
-          getSystemIdleState: () => Effect.succeed("active"),
-          getCurrentThermalState: Effect.succeed("nominal"),
-          onSimpleEvent: () => Effect.void,
-          onThermalStateChange: () => Effect.void,
-          onSpeedLimitChange: () => Effect.void,
-        }),
-      );
-      const layer = DesktopTelemetryPublisher.layer.pipe(
-        Layer.provide(Layer.mergeAll(makeElectronAppLayer([]), powerLayer)),
-      );
-
-      yield* Effect.gen(function* () {
-        const publisher = yield* DesktopTelemetryPublisher.DesktopTelemetryPublisher;
-
-        const requestFiber = yield* Stream.runHead(publisher.updateRequests).pipe(Effect.forkChild);
-        yield* Effect.yieldNow;
-        yield* publisher.handleControlForSource("test", {
-          version: 1,
-          type: "requestDesktopUpdate",
-          requestId: "req-9",
-        });
-        const received = yield* Fiber.join(requestFiber);
-        assert.equal(Option.getOrThrow(received).requestId, "req-9");
-
-        const report = {
-          version: 1,
-          type: "desktopUpdateStatus",
-          outcome: "up-to-date",
-          state: {
-            enabled: true,
-            status: "up-to-date",
-            channel: "stable",
-            currentVersion: "1.2.3",
-            hostArch: "arm64",
-            appArch: "arm64",
-            runningUnderArm64Translation: false,
-            availableVersion: null,
-            downloadedVersion: null,
-            releaseNotes: [],
-            downloadPercent: null,
-            checkedAt: null,
-            message: null,
-            errorContext: null,
-            canRetry: false,
-            omittedReleaseCount: 0,
-          },
-        } as const;
-        yield* publisher.publishUpdateReport(report);
-
-        // A subscriber that attaches after the publish (the backend spawned
-        // by a relaunch) still sees the latest report replayed.
-        const decoder = new TextDecoder();
-        const decodeMessage = Schema.decodeUnknownEffect(
-          Schema.fromJsonString(DesktopHostTelemetryMessage),
-        );
-        const replayed = yield* publisher.encoded.pipe(
-          Stream.mapEffect((bytes) => decodeMessage(decoder.decode(bytes).trim())),
-          Stream.filter((message) => message.type === "desktopUpdateStatus"),
-          Stream.runHead,
-        );
-        const replayedReport = Option.getOrThrow(replayed);
-        if (replayedReport.type !== "desktopUpdateStatus") {
-          return assert.fail("Expected a desktop update status report.");
-        }
-        assert.equal(replayedReport.outcome, "up-to-date");
-        assert.equal(replayedReport.state.currentVersion, "1.2.3");
       }).pipe(Effect.provide(layer));
     }),
   );

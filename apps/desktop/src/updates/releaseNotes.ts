@@ -2,12 +2,12 @@ import type { DesktopUpdateChannel, DesktopUpdateReleaseNote } from "@awen/contr
 
 import { resolveDefaultDesktopUpdateChannel } from "./updateChannels.ts";
 
-interface ElectronReleaseNoteInfo {
+interface ReleaseNoteInfo {
   readonly version: string;
   readonly note: string | null | undefined;
 }
 
-function isElectronReleaseNoteInfo(value: unknown): value is ElectronReleaseNoteInfo {
+function isReleaseNoteInfo(value: unknown): value is ReleaseNoteInfo {
   if (typeof value !== "object" || value === null) return false;
   const candidate = value as { readonly version?: unknown; readonly note?: unknown };
   return (
@@ -142,7 +142,7 @@ export function normalizeDesktopUpdateReleaseNotes(
     typeof releaseNotes === "string"
       ? [{ version: fallbackVersion, note: releaseNotes }]
       : Array.isArray(releaseNotes)
-        ? releaseNotes.filter(isElectronReleaseNoteInfo)
+        ? releaseNotes.filter(isReleaseNoteInfo)
         : []
   ).filter((entry) => resolveDefaultDesktopUpdateChannel(entry.version) === channel);
 

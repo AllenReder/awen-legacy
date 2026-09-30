@@ -24,7 +24,7 @@
     "test": "vp run -r test",
     "test:server": "vp run --filter @awen/server --fail-if-no-match test",
     "test:web": "vp run --filter @awen/web --fail-if-no-match test",
-    "test:packages": "pnpm -r --fail-if-no-match --filter \"!@awen/server\" --filter \"!@awen/web\" test",
+    "test:packages": "pnpm -r --fail-if-no-match --filter \"!@awen/server\" --filter \"!@awen/web\" --filter \"!@awen/desktop\" test",
     "fmt": "vp fmt",
     "fmt:check": "vp fmt --check",
     "smoke:connection": "node scripts/connection-smoke.ts",

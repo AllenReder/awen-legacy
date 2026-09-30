@@ -5,7 +5,6 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as PlatformError from "effect/PlatformError";
 
 import type * as Electron from "electron";
 
@@ -64,7 +63,6 @@ const makeElectronAppLayer = (calls: ElectronAppCalls) =>
         calls.setDockIcon.push(iconPath);
       }),
     appendCommandLineSwitch: () => Effect.void,
-    onBeforeQuitForUpdate: () => Effect.void,
     removeCommandLineSwitch: () => Effect.void,
     on: () => Effect.void,
   } satisfies ElectronApp.ElectronApp["Service"]);
@@ -109,8 +107,6 @@ const withIdentity = <A, E, R>(
   input: {
     readonly calls?: ElectronAppCalls;
     readonly environment?: TestEnvironmentInput;
-    readonly legacyPathExists?: boolean;
-    readonly legacyPathProbeError?: PlatformError.PlatformError;
     readonly packageJson?: string;
     readonly pngIconPath?: Option.Option<string>;
   } = {},
@@ -126,12 +122,6 @@ const withIdentity = <A, E, R>(
       DesktopAppIdentity.layer.pipe(
         Layer.provideMerge(
           FileSystem.layerNoop({
-            exists: (path) =>
-              input.legacyPathProbeError
-                ? Effect.fail(input.legacyPathProbeError)
-                : Effect.succeed(
-                    input.legacyPathExists === true && path.includes("Awen (Alpha)"),
-                  ),
             readFileString: () =>
               Effect.succeed(input.packageJson ?? '{"awenCommitHash":"abcdef1234567890"}'),
           }),
@@ -145,44 +135,17 @@ const withIdentity = <A, E, R>(
 };
 
 describe("DesktopAppIdentity", () => {
-  it.effect("keeps using the legacy userData path when it already exists", () =>
+  it.effect("uses the current Electron user-data directory", () =>
     withIdentity(
       Effect.gen(function* () {
         const identity = yield* DesktopAppIdentity.DesktopAppIdentity;
-        const userDataPath = yield* identity.resolveUserDataPath;
-
-        assert.equal(userDataPath, "/Users/alice/Library/Application Support/Awen (Alpha)");
-      }),
-      { legacyPathExists: true },
-    ),
-  );
-
-  it.effect("preserves failures while inspecting the legacy userData path", () => {
-    const legacyPath = "/Users/alice/Library/Application Support/Awen (Alpha)";
-    const cause = PlatformError.systemError({
-      _tag: "PermissionDenied",
-      module: "FileSystem",
-      method: "exists",
-      description: "permission denied",
-      pathOrDescriptor: legacyPath,
-    });
-
-    return withIdentity(
-      Effect.gen(function* () {
-        const identity = yield* DesktopAppIdentity.DesktopAppIdentity;
-        const error = yield* identity.resolveUserDataPath.pipe(Effect.flip);
-
-        assert.instanceOf(error, DesktopAppIdentity.DesktopUserDataPathResolutionError);
-        assert.equal(error.legacyPath, legacyPath);
-        assert.strictEqual(error.cause, cause);
         assert.equal(
-          error.message,
-          `Failed to inspect legacy desktop user-data path at "${legacyPath}".`,
+          yield* identity.resolveUserDataPath,
+          "/Users/alice/Library/Application Support/awen",
         );
       }),
-      { legacyPathProbeError: cause },
-    );
-  });
+    ),
+  );
 
   it.effect("configures app identity from the environment commit override", () => {
     const calls: ElectronAppCalls = {

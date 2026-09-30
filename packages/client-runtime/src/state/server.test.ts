@@ -36,7 +36,6 @@ import {
   makeEnvironmentServerConfigState,
   isLegacyUpdateHandoffLoss,
   matchesServerUpdateReadyEvent,
-  matchesServerUpdateResumeEvent,
   nudgeReconnectDuringUpdateRestart,
   resolveServerConfigValue,
   resolveServerWelcomeState,
@@ -45,8 +44,6 @@ import {
   serverUpdateStateForServerVersion,
   validateServerUpdateReadyEvent,
   waitForNextEnvironmentReconnect,
-  waitForDesktopUpdateTarget,
-  runDesktopCommitWithReconnectObserver,
 } from "./server.ts";
 import { applyServerConfigProjection } from "./serverConfigProjection.ts";
 
@@ -88,36 +85,6 @@ function session(client: WsRpcProtocolClient): RpcSession {
 }
 
 describe("update restart reconnect nudges", () => {
-  it.effect("retries a desktop commit that was lost before delivery", () =>
-    Effect.gen(function* () {
-      const readyEvents =
-        yield* Queue.unbounded<Parameters<typeof matchesServerUpdateReadyEvent>[1]>();
-      const ready = (serverVersion: string) =>
-        ({
-          version: 1 as const,
-          sequence: 1,
-          type: "ready" as const,
-          payload: {
-            at: "2026-09-01T00:00:00.000Z",
-            environment: { serverVersion },
-          },
-        }) as Parameters<typeof matchesServerUpdateReadyEvent>[1];
-      yield* Queue.offerAll(readyEvents, [ready("0.0.30"), ready("0.0.31")]);
-      const retries = yield* Ref.make(0);
-      const disconnect = new RpcClientError.RpcClientError({
-        reason: new Socket.SocketCloseError({ code: 1006 }),
-      });
-
-      const result = yield* waitForDesktopUpdateTarget(
-        "0.0.31",
-        Queue.take(readyEvents),
-        Ref.update(retries, (count) => count + 1).pipe(Effect.andThen(Effect.fail(disconnect))),
-      );
-
-      expect(result.payload.environment.serverVersion).toBe("0.0.31");
-      expect(yield* Ref.get(retries)).toBe(1);
-    }),
-  );
   it.effect("observes a fast reconnect even when the caller awaits it later", () =>
     Effect.gen(function* () {
       const states = yield* Queue.unbounded<{ readonly phase: string }>();
@@ -131,38 +98,6 @@ describe("update restart reconnect nudges", () => {
       ]);
 
       yield* Fiber.join(reconnected);
-    }),
-  );
-  it.effect("arms the retry observer before a commit can disconnect", () =>
-    Effect.gen(function* () {
-      const allowSubscription = yield* Deferred.make<void>();
-      const subscriptionStarted = yield* Deferred.make<void>();
-      const states = yield* Queue.unbounded<{ readonly phase: string }>();
-      const commits = yield* Ref.make(0);
-      const disconnect = new RpcClientError.RpcClientError({
-        reason: new Socket.SocketCloseError({ code: 1006 }),
-      });
-      const stateChanges = Stream.unwrap(
-        Deferred.succeed(subscriptionStarted, undefined).pipe(
-          Effect.andThen(Deferred.await(allowSubscription)),
-          Effect.as(Stream.fromQueue(states)),
-        ),
-      );
-      const retry = yield* runDesktopCommitWithReconnectObserver(
-        stateChanges,
-        Ref.update(commits, (count) => count + 1).pipe(
-          Effect.andThen(Queue.offerAll(states, [{ phase: "backoff" }, { phase: "connected" }])),
-          Effect.andThen(Effect.fail(disconnect)),
-        ),
-      ).pipe(Effect.flip, Effect.forkChild);
-
-      yield* Deferred.await(subscriptionStarted);
-      expect(yield* Ref.get(commits)).toBe(0);
-      yield* Deferred.succeed(allowSubscription, undefined);
-      yield* Queue.offer(states, { phase: "connected" });
-
-      expect(yield* Fiber.join(retry)).toBe(disconnect);
-      expect(yield* Ref.get(commits)).toBe(1);
     }),
   );
   it.effect("retries once per backoff entry instead of only the first", () =>
@@ -375,36 +310,6 @@ describe("server state projection", () => {
       expect(rollback.message).toBe("prepared-timeout");
     }),
   );
-
-  it("requires tokenless desktop updates to reach the target version", () => {
-    const ready = (serverVersion: string) =>
-      ({
-        version: 1 as const,
-        sequence: 1,
-        type: "ready" as const,
-        payload: {
-          at: "2026-09-01T00:00:00.000Z",
-          environment: { serverVersion },
-        },
-      }) as Parameters<typeof matchesServerUpdateResumeEvent>[1];
-
-    expect(
-      matchesServerUpdateResumeEvent(
-        { targetVersion: "0.0.31", method: "desktop-app" },
-        ready("0.0.30"),
-      ),
-    ).toBe(false);
-    expect(
-      matchesServerUpdateResumeEvent(
-        {
-          targetVersion: "0.0.31",
-          method: "desktop-app",
-          desktopUpdateToken: "update-1",
-        },
-        ready("0.0.30"),
-      ),
-    ).toBe(true);
-  });
 
   it("applies every config category to the projected snapshot", () => {
     const snapshot = applyServerConfigProjection(Option.none(), {

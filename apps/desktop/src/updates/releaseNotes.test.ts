@@ -100,12 +100,12 @@ describe("normalizeDesktopUpdateReleaseNotes", () => {
     });
   });
 
-  it("drops releases from other trains before grouping on nightly", () => {
+  it("drops stable releases before grouping prereleases", () => {
     // electron-updater's full changelog is "every version above the running
     // one", and preview sorts above nightly, so the preview cuts come first.
     const releaseNotes = [
-      { version: "0.0.41-preview.20260914.1683", note: "- Maintainer test build" },
-      { version: "0.0.41-preview.20260913.1669", note: "- Maintainer test build" },
+      { version: "0.0.41", note: "- Maintainer test build" },
+      { version: "0.0.40", note: "- Maintainer test build" },
       { version: "0.0.41-nightly.20260914.1707", note: "- Nightly change 2" },
       { version: "0.0.41-nightly.20260914.1700", note: "- Nightly change 1" },
     ];

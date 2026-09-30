@@ -247,7 +247,6 @@ describe("ElectronProtocol", () => {
   it("keeps executable sources host-restricted while allowing runtime network resources", () => {
     const policy = ElectronProtocol.makeDesktopContentSecurityPolicy({
       scheme: "awen",
-      targetOrigin: new URL("http://127.0.0.1:3773/"),
       clerkFrontendApiHostname: "clerk.t3.codes",
     });
     const directives = Object.fromEntries(

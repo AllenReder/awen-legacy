@@ -20,7 +20,8 @@ export default defineConfig({
   run: {
     tasks: {
       build: {
-        command: "node scripts/build-trackpad.mjs && node scripts/build-preview-annotation-css.mjs && vp pack",
+        command:
+          "node scripts/build-trackpad.mjs && node scripts/build-preview-annotation-css.mjs && vp pack",
         cache: false,
       },
       "dev:desktop": {
@@ -34,7 +35,8 @@ export default defineConfig({
         cache: false,
       },
       "dev:bundle": {
-        command: "node scripts/build-trackpad.mjs && node scripts/build-preview-annotation-css.mjs && vp pack --watch",
+        command:
+          "node scripts/build-trackpad.mjs && node scripts/build-preview-annotation-css.mjs && vp pack --watch",
         cache: false,
       },
       "dev:electron": {

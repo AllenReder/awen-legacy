@@ -21,24 +21,7 @@ interface RuntimeTargetFields {
   readonly nodeName: "node" | "node.exe";
 }
 
-/**
- * The Rust target triples a packaged desktop runtime can embed a Node binary
- * for. Passing `--target` stages the Node build for that triple instead of the
- * host binary, so an Apple Silicon runner can produce the x86_64 DMG without an
- * Intel runner and every platform ships the same Node version.
- */
-const RUNTIME_TARGETS = new Map<string, RuntimeTargetFields>([
-  ["aarch64-apple-darwin", { platform: "darwin", arch: "arm64", nodeName: "node" }],
-  ["x86_64-apple-darwin", { platform: "darwin", arch: "x64", nodeName: "node" }],
-  ["x86_64-pc-windows-msvc", { platform: "win32", arch: "x64", nodeName: "node.exe" }],
-  ["aarch64-pc-windows-msvc", { platform: "win32", arch: "arm64", nodeName: "node.exe" }],
-  ["x86_64-unknown-linux-gnu", { platform: "linux", arch: "x64", nodeName: "node" }],
-  ["aarch64-unknown-linux-gnu", { platform: "linux", arch: "arm64", nodeName: "node" }],
-]);
-
-export interface DesktopRuntimeTarget extends RuntimeTargetFields {
-  readonly triple: string;
-}
+export interface DesktopRuntimeTarget extends RuntimeTargetFields {}
 
 /**
  * A published Node download. Windows ships a bare executable under
@@ -52,14 +35,15 @@ export interface RuntimeNodeDownload {
   readonly entryPath: string;
 }
 
-export function resolveDesktopRuntimeTarget(triple: string): DesktopRuntimeTarget {
-  const target = RUNTIME_TARGETS.get(triple);
-  if (target === undefined) {
-    throw new Error(
-      `Unsupported desktop runtime target ${JSON.stringify(triple)}. Known targets: ${[...RUNTIME_TARGETS.keys()].join(", ")}.`,
-    );
+export function resolveDesktopRuntimeTarget(platform: string, arch: string): DesktopRuntimeTarget {
+  if (!["darwin", "win32", "linux"].includes(platform) || !["arm64", "x64"].includes(arch)) {
+    throw new Error(`Unsupported desktop runtime target ${platform}/${arch}.`);
   }
-  return { triple, ...target };
+  return {
+    platform: platform as DesktopRuntimeTarget["platform"],
+    arch: arch as DesktopRuntimeTarget["arch"],
+    nodeName: platform === "win32" ? "node.exe" : "node",
+  };
 }
 
 /**
@@ -107,37 +91,27 @@ export function readNodeShasum(shasums: string, checksumName: string): string {
 }
 
 export interface StageRuntimeArguments {
-  readonly target?: string;
+  readonly platform?: string;
+  readonly arch?: string;
 }
-
 export function readStageArguments(argv: readonly string[]): StageRuntimeArguments {
-  let target: string | undefined;
-  let index = 0;
-  while (index < argv.length) {
-    const argument = argv[index] ?? "";
-    index += 1;
-    if (argument === "--target") {
-      const value = argv[index];
-      if (value === undefined || value.startsWith("--")) {
-        throw new Error(
-          "--target needs a Rust target triple, for example --target x86_64-apple-darwin.",
-        );
-      }
-      index += 1;
-      target = value;
-      continue;
-    }
-    if (argument.startsWith("--target=")) {
-      const value = argument.slice("--target=".length);
-      if (value.length === 0) throw new Error("--target needs a Rust target triple.");
-      target = value;
-      continue;
-    }
-    throw new Error(
-      `Unknown argument ${JSON.stringify(argument)}. Usage: node scripts/stage-desktop-runtime.ts [--target <triple>]`,
-    );
+  const result: { platform?: string; arch?: string } = {};
+  for (let i = 0; i < argv.length; i += 1) {
+    const match = /^--(platform|arch)(?:=(.*))?$/.exec(argv[i] ?? "");
+    if (!match)
+      throw new Error(
+        `Unknown argument ${argv[i]}. Use --platform darwin|win32|linux --arch arm64|x64.`,
+      );
+    const value = match[2] ?? argv[++i];
+    if (!value || value.startsWith("--")) throw new Error(`--${match[1]} needs a value.`);
+    result[match[1] as "platform" | "arch"] = value;
   }
-  return target === undefined ? {} : { target };
+  if (result.platform !== undefined || result.arch !== undefined)
+    resolveDesktopRuntimeTarget(
+      result.platform ?? Effect.runSync(HostProcessPlatform),
+      result.arch ?? Effect.runSync(HostProcessArchitecture),
+    );
+  return result;
 }
 
 function runPnpm(args: string[]): void {
@@ -268,7 +242,7 @@ async function stageTargetNode(target: DesktopRuntimeTarget, destination: string
   } finally {
     NodeFS.rmSync(scratch, { recursive: true, force: true });
   }
-  console.log(`[awen] staged Node ${version} for ${target.triple}`);
+  console.log(`[awen] staged Node ${version} for ${target.platform}/${target.arch}`);
 }
 
 /**
@@ -287,7 +261,7 @@ export function removeNodeModulesBinShims(runtimeDir: string): void {
 
 /**
  * Refuse to stage a runtime that resolves anything through a symlink or a
- * junction. Tauri's resource copy drops those entries, so a linked tree ships
+ * junction. The installer resource copy drops those entries, so a linked tree ships
  * an installer whose daemon cannot resolve its dependencies; failing here names
  * the mechanism instead of leaving it to a user-visible crash.
  */
@@ -311,12 +285,21 @@ export function assertLinkFreeRuntime(runtimeDir: string): void {
   }
 }
 
-export async function stageDesktopRuntime({ target }: StageRuntimeArguments = {}): Promise<void> {
+export async function stageDesktopRuntime({
+  platform,
+  arch,
+}: StageRuntimeArguments = {}): Promise<void> {
   const hostPlatform = Effect.runSync(HostProcessPlatform);
-  const runtimeTarget = target === undefined ? undefined : resolveDesktopRuntimeTarget(target);
+  const runtimeTarget =
+    platform === undefined && arch === undefined
+      ? undefined
+      : resolveDesktopRuntimeTarget(
+          platform ?? hostPlatform,
+          arch ?? Effect.runSync(HostProcessArchitecture),
+        );
   const nodeName = runtimeTarget?.nodeName ?? (hostPlatform === "win32" ? "node.exe" : "node");
 
-  // Without `--target` the runtime matches the developer's machine, so the
+  // Without an explicit platform/architecture the runtime matches the developer's machine, so the
   // binary can be copied and checked in place.
   if (runtimeTarget === undefined && hostPlatform === "darwin") {
     assertStandaloneHostNode(process.execPath);
@@ -324,7 +307,7 @@ export async function stageDesktopRuntime({ target }: StageRuntimeArguments = {}
 
   runPnpm(["build"]);
   NodeFS.rmSync(STAGE, { recursive: true, force: true });
-  // Stage the hoisted layout. Tauri copies this tree into the installer as
+  // Stage the hoisted layout. Electron copies this tree into the installer as
   // desktop resources, and that copy keeps real files and directories only:
   // symlinks and junctions never reach the installed app. The isolated layout
   // resolves every dependency through exactly those links, so the packaged

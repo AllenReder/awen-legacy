@@ -63,9 +63,8 @@ export type ExecutionEnvironmentPlatform = typeof ExecutionEnvironmentPlatform.T
 /** How a server can replace itself with another version when asked over RPC.
     New servers only advertise the stable launcher-backed "boot-service" path;
     "respawn" remains decodable for compatibility with older servers.
-    "desktop-app" means the supervising desktop app updated and relaunched
-    itself, bringing the server back with it. */
-export const ServerSelfUpdateMethod = Schema.Literals(["boot-service", "respawn", "desktop-app"]);
+ */
+export const ServerSelfUpdateMethod = Schema.Literals(["boot-service", "respawn"]);
 export type ServerSelfUpdateMethod = typeof ServerSelfUpdateMethod.Type;
 
 /** What update path a client should offer for a server: one of the RPC
@@ -160,11 +159,6 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
       setting. Older servers drop the key on write, so clients show the
       picker inert rather than offering a choice that would never stick. */
   environmentIcon: Schema.optionalKey(Schema.Boolean),
-  /** The desktop app supervising this server can be driven over RPC:
-      server.updateServer runs its check -> download -> relaunch. Absent on
-      desktop servers whose app predates the remote trigger, where clients
-      must keep telling the user to update the app on that machine. */
-  desktopAppUpdate: Schema.optionalKey(Schema.Boolean),
   /** Server exposes the awenWorkspace.associate / createWorktree / remove
       RPCs. Absent on servers from before workspace management shipped, where
       clients hide the sidebar actions instead of calling unknown methods. */

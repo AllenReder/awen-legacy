@@ -69,15 +69,15 @@ const fixture = Effect.gen(function* () {
     preflightFailure: Option.none(),
   };
   const layer = Layer.mergeAll(
-    Layer.mock(DesktopEnvironment.DesktopEnvironment, {
+    Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
       baseDir: root,
       backendNodePath: "/node",
       backendEntryPath: "/server/bin.mjs",
       backendCwd: root,
       appVersion: "1.0.0",
-    }),
+    } as DesktopEnvironment.DesktopEnvironment["Service"]),
     Layer.mock(DesktopServerExposure.DesktopServerExposure, {
-      configureFromSettings: () => Effect.void,
+      configureFromSettings: () => Effect.succeed({} as never),
     }),
     DesktopWslEnvironment.layerTest(),
     Layer.succeed(

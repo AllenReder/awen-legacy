@@ -3,7 +3,6 @@
 ADR-0031 amends the navigation input, continuous route, shared indicator and
 overlay architecture described here; its rules take precedence where they differ.
 
-
 **Status: accepted**
 
 ADR-0024 amends this decision's fixed-duration settle, two-card presentation,

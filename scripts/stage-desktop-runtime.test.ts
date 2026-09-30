@@ -27,20 +27,19 @@ const PUBLISHED_SHASUMS = [
 ].join("\n");
 
 describe("desktop runtime targets", () => {
-  it("maps the triples the release builds", () => {
-    expect(resolveDesktopRuntimeTarget("aarch64-apple-darwin")).toEqual({
-      triple: "aarch64-apple-darwin",
+  it("maps the platforms and architectures the release builds", () => {
+    expect(resolveDesktopRuntimeTarget("darwin", "arm64")).toEqual({
       platform: "darwin",
       arch: "arm64",
       nodeName: "node",
     });
-    expect(resolveDesktopRuntimeTarget("x86_64-apple-darwin").arch).toBe("x64");
-    expect(resolveDesktopRuntimeTarget("x86_64-pc-windows-msvc").nodeName).toBe("node.exe");
-    expect(resolveDesktopRuntimeTarget("x86_64-unknown-linux-gnu").platform).toBe("linux");
+    expect(resolveDesktopRuntimeTarget("darwin", "x64").arch).toBe("x64");
+    expect(resolveDesktopRuntimeTarget("win32", "x64").nodeName).toBe("node.exe");
+    expect(resolveDesktopRuntimeTarget("linux", "x64").platform).toBe("linux");
   });
 
-  it("refuses a triple it cannot stage a runtime for", () => {
-    expect(() => resolveDesktopRuntimeTarget("x86_64-unknown-freebsd")).toThrow(
+  it("refuses a platform it cannot stage a runtime for", () => {
+    expect(() => resolveDesktopRuntimeTarget("freebsd", "x64")).toThrow(
       /Unsupported desktop runtime target/u,
     );
   });
@@ -60,20 +59,14 @@ describe("embedded Node version", () => {
 
 describe("runtime Node downloads", () => {
   it("takes the Windows executable straight from the dist directory", () => {
-    const download = runtimeNodeDownload(
-      "24.13.1",
-      resolveDesktopRuntimeTarget("x86_64-pc-windows-msvc"),
-    );
+    const download = runtimeNodeDownload("24.13.1", resolveDesktopRuntimeTarget("win32", "x64"));
     expect(download.url).toBe("https://nodejs.org/dist/v24.13.1/win-x64/node.exe");
     expect(download.checksumName).toBe("win-x64/node.exe");
     expect(download.archive).toBe(false);
   });
 
   it("unpacks the macOS and Linux tarballs", () => {
-    const download = runtimeNodeDownload(
-      "24.13.1",
-      resolveDesktopRuntimeTarget("x86_64-apple-darwin"),
-    );
+    const download = runtimeNodeDownload("24.13.1", resolveDesktopRuntimeTarget("darwin", "x64"));
     expect(download.url).toBe("https://nodejs.org/dist/v24.13.1/node-v24.13.1-darwin-x64.tar.gz");
     expect(download.checksumName).toBe("node-v24.13.1-darwin-x64.tar.gz");
     expect(download.archive).toBe(true);
@@ -97,20 +90,17 @@ describe("published checksums", () => {
 });
 
 describe("stage arguments", () => {
-  it("reads both spellings of --target and defaults to the host runtime", () => {
+  it("defaults to the host and supports explicit platform and architecture", () => {
     expect(readStageArguments([])).toEqual({});
-    expect(readStageArguments(["--target", "x86_64-apple-darwin"])).toEqual({
-      target: "x86_64-apple-darwin",
+    expect(readStageArguments(["--platform", "darwin", "--arch=x64"])).toEqual({
+      platform: "darwin",
+      arch: "x64",
     });
-    expect(readStageArguments(["--target=aarch64-apple-darwin"])).toEqual({
-      target: "aarch64-apple-darwin",
-    });
-  });
-
-  it("rejects an unknown argument or a missing triple", () => {
-    expect(() => readStageArguments(["--bundle"])).toThrow(/Unknown argument/u);
-    expect(() => readStageArguments(["--target"])).toThrow(/needs a Rust target triple/u);
-    expect(() => readStageArguments(["--target="])).toThrow(/needs a Rust target triple/u);
+    expect(() => readStageArguments(["--target", "x86_64-apple-darwin"])).toThrow(
+      /Unknown argument/,
+    );
+    expect(() => readStageArguments(["--arch"])).toThrow(/needs a value/);
+    expect(() => readStageArguments(["--platform=freebsd"])).toThrow(/Unsupported/);
   });
 });
 
@@ -129,7 +119,7 @@ describe("runtime download cache", () => {
       nodeRuntimeCachePath(
         "/cache",
         "24.13.1",
-        resolveDesktopRuntimeTarget("x86_64-pc-windows-msvc"),
+        resolveDesktopRuntimeTarget("win32", "x64"),
         "node.exe",
       ),
     ).toBe("/cache/v24.13.1/win32-x64/node.exe");
@@ -137,7 +127,7 @@ describe("runtime download cache", () => {
       nodeRuntimeCachePath(
         "/cache",
         "24.13.1",
-        resolveDesktopRuntimeTarget("aarch64-apple-darwin"),
+        resolveDesktopRuntimeTarget("darwin", "arm64"),
         "node-v24.13.1-darwin-arm64.tar.gz",
       ),
     ).toBe("/cache/v24.13.1/darwin-arm64/node-v24.13.1-darwin-arm64.tar.gz");

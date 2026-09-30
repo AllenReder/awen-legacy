@@ -23,7 +23,7 @@ await new Promise((resolve) => socket.close(resolve));
 const env = {
   ...process.env,
   AWEN_HOME: scratch,
-  AWEN_DISABLE_AUTO_UPDATE: "1",
+  AWEN_DISABLE_UPDATE_CHECK: "1",
   ELECTRON_ENABLE_LOGGING: "1",
 };
 delete env.VITE_DEV_SERVER_URL;
@@ -97,6 +97,11 @@ try {
     const token = await bridge.getLocalEnvironmentBearerToken();
     await bridge.getClientSettings();
     await bridge.discoverSshHosts();
+    if (typeof bridge.downloadUpdate !== "undefined" || typeof bridge.installUpdate !== "undefined")
+      throw new Error("The desktop bridge still exposes automatic app installation.");
+    const updateState = await bridge.getUpdateState();
+    if (updateState.enabled || updateState.status !== "disabled")
+      throw new Error("The smoke's version-check disable flag was ignored.");
     return {
       origin: local.httpBaseUrl,
       authenticated: Boolean(token),

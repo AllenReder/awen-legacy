@@ -150,9 +150,7 @@ export const make = Effect.gen(function* () {
           Effect.provide(runtimeContext),
           Effect.withSpan("desktop.ssh.ensureEnvironment"),
         ),
-    disconnectEnvironment: (
-      target,
-    ): Effect.Effect<void, DesktopSshEnvironmentOperationError> =>
+    disconnectEnvironment: (target): Effect.Effect<void, DesktopSshEnvironmentOperationError> =>
       manager
         .disconnectEnvironment(target)
         .pipe(

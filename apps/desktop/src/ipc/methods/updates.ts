@@ -1,5 +1,4 @@
 import {
-  DesktopUpdateActionResultSchema,
   DesktopUpdateChannelSchema,
   DesktopUpdateCheckResultSchema,
   DesktopUpdateStateSchema,
@@ -28,26 +27,6 @@ export const setUpdateChannel = DesktopIpc.makeIpcMethod({
   handler: Effect.fn("desktop.ipc.updates.setChannel")(function* (channel) {
     const updates = yield* DesktopUpdates.DesktopUpdates;
     return yield* updates.setChannel(channel);
-  }),
-});
-
-export const downloadUpdate = DesktopIpc.makeIpcMethod({
-  channel: IpcChannels.UPDATE_DOWNLOAD_CHANNEL,
-  payload: Schema.Void,
-  result: DesktopUpdateActionResultSchema,
-  handler: Effect.fn("desktop.ipc.updates.download")(function* () {
-    const updates = yield* DesktopUpdates.DesktopUpdates;
-    return yield* updates.download;
-  }),
-});
-
-export const installUpdate = DesktopIpc.makeIpcMethod({
-  channel: IpcChannels.UPDATE_INSTALL_CHANNEL,
-  payload: Schema.Void,
-  result: DesktopUpdateActionResultSchema,
-  handler: Effect.fn("desktop.ipc.updates.install")(function* () {
-    const updates = yield* DesktopUpdates.DesktopUpdates;
-    return yield* updates.install;
   }),
 });
 

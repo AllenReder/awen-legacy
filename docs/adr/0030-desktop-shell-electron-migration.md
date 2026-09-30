@@ -3,7 +3,6 @@
 ADR-0031 amends the navigation input, continuous route, shared indicator and
 overlay architecture described here; its rules take precedence where they differ.
 
-
 Awen adopts Electron 44 for its desktop shell and a shared Chromium browser host across macOS, Windows, and Linux. The shell uses TypeScript and native system window materials; the existing managed daemon remains responsible for running Sessions independently of the desktop application. Browser automation delivery still requires evidence for the same displayed page through the existing Agent contracts.
 
 ## Status
@@ -62,4 +61,4 @@ As Awen grew into a comprehensive coding agent workbench, several structural blo
 - Desktop distributions carry Chromium and therefore grow relative to the Tauri shell; measure final artifact sizes rather than treating an estimate as acceptance evidence.
 - The host choice changes from Tauri to Electron. Issue #158's original Tauri-only prototype criteria and downstream delivery status must be reconciled explicitly; choosing Electron is not proof that every browser operation works.
 - The desktop shell no longer needs a Rust toolchain. Platform native addons and the Linux browser-secret helper still require their own build and packaging support.
-- Ordinary shell shutdown leaves the managed daemon running. Installing an update or first launching a new app version replaces the local daemon together with the desktop shell. This operation may interrupt active Agent and Terminal Sessions; the update action is explicitly “Update and restart”. Same-version restarts reuse the daemon. Follow t3code's stop/install/relaunch flow without a separate deferred daemon-upgrade workflow. The remote SSH daemon upgrade boundary in ADR-0011 is unchanged.
+- Ordinary shell shutdown leaves the managed daemon running. The desktop app checks public GitHub Releases metadata, announces newer versions, and opens the exact Release page for manual installation on every desktop platform. It never downloads or installs an app update or relaunches to apply one. First launching a newly installed app version replaces its managed local daemon; this may interrupt active Agent and Terminal Sessions. Same-version restarts reuse the daemon. Remote servers cannot request desktop installation through the telemetry or RPC channels. The remote SSH daemon upgrade boundary in ADR-0011 is unchanged.

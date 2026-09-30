@@ -14,10 +14,9 @@ const baseState: DesktopUpdateState = {
   appArch: "x64",
   runningUnderArm64Translation: false,
   availableVersion: null,
-  downloadedVersion: null,
+  releaseUrl: null,
   releaseNotes: [],
   omittedReleaseCount: 0,
-  downloadPercent: null,
   checkedAt: null,
   message: null,
   errorContext: null,
@@ -45,21 +44,21 @@ describe("desktopUpdateStateAtom", () => {
       expect(AsyncResult.getOrElse(registry.get(atom), () => null)).toEqual(baseState);
     });
 
-    const downloadedState: DesktopUpdateState = {
+    const availableState: DesktopUpdateState = {
       ...baseState,
-      status: "downloaded",
+      status: "available",
       availableVersion: "1.1.0",
-      downloadedVersion: "1.1.0",
+      releaseUrl: "https://github.com/AllenReder/awen/releases/tag/v1.1.0",
     };
-    listener?.(downloadedState);
+    listener?.(availableState);
 
     await vi.waitFor(() => {
-      expect(AsyncResult.getOrElse(registry.get(atom), () => null)).toEqual(downloadedState);
+      expect(AsyncResult.getOrElse(registry.get(atom), () => null)).toEqual(availableState);
     });
     unmount();
 
     const remount = registry.mount(atom);
-    expect(AsyncResult.getOrElse(registry.get(atom), () => null)).toEqual(downloadedState);
+    expect(AsyncResult.getOrElse(registry.get(atom), () => null)).toEqual(availableState);
     expect(getUpdateState).toHaveBeenCalledTimes(1);
     expect(onUpdateState).toHaveBeenCalledTimes(1);
 

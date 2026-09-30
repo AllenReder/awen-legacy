@@ -93,7 +93,7 @@ const handleCheckForUpdatesMenuClick = Effect.gen(function* () {
     yield* electronDialog.showMessageBox({
       type: "info",
       title: "Updates unavailable",
-      message: "Automatic updates are not available right now.",
+      message: "Version checks are not available right now.",
       detail: disabledReason.value,
       buttons: ["OK"],
     });

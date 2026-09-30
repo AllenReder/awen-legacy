@@ -1,3 +1,4 @@
+import { openDesktopUpdateReleaseNotes } from "../desktopUpdate.toast";
 import { Spinner } from "~/components/ui/spinner";
 import { NotificationSettings } from "./NotificationSettings";
 import { ArchiveIcon, ArchiveX, ChevronRightIcon, SettingsIcon } from "lucide-react";
@@ -65,7 +66,6 @@ import { APP_VERSION } from "../../branding";
 import {
   canCheckForUpdate,
   getDesktopUpdateButtonTooltip,
-  getDesktopUpdateInstallConfirmationMessage,
   isDesktopUpdateButtonDisabled,
   resolveDesktopUpdateButtonAction,
 } from "../../components/desktopUpdate.logic";
@@ -291,60 +291,21 @@ function AboutVersionSection() {
 
     const action = updateState ? resolveDesktopUpdateButtonAction(updateState) : "none";
 
-    if (action === "download") {
-      void bridge.downloadUpdate().catch((error: unknown) => {
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Could not download update",
-            description: error instanceof Error ? error.message : "Download failed.",
-          }),
-        );
-      });
-      return;
-    }
-
-    if (action === "install") {
-      if (isUpdateActionPending) return;
-      setIsUpdateActionPending(true);
-      let confirmed = false;
+    if (isUpdateActionPending) return;
+    setIsUpdateActionPending(true);
+    if (action === "release" && updateState?.releaseUrl) {
       try {
-        confirmed = await ensureLocalApi().dialogs.confirm(
-          getDesktopUpdateInstallConfirmationMessage(
-            updateState ?? { availableVersion: null, downloadedVersion: null },
-          ),
-        );
-      } catch (error) {
+        await openDesktopUpdateReleaseNotes(bridge, updateState.releaseUrl);
+      } finally {
         setIsUpdateActionPending(false);
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Could not confirm update",
-            description: error instanceof Error ? error.message : "Update confirmation failed.",
-          }),
-        );
-        return;
       }
-      if (!confirmed) {
-        setIsUpdateActionPending(false);
-        return;
-      }
-      void bridge
-        .installUpdate()
-        .catch((error: unknown) => {
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: "Could not install update",
-              description: error instanceof Error ? error.message : "Install failed.",
-            }),
-          );
-        })
-        .finally(() => setIsUpdateActionPending(false));
       return;
     }
 
-    if (typeof bridge.checkForUpdate !== "function") return;
+    if (typeof bridge.checkForUpdate !== "function") {
+      setIsUpdateActionPending(false);
+      return;
+    }
     void bridge
       .checkForUpdate()
       .then((result) => {
@@ -354,7 +315,7 @@ function AboutVersionSection() {
               type: "error",
               title: "Could not check for updates",
               description:
-                result.state.message ?? "Automatic updates are not available in this build.",
+                result.state.message ?? "Version checks are not available in this build.",
             }),
           );
         }
@@ -367,7 +328,8 @@ function AboutVersionSection() {
             description: error instanceof Error ? error.message : "Update check failed.",
           }),
         );
-      });
+      })
+      .finally(() => setIsUpdateActionPending(false));
   }, [isUpdateActionPending, updateState]);
 
   const action = updateState ? resolveDesktopUpdateButtonAction(updateState) : "none";
@@ -377,17 +339,16 @@ function AboutVersionSection() {
       ? !canCheckForUpdate(updateState)
       : isDesktopUpdateButtonDisabled(updateState);
 
-  const actionLabel: Record<string, string> = { download: "Download", install: "Install" };
+  const actionLabel: Record<string, string> = { release: "Open Release" };
   const statusLabel: Record<string, string> = {
     checking: "Checking…",
-    downloading: "Downloading…",
     "up-to-date": "Up to Date",
   };
   const buttonLabel =
     actionLabel[action] ?? statusLabel[updateState?.status ?? ""] ?? "Check for Updates";
   const description =
-    action === "download" || action === "install"
-      ? "Update available."
+    action === "release"
+      ? "New version available. Download and install it from the Release page."
       : "Current version of the application.";
 
   return (

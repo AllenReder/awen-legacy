@@ -410,7 +410,7 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
         // Mirrors the release archive: one top-level versioned directory that
         // holds the executable and its native addons.
         'stage="$work/stage/t3-0.0.0-linux-x64"',
-        'mkdir -p "$stage/node_modules/node-pty/build/Release" "$work/home"',
+        'mkdir -p "$stage/bin" "$stage/node_modules/node-pty/build/Release" "$work/home"',
         `printf '%s' ${sh(SERVER_ENTRY_SOURCE)} > "$stage/bin/awen"`,
         'chmod +x "$stage/bin/awen"',
         `printf '%s' 'pty-native-payload' > "$stage/node_modules/node-pty/build/Release/pty.node"`,

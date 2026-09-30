@@ -2,10 +2,6 @@ import {
   DesktopHostTelemetryMessage,
   type DesktopHostTelemetrySnapshot,
   type DesktopTelemetryControlMessage,
-  type DesktopTelemetryCancelDesktopUpdate,
-  type DesktopTelemetryCommitDesktopUpdate,
-  type DesktopTelemetryRequestDesktopUpdate,
-  type DesktopUpdateStatusReport,
   type HostPowerSnapshot,
 } from "@awen/contracts";
 import * as Cause from "effect/Cause";
@@ -15,8 +11,8 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
+import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -71,11 +67,7 @@ export class DesktopTelemetryPublisher extends Context.Service<
     /** Sends the report to the attached backend and replays the latest one
         to backends that attach later (including the one spawned after a
         relaunch). */
-    readonly publishUpdateReport: (report: DesktopUpdateStatusReport) => Effect.Effect<void>;
     /** Update requests received over the control channel. Single consumer. */
-    readonly updateRequests: Stream.Stream<DesktopTelemetryRequestDesktopUpdate>;
-    readonly updateCommits: Stream.Stream<DesktopTelemetryCommitDesktopUpdate>;
-    readonly updateCancellations: Stream.Stream<DesktopTelemetryCancelDesktopUpdate>;
   }
 >()("@awen/desktop/telemetry/DesktopTelemetryPublisher") {}
 
@@ -172,11 +164,6 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
   const latest = yield* Ref.make(Option.none<DesktopHostTelemetrySnapshot>());
   const changes = yield* PubSub.sliding<DesktopHostTelemetrySnapshot>(8);
   const sequence = yield* Ref.make(0);
-  const latestUpdateReport = yield* Ref.make(Option.none<DesktopUpdateStatusReport>());
-  const updateReportChanges = yield* PubSub.sliding<DesktopUpdateStatusReport>(16);
-  const updateRequestQueue = yield* Queue.unbounded<DesktopTelemetryRequestDesktopUpdate>();
-  const updateCommitQueue = yield* Queue.unbounded<DesktopTelemetryCommitDesktopUpdate>();
-  const updateCancellationQueue = yield* Queue.unbounded<DesktopTelemetryCancelDesktopUpdate>();
 
   const offer = (event: PowerEvent): void => {
     Queue.offerUnsafe(powerEvents, event);
@@ -342,12 +329,6 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
           active: Duration.millis(message.activeIntervalMs),
           idle: Duration.millis(message.idleIntervalMs),
         }).pipe(Effect.andThen(Queue.offer(sampleTriggers, undefined)), Effect.asVoid);
-      case "requestDesktopUpdate":
-        return Queue.offer(updateRequestQueue, message).pipe(Effect.asVoid);
-      case "commitDesktopUpdate":
-        return Queue.offer(updateCommitQueue, message).pipe(Effect.asVoid);
-      case "cancelDesktopUpdate":
-        return Queue.offer(updateCancellationQueue, message).pipe(Effect.asVoid);
     }
   };
   const removeControlSource: DesktopTelemetryPublisher["Service"]["removeControlSource"] = (
@@ -379,35 +360,14 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
       );
     }),
   );
-  const updateReports = Stream.unwrap(
-    Effect.gen(function* () {
-      const subscription = yield* PubSub.subscribe(updateReportChanges);
-      const initial = yield* Ref.get(latestUpdateReport);
-      return Stream.concat(
-        Option.match(initial, {
-          onNone: () => Stream.empty,
-          onSome: Stream.make,
-        }),
-        Stream.fromSubscription(subscription),
-      );
-    }),
-  );
   const encoded = Stream.concat(
     Stream.make({
       version: 1,
       type: "desktopTelemetryHello",
       electronPid: process.pid,
     } as const),
-    Stream.merge(snapshots, updateReports),
+    snapshots,
   ).pipe(Stream.map((message) => textEncoder.encode(`${encodeMessage(message)}\n`)));
-
-  const publishUpdateReport: DesktopTelemetryPublisher["Service"]["publishUpdateReport"] = (
-    report,
-  ) =>
-    Ref.set(latestUpdateReport, Option.some(report)).pipe(
-      Effect.andThen(PubSub.publish(updateReportChanges, report)),
-      Effect.asVoid,
-    );
 
   return DesktopTelemetryPublisher.of({
     latest: Ref.get(latest),
@@ -415,10 +375,6 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
     encoded,
     handleControlForSource,
     removeControlSource,
-    publishUpdateReport,
-    updateRequests: Stream.fromQueue(updateRequestQueue),
-    updateCommits: Stream.fromQueue(updateCommitQueue),
-    updateCancellations: Stream.fromQueue(updateCancellationQueue),
   });
 });
 

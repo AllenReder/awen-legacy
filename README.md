@@ -81,7 +81,7 @@ is required for local development.
 
 ## Desktop shell
 
-Awen's desktop target is a small Tauri host around the same Awen Web client.
+Awen's desktop target is a Electron shell around the same Awen Web client.
 The host owns the native window, resource loading, constrained external-link
 opening, and desktop connection bootstrap; agent execution, PTY state,
 provider credentials, and persistence remain in the existing daemon. The
@@ -97,7 +97,7 @@ and uses this checkout's `.awen` directory by default. One checkout owns one
 git worktree to run another desktop dev session at the same time:
 
 ```bash
-# Tauri window, this checkout's Web dev server, and the local daemon launcher
+# Electron window, this checkout's Web dev server, and the local daemon launcher
 pnpm dev:desktop
 ```
 
@@ -117,7 +117,7 @@ pnpm smoke:desktop-terminal --webkit
 ```
 
 This headless check complements native desktop UI verification; it does not
-launch the Tauri application or establish macOS UI acceptance.
+launch the Electron application or establish macOS UI acceptance.
 
 The Workbench cutover E2E starts an isolated daemon and Web client, pairs a
 headless browser, and exercises the real Sidebar, routes, BSP panes, PTY, and
@@ -161,7 +161,7 @@ server at runtime:
 ```bash
 pnpm build:desktop
 AWEN_HOME="$PWD/.awen" AWEN_DESKTOP_BEARER_TOKEN=<bearer-token> \
-  apps/desktop/src-tauri/target/release/bundle/macos/Awen.app/Contents/MacOS/awen-desktop
+  apps/desktop/dist-package/mac-arm64/Awen.app/Contents/MacOS/Awen
 ```
 
 The generated release application identifier is `com.allenreder.awen`; the

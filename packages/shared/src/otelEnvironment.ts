@@ -118,7 +118,10 @@ const resourceAttributes = Config.string(RESOURCE_ATTRIBUTES).pipe(
         .map((p) => {
           const idx = p.indexOf("=");
           if (idx === -1) return [decodeURIComponent(p.trim()), ""];
-          return [decodeURIComponent(p.slice(0, idx).trim()), decodeURIComponent(p.slice(idx + 1).trim())];
+          return [
+            decodeURIComponent(p.slice(0, idx).trim()),
+            decodeURIComponent(p.slice(idx + 1).trim()),
+          ];
         });
       return { value: Object.fromEntries(entries) };
     } catch {

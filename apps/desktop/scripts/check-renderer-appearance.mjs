@@ -40,7 +40,7 @@ await NodeFSP.writeFile(
   `require('node:os').homedir=()=>${JSON.stringify(scratch)};require(${JSON.stringify(NodePath.join(desktopDir, "dist-electron/boot.cjs"))});`,
 );
 const launch = resolveElectronLaunchCommand([wrapper]);
-const env = { ...process.env, AWEN_HOME: scratch, AWEN_DISABLE_AUTO_UPDATE: "1" };
+const env = { ...process.env, AWEN_HOME: scratch, AWEN_DISABLE_UPDATE_CHECK: "1" };
 delete env.VITE_DEV_SERVER_URL;
 delete env.ELECTRON_RUN_AS_NODE;
 delete env.AWEN_PORT;

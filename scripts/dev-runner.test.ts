@@ -819,7 +819,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
       }),
     );
 
-    // Pinned ports are what the desktop dev app addresses: the Tauri window URL
+    // Pinned ports are what the desktop dev app addresses: the Electron window URL
     // and the backend its Vite proxy dials are literals. Walking to the next free
     // number there does not "just work" — the window keeps loading the configured
     // URL and silently attaches to whatever already serves it, which reads as a

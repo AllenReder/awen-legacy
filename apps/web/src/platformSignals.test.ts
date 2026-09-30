@@ -9,7 +9,7 @@ describe("resolveClientPlatform", () => {
   });
 
   it("falls through the bridge sentinel to the browser signals", () => {
-    // Tauri's bridge reports "other" until its runtime config resolves (and
+    // Electron's bridge reports "other" until its runtime config resolves (and
     // forever when that config fails). Treating it as a real platform would
     // skip the navigator fallback and leave Windows on the WebGL renderer.
     expect(

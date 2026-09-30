@@ -27,10 +27,9 @@ const baseState: DesktopUpdateState = {
   appArch: "arm64",
   runningUnderArm64Translation: false,
   availableVersion: "0.1.0-alpha.3",
-  downloadedVersion: null,
+  releaseUrl: null,
   releaseNotes: [],
   omittedReleaseCount: 0,
-  downloadPercent: null,
   checkedAt: null,
   message: null,
   errorContext: null,
@@ -145,7 +144,7 @@ describe("SidebarUpdateReleaseNotes", () => {
       );
       expect(testState.addToast).toHaveBeenCalledWith({
         type: "error",
-        title: "Unable to open release notes",
+        title: "Unable to open Release page",
       });
     });
   });

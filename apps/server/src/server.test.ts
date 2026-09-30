@@ -2499,13 +2499,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  for (const desktopOrigin of [
-    "awen://app",
-    "awen-dev://app",
-    "http://tauri.localhost",
-    "https://tauri.localhost",
-    "tauri://localhost",
-  ]) {
+  for (const desktopOrigin of ["awen://app", "awen-dev://app"]) {
     it.effect(`allows credentialed preflights from ${desktopOrigin} in development`, () =>
       Effect.gen(function* () {
         yield* buildAppUnderTest({
@@ -2527,6 +2521,20 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           origin: desktopOrigin,
           credentials: true,
         });
+      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+    );
+  }
+
+  for (const origin of ["http://tauri.localhost", "https://tauri.localhost", "tauri://localhost"]) {
+    it.effect(`rejects retired renderer origin ${origin}`, () =>
+      Effect.gen(function* () {
+        yield* buildAppUnderTest({ config: { devUrl: new URL(crossOriginClientOrigin) } });
+        const sessionUrl = yield* getHttpServerUrl("/api/auth/session");
+        const response = yield* fetchEffect(sessionUrl, {
+          method: "OPTIONS",
+          headers: { origin, "access-control-request-method": "GET" },
+        });
+        assert.isUndefined(response.headers["access-control-allow-origin"]);
       }).pipe(Effect.provide(NodeHttpServer.layerTest)),
     );
   }

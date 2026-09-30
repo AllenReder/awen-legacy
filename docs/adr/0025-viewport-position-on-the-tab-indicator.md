@@ -7,7 +7,6 @@ status: accepted
 ADR-0031 amends the navigation input, continuous route, shared indicator and
 overlay architecture described here; its rules take precedence where they differ.
 
-
 A Scrolling Tab's horizontal scroll position is shown by the Topbar Tab
 indicator instead of a native scrollbar. The Workbench Viewport hides its
 native horizontal bar unconditionally; the active Tab's underbar narrows to the

@@ -178,8 +178,6 @@ export type DesktopUpdateStatus =
   | "checking"
   | "up-to-date"
   | "available"
-  | "downloading"
-  | "downloaded"
   | "error";
 
 export type DesktopRuntimeArch = "arm64" | "x64" | "other";
@@ -193,8 +191,6 @@ export const DesktopUpdateStatusSchema = Schema.Literals([
   "checking",
   "up-to-date",
   "available",
-  "downloading",
-  "downloaded",
   "error",
 ]);
 export const DesktopRuntimeArchSchema = Schema.Literals(["arm64", "x64", "other"]);
@@ -380,13 +376,12 @@ export interface DesktopUpdateState {
   appArch: DesktopRuntimeArch;
   runningUnderArm64Translation: boolean;
   availableVersion: string | null;
-  downloadedVersion: string | null;
+  releaseUrl: string | null;
   releaseNotes: ReadonlyArray<DesktopUpdateReleaseNote>;
   omittedReleaseCount: number;
-  downloadPercent: number | null;
   checkedAt: string | null;
   message: string | null;
-  errorContext: "check" | "download" | "install" | null;
+  errorContext: "check" | null;
   canRetry: boolean;
 }
 
@@ -411,26 +406,13 @@ export const DesktopUpdateStateSchema = Schema.Struct({
   appArch: DesktopRuntimeArchSchema,
   runningUnderArm64Translation: Schema.Boolean,
   availableVersion: Schema.NullOr(Schema.String),
-  downloadedVersion: Schema.NullOr(Schema.String),
+  releaseUrl: Schema.NullOr(Schema.String),
   releaseNotes: Schema.Array(DesktopUpdateReleaseNoteSchema),
   omittedReleaseCount: Schema.Number,
-  downloadPercent: Schema.NullOr(Schema.Number),
   checkedAt: Schema.NullOr(Schema.String),
   message: Schema.NullOr(Schema.String),
-  errorContext: Schema.NullOr(Schema.Literals(["check", "download", "install"])),
+  errorContext: Schema.NullOr(Schema.Literal("check")),
   canRetry: Schema.Boolean,
-});
-
-export interface DesktopUpdateActionResult {
-  accepted: boolean;
-  completed: boolean;
-  state: DesktopUpdateState;
-}
-
-export const DesktopUpdateActionResultSchema = Schema.Struct({
-  accepted: Schema.Boolean,
-  completed: Schema.Boolean,
-  state: DesktopUpdateStateSchema,
 });
 
 export interface DesktopUpdateCheckResult {
@@ -1470,10 +1452,8 @@ export interface DesktopBridge {
   getWindowFullscreenState: () => boolean;
   onWindowFullscreenStateChange: (listener: (fullscreen: boolean) => void) => () => void;
   getUpdateState: () => Promise<DesktopUpdateState>;
-  setUpdateChannel?: (channel: DesktopUpdateChannel) => Promise<DesktopUpdateActionResult>;
+  setUpdateChannel?: (channel: DesktopUpdateChannel) => Promise<DesktopUpdateState>;
   checkForUpdate: () => Promise<DesktopUpdateCheckResult>;
-  downloadUpdate: () => Promise<DesktopUpdateActionResult>;
-  installUpdate: () => Promise<DesktopUpdateActionResult>;
   onUpdateState: (listener: (state: DesktopUpdateState) => void) => () => void;
   /** Present when the desktop shell accepts `awen app` activation requests. */
   appActivation?: {

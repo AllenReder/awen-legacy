@@ -58,11 +58,7 @@ export const DesktopConfig = Config.all({
     Config.withDefault("http/json"),
   ),
   appImagePath: trimmedString("APPIMAGE"),
-  disableAutoUpdate: optionalBoolean("AWEN_DISABLE_AUTO_UPDATE"),
-  mockUpdates: optionalBoolean("AWEN_DESKTOP_MOCK_UPDATES"),
-  mockUpdateServerPort: Config.number("AWEN_DESKTOP_MOCK_UPDATE_SERVER_PORT").pipe(
-    Config.withDefault(3000),
-  ),
+  disableUpdateCheck: optionalBoolean("AWEN_DISABLE_UPDATE_CHECK"),
 });
 
 export const layerTest = (env: Readonly<Record<string, string | undefined>>) =>

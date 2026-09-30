@@ -86,6 +86,8 @@ jobs:
         with:
           node-version-file: package.json
           cache: pnpm
+      - name: Install Linux desktop dependencies
+        run: sudo apt-get update && sudo apt-get install -y pkg-config xvfb libsecret-1-dev libgtk-3-0 libnss3 libasound2t64
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: Ensure Electron runtime
@@ -98,8 +100,6 @@ jobs:
         run: pnpm --filter @awen/desktop typecheck
       - name: Test the desktop shell
         run: pnpm --filter @awen/desktop test
-      - name: Install Linux desktop dependencies
-        run: sudo apt-get update && sudo apt-get install -y xvfb libsecret-1-dev libgtk-3-0 libnss3 libasound2t64
       - name: Build daemon, client and Linux cookie helper
         run: |
           pnpm build
@@ -129,7 +129,7 @@ jobs:
           echo "Upstream job results: $RESULTS"
           for result in $RESULTS; do
             case "$result" in
-              success|skipped) ;;
+              success) ;;
               *)
                 echo "An upstream job did not succeed: $result" >&2
                 exit 1

@@ -59,7 +59,7 @@ const workflows = readWorkflows();
 
 describe("workflow credentials", () => {
   // An empty `APPLE_*` variable at job level is what broke the alpha.3 release:
-  // Tauri saw the variable, tried to notarize an ad-hoc build, and failed.
+  // The signing tool saw the variable, tried to notarize an ad-hoc build, and failed.
   it("never puts an Apple variable at workflow or job level", () => {
     for (const workflow of workflows) {
       const workflowEnv = Object.keys(workflow.document.env ?? {});
@@ -134,12 +134,11 @@ describe("workflow structure", () => {
   it("builds the installers in one workflow that both callers share", () => {
     const installers = workflows.find((workflow) => workflow.name === INSTALLER_WORKFLOW);
     expect(installers, `${INSTALLER_WORKFLOW} is missing`).toBeDefined();
-    expect(installers?.text).toContain("node scripts/stage-desktop-runtime.ts --target");
+    expect(installers?.text).toContain("node scripts/stage-desktop-runtime.ts --platform");
 
     for (const workflow of workflows) {
       if (workflow.name === INSTALLER_WORKFLOW) continue;
       expect(workflow.text.includes("stage-desktop-runtime.ts"), workflow.name).toBe(false);
-      expect(workflow.text.includes("tauri.macos.conf.json"), workflow.name).toBe(false);
     }
 
     for (const caller of ["ci.yml", "release.yml"]) {
@@ -148,5 +147,28 @@ describe("workflow structure", () => {
       const calls = jobsOf(workflow).map(([, definition]) => definition.uses);
       expect(calls, caller).toContain(`./.github/workflows/${INSTALLER_WORKFLOW}`);
     }
+  });
+  it("requires native macOS runners and a final verified artifact before publishing", () => {
+    const installers = workflows.find((workflow) => workflow.name === INSTALLER_WORKFLOW)!;
+    expect(installers.text).toContain("runner: macos-15-intel");
+    expect(installers.text).toContain("runner: macos-15");
+    expect(installers.text).toContain("runs-on: windows-2025");
+    expect(installers.text).toContain("assets.mjs assemble");
+    const release = workflows.find((workflow) => workflow.name === "release.yml")!;
+    expect(release.text).toContain("name: release-assets");
+    expect(release.text).toContain("assets.mjs verify");
+    expect(release.text).toContain("--draft=false");
+    expect(release.text.indexOf("gh release upload")).toBeLessThan(
+      release.text.indexOf("--draft=false"),
+    );
+    expect(release.text).not.toContain("pnpm install");
+  });
+  it("installs Linux native dependencies before desktop tests and rejects skipped checks", () => {
+    const ci = workflows.find((workflow) => workflow.name === "ci.yml")!;
+    const shell = ci.document.jobs?.["desktop-shell"]?.steps ?? [];
+    expect(
+      shell.findIndex((step) => step.name === "Install Linux desktop dependencies"),
+    ).toBeLessThan(shell.findIndex((step) => step.name === "Test the desktop shell"));
+    expect(ci.text).not.toContain("success|skipped");
   });
 });

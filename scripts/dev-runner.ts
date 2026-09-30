@@ -185,8 +185,8 @@ export class DevRunnerPortExhaustedError extends Schema.TaggedError<DevRunnerPor
 /**
  * Raised instead of silently moving to a neighbouring port.
  *
- * Pinned ports are what the Tauri dev window and the Vite proxy address: the
- * `devUrl` in `tauri.conf.json` is a literal web URL and the proxy target is a
+ * The Electron dev window and the Vite proxy use pinned ports. The desktop
+ * development origin is a literal web URL and the proxy target is a
  * literal backend port. Walking to the next free number therefore does not
  * "just work" — the window keeps loading the old URL and quietly attaches to
  * whatever already listens there, which reads as a broken backend rather than a
@@ -285,7 +285,7 @@ const OffsetConfig = Config.all({
   portOffset: optionalIntegerConfig("AWEN_PORT_OFFSET"),
   devInstance: optionalStringConfig("AWEN_DEV_INSTANCE"),
   // Set by the desktop dev wrapper: its window URL and the backend port it
-  // proxies to are literals in the Tauri config, so the runner must not move
+  // proxies to are pinned development inputs, so the runner must not move
   // off them. Absent for `pnpm dev`/`dev:web`, which stay free to walk ports.
   strictPorts: optionalBooleanConfig("AWEN_STRICT_DEV_PORTS"),
 });
