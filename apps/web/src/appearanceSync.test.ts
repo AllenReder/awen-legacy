@@ -1,12 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
-let mockIsTauri = false;
-vi.mock("./env", () => ({
-  get isTauri() {
-    return mockIsTauri;
-  },
-}));
-
 import {
   applyMaterialSettings,
   applyWorkbenchArtwork,
@@ -78,7 +71,7 @@ describe("appearanceSync", () => {
       applyMaterialSettings(
         {
           stageEnabled: true,
-          blurRadius: 24,
+          contentBlur: 24,
           backgroundMaskLightOpacity: 10,
           backgroundMaskDarkOpacity: 35,
           sidebarOpacity: 65,
@@ -124,7 +117,7 @@ describe("appearanceSync", () => {
       applyMaterialSettings(
         {
           stageEnabled: true,
-          blurRadius: 24,
+          contentBlur: 24,
           backgroundMaskLightOpacity: 10,
           backgroundMaskDarkOpacity: 35,
           sidebarOpacity: 65,
@@ -145,7 +138,8 @@ describe("appearanceSync", () => {
       expect(classes.has("material-stage-windows")).toBe(false);
       expect(classes.has("material-stage-opaque")).toBe(false);
       expect(setWindowGlassEnabled).toHaveBeenCalledWith(true);
-      expect(setWindowBackgroundBlur).toHaveBeenCalledWith(24);
+      expect(setWindowBackgroundBlur).not.toHaveBeenCalled();
+      expect(properties.get("--glass-blur")).toBe("24px");
     });
 
     it("updates mask and tint without reconfiguring the native window", () => {
@@ -161,7 +155,7 @@ describe("appearanceSync", () => {
       const { root } = makeRoot();
       const settings = {
         stageEnabled: true,
-        blurRadius: 24,
+        contentBlur: 24,
         sidebarOpacity: 50,
         topbarOpacity: 50,
         workbenchOpacity: 50,
@@ -176,7 +170,7 @@ describe("appearanceSync", () => {
         root,
       );
       expect(setWindowGlassEnabled).toHaveBeenCalledTimes(1);
-      expect(setWindowBackgroundBlur).toHaveBeenCalledTimes(1);
+      expect(setWindowBackgroundBlur).not.toHaveBeenCalled();
     });
 
     it("falls back to opaque stage variables when native glass is unavailable", () => {
@@ -187,7 +181,7 @@ describe("appearanceSync", () => {
       applyMaterialSettings(
         {
           stageEnabled: true,
-          blurRadius: 24,
+          contentBlur: 24,
           backgroundMaskLightOpacity: 10,
           backgroundMaskDarkOpacity: 35,
           sidebarOpacity: 65,
@@ -205,7 +199,8 @@ describe("appearanceSync", () => {
       expect(properties.get("--material-sidebar-opacity")).toBe("1");
       expect(properties.get("--material-topbar-opacity")).toBe("1");
       expect(properties.get("--material-workbench-opacity")).toBe("1");
-      expect(properties.get("--material-overlay-opacity")).toBe("1");
+      expect(properties.get("--material-overlay-opacity")).toBe("0.9");
+      expect(properties.get("--glass-blur")).toBe("24px");
     });
   });
 

@@ -10,6 +10,11 @@ const validPreload = `
     getLocalEnvironmentBootstraps: () => [],
     getPathForFile: () => "",
     pickFolder: (options) => electron.ipcRenderer.invoke(PICK_FOLDER_CHANNEL, options),
+    inspectSshHostTrust: () => {},
+    inspectSshEnvironmentPlan: () => {},
+    trustSshHost: () => {},
+    getSshEnvironmentProgress: () => {},
+    cancelSshEnvironment: () => {},
   });
 `;
 

@@ -330,7 +330,11 @@ const listenOnLoopback = async (): Promise<{ port: number; close: () => Promise<
   };
 };
 
-const writeFakeDaemon = async (root: string, markerDelayMs: number | null) => {
+const writeFakeDaemon = async (
+  root: string,
+  markerDelayMs: number | null,
+  serverVersion = "1.0.0",
+) => {
   const scriptPath = NodePath.join(root, "fake-daemon.mjs");
   const pidPath = NodePath.join(root, "fake-daemon.pid");
   await NodeFSP.writeFile(
@@ -355,6 +359,11 @@ const server = NodeHttp.createServer((request, response) => {
       pid: process.pid,
       managed: true,
     }));
+    return;
+  }
+  if (request.url === "/.well-known/awen/environment") {
+    response.writeHead(200);
+    response.end(JSON.stringify({ serverVersion: ${JSON.stringify(serverVersion)} }));
     return;
   }
   if (request.url === "/api/auth/browser-session") {
@@ -400,6 +409,35 @@ const reserveLoopbackPort = async (): Promise<number> => {
 };
 
 describe("local daemon startup readiness", () => {
+  it("reuses the same version and replaces an owned daemon for a desktop upgrade", async () => {
+    const root = await NodeFSP.mkdtemp(NodePath.join("/tmp", "awen-daemon-version-"));
+    let daemon: Awaited<ReturnType<typeof startLocalDaemon>> | undefined;
+    const start = async (version: string) => {
+      const fake = await writeFakeDaemon(root, 0, version);
+      return startLocalDaemon({
+        baseDir: root,
+        expectedServerVersion: version,
+        timeoutMs: 5_000,
+        requestTimeoutMs: 250,
+        reservePort: reserveLoopbackPort,
+        serverInvocation: { command: process.execPath, args: [fake.scriptPath] },
+      });
+    };
+    try {
+      daemon = await start("1.0.0");
+      const original = daemon;
+      daemon = await start("1.0.0");
+      expect(daemon.pid).toBe(original.pid);
+      daemon = await start("1.1.0");
+      expect(daemon.pid).not.toBe(original.pid);
+      expect(processIsAlive(original.pid)).toBe(false);
+      expect(processIsAlive(daemon.pid)).toBe(true);
+    } finally {
+      if (daemon && processIsAlive(daemon.pid)) process.kill(daemon.pid, "SIGKILL");
+      await NodeFSP.rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("waits for the runtime marker after the ownership handshake", async () => {
     const root = await NodeFSP.mkdtemp(NodePath.join("/tmp", "awen-daemon-delayed-marker-"));
     const fake = await writeFakeDaemon(root, 200);

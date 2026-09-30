@@ -94,6 +94,7 @@ import { HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import * as DesktopBackendConfiguration from "./DesktopBackendConfiguration.ts";
+import * as DesktopManagedBackend from "./DesktopManagedBackend.ts";
 import * as DesktopBackendManager from "./DesktopBackendManager.ts";
 import * as DesktopObservability from "../app/DesktopObservability.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
@@ -180,7 +181,9 @@ export type BackendInstanceFactoryRequirements =
   | HttpClient.HttpClient
   | DesktopObservability.DesktopBackendOutputLogFactory
   | DesktopTelemetryPublisher.DesktopTelemetryPublisher
-  | DesktopWslEnvironment.DesktopWslEnvironment;
+  | DesktopWslEnvironment.DesktopWslEnvironment
+  | import("../app/DesktopEnvironment.ts").DesktopEnvironment
+  | import("./DesktopServerExposure.ts").DesktopServerExposure;
 
 interface ActiveRegisteredInstance {
   readonly _tag: "Active";
@@ -277,7 +280,7 @@ export const layer = Layer.effect(
       },
     );
 
-    const primary = yield* DesktopBackendManager.makeBackendInstance({
+    const primary = yield* DesktopManagedBackend.make({
       id: DesktopBackendManager.PRIMARY_INSTANCE_ID,
       // Keep this lazy. The pool layer is initialized before startup loads
       // persisted desktop settings, so resolving the primary label here would
@@ -340,7 +343,7 @@ export const layer = Layer.effect(
               // Provide the captured factory services first, then the child scope
               // last so instance finalizers are owned by the unregisterable scope.
               const instanceScope = yield* Scope.fork(layerScope, "sequential");
-              const instance = yield* DesktopBackendManager.makeBackendInstance(spec).pipe(
+              const instance = yield* DesktopManagedBackend.make(spec).pipe(
                 Effect.provide(factoryContext),
                 Scope.provide(instanceScope),
               );
@@ -415,10 +418,17 @@ export const layer = Layer.effect(
             next as ReadonlyMap<BackendInstanceId, RegisteredInstance>,
           ] as const);
         }).pipe(Effect.andThen(Deferred.succeed(done, undefined)), Effect.asVoid);
-        yield* Option.match(action.entry.scope, {
-          onNone: () => Effect.void,
-          onSome: (scope) => Scope.close(scope, Exit.void).pipe(Effect.ignore),
-        }).pipe(Effect.ensuring(finish));
+        yield* action.entry.instance
+          .stop()
+          .pipe(
+            Effect.andThen(
+              Option.match(action.entry.scope, {
+                onNone: () => Effect.void,
+                onSome: (scope) => Scope.close(scope, Exit.void).pipe(Effect.ignore),
+              }),
+            ),
+          )
+          .pipe(Effect.ensuring(finish));
       });
 
     return DesktopBackendPool.of({

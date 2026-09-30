@@ -38,8 +38,7 @@ export const DesktopConfig = Config.all({
   xdgConfigHome: trimmedString("XDG_CONFIG_HOME"),
   xdgDataHome: trimmedString("XDG_DATA_HOME"),
   t3Home: trimmedString("AWEN_HOME"),
-  devServerUrl: Config.string("VITE_DEV_SERVER_URL").pipe(
-    Config.option,
+  devServerUrl: trimmedString("VITE_DEV_SERVER_URL").pipe(
     Config.map(Option.map((s) => new URL(s))),
   ),
   appUserModelIdOverride: trimmedString("AWEN_DESKTOP_APP_USER_MODEL_ID"),

@@ -83,6 +83,22 @@ jobs:
           path: release-assets
           pattern: "*"
           merge-multiple: true
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: package.json
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Merge macOS updater manifests
+        run: |
+          set -euo pipefail
+          for arm64 in release-assets/*-mac-arm64.yml; do
+            output="${arm64%-arm64.yml}.yml"
+            x64="${arm64%-arm64.yml}-x64.yml"
+            test -f "$x64"
+            node scripts/merge-update-manifests.ts --platform mac "$arm64" "$x64" "$output"
+            rm "$arm64" "$x64"
+          done
       - name: Create checksums
         run: |
           set -euo pipefail

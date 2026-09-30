@@ -15,7 +15,6 @@ import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopConfig from "./DesktopConfig.ts";
 import { resolveLinuxDesktopEntryName } from "./DesktopEarlyElectronStartup.ts";
 import { resolveDesktopBaseDir, resolveDesktopStateDir } from "./DesktopStatePaths.ts";
-import { isNightlyDesktopVersion } from "../updates/updateChannels.ts";
 import type { OtlpProtocol } from "@awen/shared/observability";
 
 export interface MakeDesktopEnvironmentInput {
@@ -54,14 +53,10 @@ export class DesktopEnvironment extends Context.Service<
     readonly browserArtifactsDir: string;
     readonly rootDir: string;
     readonly appRoot: string;
-    // Root of the tree containing apps/server/dist and node_modules for the
-    // backend. Equals appRoot everywhere except packaged Windows, where the
-    // server tree ships as the resources/server.asar sidecar (see
-    // scripts/build-desktop-artifact.ts) that the asar-aware
-    // ELECTRON_RUN_AS_NODE primary reads in place and the WSL backend
-    // extracts on demand (see DesktopWslServerTree).
+    // Standalone daemon resource root in packaged builds.
     readonly serverRoot: string;
     readonly backendEntryPath: string;
+    readonly backendNodePath: string;
     // Built web client the packaged renderer is served from over awen://app.
     readonly clientAssetsDir: string;
     readonly backendCwd: string;
@@ -169,10 +164,7 @@ const make = Effect.fn("desktop.environment.make")(function* (
   });
   const rootDir = path.resolve(input.dirname, "../../..");
   const appRoot = input.isPackaged ? input.appPath : rootDir;
-  const serverRoot =
-    input.isPackaged && input.platform === "win32"
-      ? path.join(input.resourcesPath, "server.asar")
-      : appRoot;
+  const serverRoot = input.isPackaged ? path.join(input.resourcesPath, "runtime") : appRoot;
   const branding = resolveDesktopAppBranding({
     isDevelopment,
     appVersion: input.appVersion,
@@ -215,8 +207,17 @@ const make = Effect.fn("desktop.environment.make")(function* (
     rootDir,
     appRoot,
     serverRoot,
-    backendEntryPath: path.join(serverRoot, "apps/server/dist/bin.mjs"),
-    clientAssetsDir: path.join(serverRoot, "apps/server/dist/client"),
+    backendEntryPath: path.join(
+      serverRoot,
+      input.isPackaged ? "dist/bin.mjs" : "apps/server/dist/bin.mjs",
+    ),
+    backendNodePath: input.isPackaged
+      ? path.join(serverRoot, input.platform === "win32" ? "node.exe" : "node")
+      : "node",
+    clientAssetsDir: path.join(
+      serverRoot,
+      input.isPackaged ? "dist/client" : "apps/server/dist/client",
+    ),
     backendCwd: input.isPackaged ? homeDirectory : appRoot,
     preloadPath: path.join(input.dirname, "preload.cjs"),
     compileCachePath: path.join(input.dirname, "compileCache.cjs"),

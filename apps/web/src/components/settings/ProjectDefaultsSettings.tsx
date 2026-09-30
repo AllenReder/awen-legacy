@@ -7,7 +7,6 @@ import {
 import { createModelSelection } from "@awen/shared/model";
 import { useNavigate } from "@tanstack/react-router";
 
-import { isTauri } from "../../env";
 import { useAwenProjectFileState } from "../../hooks/useAwenProjectFileScripts";
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
 import {
@@ -19,7 +18,6 @@ import {
 import { useEnvironments } from "../../state/environments";
 import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
 import { resolveEnvModeLabel } from "../BranchToolbar.logic";
-import { isPreviewSupportedInRuntime } from "../../previewStateStore";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { runtimeModeConfig, runtimeModeOptions } from "../chat/runtimeModeConfig";
 import { PULL_REQUEST_MERGE_METHOD_LABELS } from "../pullRequest/pullRequestDetail.logic";
@@ -80,7 +78,6 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
   const workspaceSource = useScopedSettingSource(["defaultThreadEnvMode"]);
   const isProjectScope = scope.kind === "project" || scope.kind === "checkout";
   const unavailable = connectedEnvironments.length === 0;
-  const browserAccessUnavailableInTauri = isTauri && !isPreviewSupportedInRuntime();
 
   // A checkout's awen.json wins over the environment default when the project
   // has no override of its own; show which one "inherit" resolves to.
@@ -429,11 +426,9 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
             id={searchableSetting("agent-browser-access").id}
             title="Agent browser access"
             description={
-              browserAccessUnavailableInTauri
-                ? "Unavailable in the Tauri desktop build because it cannot host Browser previews. Sessions started here do not receive browser tools."
-                : isProjectScope
-                  ? "Allow agents in this project to use the shared browser. Applies when the agent session next starts."
-                  : "Allow agents to use the shared browser. Projects can override it."
+              isProjectScope
+                ? "Allow agents in this project to use the shared browser. Applies when the agent session next starts."
+                : "Allow agents to use the shared browser. Projects can override it."
             }
             resetAction={
               settings.enableAgentBrowserAccess !==
@@ -451,7 +446,6 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
             control={
               <Switch
                 aria-label="Agent browser access"
-                disabled={browserAccessUnavailableInTauri}
                 mixed={mixedBrowser}
                 checked={mixedBrowser ? false : settings.enableAgentBrowserAccess}
                 onCheckedChange={(enabled) => updateSettings({ enableAgentBrowserAccess: enabled })}

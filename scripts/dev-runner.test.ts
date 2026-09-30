@@ -115,6 +115,16 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
   );
 
   describe("getDevRunnerModeArgs", () => {
+    it("starts all desktop watchers together", () => {
+      assert.deepStrictEqual(getDevRunnerModeArgs("dev:desktop"), [
+        "run",
+        "--filter=@awen/desktop",
+        "--filter=@awen/web",
+        "--filter=@awen/server",
+        "--parallel",
+        "dev:desktop",
+      ]);
+    });
     it.effect("places Vite+ run flags before the task name", () =>
       Effect.sync(() => {
         assert.deepStrictEqual(getDevRunnerModeArgs("dev"), [

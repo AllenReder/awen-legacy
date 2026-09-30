@@ -1174,7 +1174,7 @@ export function WorkbenchDropOverlay() {
                   data-phase={state.phase}
                   data-valid={invalid ? "false" : "true"}
                   className={
-                    "pointer-events-none fixed z-[100] flex flex-col items-center justify-center overflow-hidden rounded-xl border p-2.5 shadow-2xl backdrop-blur-md will-change-transform " +
+                    "pointer-events-none fixed z-[160] flex flex-col items-center justify-center overflow-hidden rounded-xl border p-2.5 shadow-2xl backdrop-blur-md will-change-transform " +
                     "transition-[opacity,border-color] ease-out motion-reduce:transition-none " +
                     (invalid
                       ? "border-destructive/80 bg-destructive/15 text-destructive "

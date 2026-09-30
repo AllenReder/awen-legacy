@@ -32,6 +32,10 @@ describe("ElectronProtocol", () => {
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const directory = yield* fileSystem.makeTempDirectoryScoped();
+      const artworkDirectory = yield* fileSystem.makeTempDirectoryScoped();
+      const artworkName = `${"a".repeat(64)}.png`;
+      yield* fileSystem.writeFileString(`${artworkDirectory}/${artworkName}`, "selected image");
+      yield* fileSystem.writeFileString(`${artworkDirectory}/private.png`, "not imported");
       yield* fileSystem.writeFileString(`${directory}/index.html`, "<html>app</html>");
       yield* fileSystem.writeFileString(`${directory}/app.js`, "export default 1;");
       let handler: ((request: Request) => Promise<Response>) | undefined;
@@ -42,6 +46,7 @@ describe("ElectronProtocol", () => {
       yield* protocol.registerDesktopProtocol({
         scheme: "awen",
         assetDirectory: directory,
+        artworkDirectory,
         clerkFrontendApiHostname: undefined,
       });
       const request = (pathname: string, init?: RequestInit) =>
@@ -63,6 +68,10 @@ describe("ElectronProtocol", () => {
       assert.equal((yield* request("/missing.js")).status, 404);
       assert.equal((yield* request("/%2e%2e%2fsecret.txt")).status, 404);
       assert.equal((yield* request("/%invalid")).status, 400);
+      const artwork = yield* request(`/artwork/${artworkName}`);
+      assert.equal(yield* Effect.promise(() => artwork.text()), "selected image");
+      assert.equal((yield* request("/artwork/private.png")).status, 404);
+      assert.equal((yield* request("/artwork/%2e%2e%2fprivate.png")).status, 404);
       assert.equal((yield* request("/", { method: "POST" })).status, 405);
       assert.equal(netFetchMock.mock.calls.length, 0);
     }).pipe(Effect.provide(Layer.merge(protocolLayer, NodeServices.layer)), Effect.scoped),

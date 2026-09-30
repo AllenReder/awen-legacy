@@ -4,7 +4,10 @@ Awen adopts a frameless window configuration on Windows and Linux (`decorations:
 
 ## Status
 
-Accepted.
+Accepted; ADR-0030 supersedes the Tauri window-control implementation. Electron
+uses native window buttons rather than the React caption buttons. The shared
+36px Topbar, pre-shell controls, and platform interaction requirements remain
+applicable; macOS traffic lights are centered in that Topbar.
 
 ## Context
 

@@ -12,9 +12,7 @@ import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopWslServerTree from "./DesktopWslServerTree.ts";
 
-// The service reads packaged Windows roots through the (asar-aware, in
-// Electron) fs, so a plain directory named server.asar exercises the full
-// extraction path under plain Node.
+// The packaged runtime is copied to writable state for the mounted WSL fallback.
 
 const environmentLayer = (input: {
   readonly baseDir: string;
@@ -120,19 +118,16 @@ describe("DesktopWslServerTree", () => {
     ).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("extracts an archive root into a version-keyed state directory", () =>
+  it.effect("extracts the packaged runtime into a version-keyed state directory", () =>
     withTempDir((tempDir) =>
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const serverRoot = path.join(tempDir, "resources", "server.asar");
-        yield* fileSystem.makeDirectory(path.join(serverRoot, "apps/server/dist"), {
+        const serverRoot = path.join(tempDir, "resources", "runtime");
+        yield* fileSystem.makeDirectory(path.join(serverRoot, "dist"), {
           recursive: true,
         });
-        yield* fileSystem.writeFileString(
-          path.join(serverRoot, "apps/server/dist/bin.mjs"),
-          "server-entry",
-        );
+        yield* fileSystem.writeFileString(path.join(serverRoot, "dist/bin.mjs"), "server-entry");
         yield* fileSystem.makeDirectory(path.join(serverRoot, "node_modules/effect"), {
           recursive: true,
         });
@@ -149,7 +144,7 @@ describe("DesktopWslServerTree", () => {
         assert.isTrue(result.ok);
         const root = result.ok ? result.root : "";
         assert.include(root, path.join("wsl-server-tree", "1.2.3"));
-        const entry = yield* fileSystem.readFileString(path.join(root, "apps/server/dist/bin.mjs"));
+        const entry = yield* fileSystem.readFileString(path.join(root, "dist/bin.mjs"));
         assert.equal(entry, "server-entry");
         const dep = yield* fileSystem.exists(path.join(root, "node_modules/effect/package.json"));
         assert.isTrue(dep);
@@ -167,14 +162,11 @@ describe("DesktopWslServerTree", () => {
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const resourcesPath = path.join(tempDir, "resources");
-        const serverRoot = path.join(resourcesPath, "server.asar");
-        yield* fileSystem.makeDirectory(path.join(serverRoot, "apps/server/dist"), {
+        const serverRoot = path.join(resourcesPath, "runtime");
+        yield* fileSystem.makeDirectory(path.join(serverRoot, "dist"), {
           recursive: true,
         });
-        yield* fileSystem.writeFileString(
-          path.join(serverRoot, "apps/server/dist/bin.mjs"),
-          "server-entry",
-        );
+        yield* fileSystem.writeFileString(path.join(serverRoot, "dist/bin.mjs"), "server-entry");
 
         const results = yield* Effect.gen(function* () {
           const tree = yield* DesktopWslServerTree.DesktopWslServerTree;
@@ -191,7 +183,7 @@ describe("DesktopWslServerTree", () => {
         const roots = results.flatMap((result) => (result.ok ? [result.root] : []));
         assert.lengthOf(new Set(roots), 1);
         assert.equal(
-          yield* fileSystem.readFileString(path.join(roots[0] ?? "", "apps/server/dist/bin.mjs")),
+          yield* fileSystem.readFileString(path.join(roots[0] ?? "", "dist/bin.mjs")),
           "server-entry",
         );
       }),
@@ -203,11 +195,11 @@ describe("DesktopWslServerTree", () => {
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const serverRoot = path.join(tempDir, "resources", "server.asar");
-        yield* fileSystem.makeDirectory(path.join(serverRoot, "apps/server/dist"), {
+        const serverRoot = path.join(tempDir, "resources", "runtime");
+        yield* fileSystem.makeDirectory(path.join(serverRoot, "dist"), {
           recursive: true,
         });
-        yield* fileSystem.writeFileString(path.join(serverRoot, "apps/server/dist/bin.mjs"), "v1");
+        yield* fileSystem.writeFileString(path.join(serverRoot, "dist/bin.mjs"), "v1");
 
         const first = yield* ensureWith({
           baseDir: tempDir,
@@ -217,7 +209,7 @@ describe("DesktopWslServerTree", () => {
 
         // Mutate the source; a reused tree must keep the first copy.
         yield* fileSystem.writeFileString(
-          path.join(serverRoot, "apps/server/dist/bin.mjs"),
+          path.join(serverRoot, "dist/bin.mjs"),
           "v2-should-not-appear",
         );
         const second = yield* ensureWith({
@@ -226,7 +218,7 @@ describe("DesktopWslServerTree", () => {
         });
         assert.isTrue(second.ok);
         const root = second.ok ? second.root : "";
-        const entry = yield* fileSystem.readFileString(path.join(root, "apps/server/dist/bin.mjs"));
+        const entry = yield* fileSystem.readFileString(path.join(root, "dist/bin.mjs"));
         assert.equal(entry, "v1");
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
@@ -237,11 +229,11 @@ describe("DesktopWslServerTree", () => {
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const serverRoot = path.join(tempDir, "resources", "server.asar");
-        yield* fileSystem.makeDirectory(path.join(serverRoot, "apps/server/dist"), {
+        const serverRoot = path.join(tempDir, "resources", "runtime");
+        yield* fileSystem.makeDirectory(path.join(serverRoot, "dist"), {
           recursive: true,
         });
-        yield* fileSystem.writeFileString(path.join(serverRoot, "apps/server/dist/bin.mjs"), "x");
+        yield* fileSystem.writeFileString(path.join(serverRoot, "dist/bin.mjs"), "x");
 
         // AWEN_HOME is set to tempDir, so the desktop state dir resolves to
         // <tempDir>/userdata (no .t3 segment).
@@ -266,11 +258,11 @@ describe("DesktopWslServerTree", () => {
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const serverRoot = path.join(tempDir, "resources", "server.asar");
-        yield* fileSystem.makeDirectory(path.join(serverRoot, "apps/server/dist"), {
+        const serverRoot = path.join(tempDir, "resources", "runtime");
+        yield* fileSystem.makeDirectory(path.join(serverRoot, "dist"), {
           recursive: true,
         });
-        yield* fileSystem.writeFileString(path.join(serverRoot, "apps/server/dist/bin.mjs"), "old");
+        yield* fileSystem.writeFileString(path.join(serverRoot, "dist/bin.mjs"), "old");
 
         const first = yield* ensureWith({
           baseDir: tempDir,
@@ -279,7 +271,7 @@ describe("DesktopWslServerTree", () => {
         });
         assert.isTrue(first.ok);
 
-        yield* fileSystem.writeFileString(path.join(serverRoot, "apps/server/dist/bin.mjs"), "new");
+        yield* fileSystem.writeFileString(path.join(serverRoot, "dist/bin.mjs"), "new");
         const second = yield* ensureWith({
           baseDir: tempDir,
           resourcesPath: path.join(tempDir, "resources"),
@@ -288,7 +280,7 @@ describe("DesktopWslServerTree", () => {
         assert.isTrue(second.ok);
         const root = second.ok ? second.root : "";
         assert.include(root, "1.2.4");
-        const entry = yield* fileSystem.readFileString(path.join(root, "apps/server/dist/bin.mjs"));
+        const entry = yield* fileSystem.readFileString(path.join(root, "dist/bin.mjs"));
         assert.equal(entry, "new");
         // The previous version's tree is gone.
         const treeRoot = path.dirname(root);
@@ -329,8 +321,8 @@ describe("DesktopWslServerTree", () => {
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const resourcesPath = path.join(tempDir, "resources");
-        const serverRoot = path.join(resourcesPath, "server.asar");
-        const sourceEntryPath = path.join(serverRoot, "apps/server/dist/bin.mjs");
+        const serverRoot = path.join(resourcesPath, "runtime");
+        const sourceEntryPath = path.join(serverRoot, "dist/bin.mjs");
         yield* fileSystem.makeDirectory(path.dirname(sourceEntryPath), { recursive: true });
         yield* fileSystem.writeFileString(sourceEntryPath, "fresh-server-entry");
 
@@ -338,7 +330,7 @@ describe("DesktopWslServerTree", () => {
         assert.isTrue(initial.ok);
         const versionDir = initial.ok ? initial.root : "";
         const treeRoot = path.dirname(versionDir);
-        const extractedEntryPath = path.join(versionDir, "apps/server/dist/bin.mjs");
+        const extractedEntryPath = path.join(versionDir, "dist/bin.mjs");
         let cleanupFailed = false;
         const partialCleanupFileSystem = Layer.effect(
           FileSystem.FileSystem,
@@ -391,7 +383,7 @@ describe("DesktopWslServerTree", () => {
         const path = yield* Path.Path;
         const result = yield* ensureWith({
           baseDir: tempDir,
-          // resources dir exists but server.asar does not
+          // resources dir exists but runtime does not
           resourcesPath: path.join(tempDir, "resources"),
         });
         assert.isFalse(result.ok);

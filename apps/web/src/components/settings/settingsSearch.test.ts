@@ -63,7 +63,7 @@ describe("searchSettings", () => {
       expect(searchSettings("glass").map((item) => item.id)).toEqual([
         "setting-workbench-glass",
         "setting-background-mask",
-        "setting-sidebar-blur",
+        "setting-content-backdrop-blur",
         "setting-sidebar-opacity",
       ]);
     } finally {
@@ -149,7 +149,9 @@ describe("searchSettings", () => {
     });
     vi.stubGlobal("navigator", { platform: "Linux x86_64", userAgent: "Linux" });
     try {
-      expect(searchSettings("glass")).toEqual([]);
+      expect(searchSettings("glass").map((item) => item.id)).toEqual([
+        "setting-content-backdrop-blur",
+      ]);
       expect(searchSettings("sidebar opacity")).toEqual([]);
     } finally {
       vi.unstubAllGlobals();
@@ -160,10 +162,8 @@ describe("searchSettings", () => {
     const items: ReadonlyArray<SettingsSearchItem> = SETTINGS_SEARCH_ITEMS;
     expect(items.filter((item) => item.nativeGlassOnly).map((item) => item.id)).toEqual([
       "setting-background-mask",
-      "setting-sidebar-blur",
       "setting-sidebar-opacity",
       "setting-topbar-opacity",
-      "setting-overlay-opacity",
       "setting-workbench-glass",
       "setting-workbench-opacity",
     ]);

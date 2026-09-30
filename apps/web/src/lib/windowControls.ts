@@ -1,19 +1,13 @@
 /**
  * Operations for controlling desktop application window state (minimize, maximize, close).
- * Uses dynamic import so loading this module outside Tauri or in unit tests does not throw.
+ * Native Electron controls own production window operations.
  */
 
-import { isDesktop } from "../env";
 import { usesCustomWindowChrome } from "./utils";
 
 export function isDesktopEnvironment(): boolean {
   if (typeof window === "undefined") return false;
-  return (
-    isDesktop ||
-    "__TAURI_INTERNALS__" in window ||
-    "isTauri" in window ||
-    Boolean((window as any).isTauri)
-  );
+  return window.desktopBridge !== undefined;
 }
 
 export interface WindowBridgeOperations {
@@ -25,71 +19,17 @@ export interface WindowBridgeOperations {
   readonly onResized?: (listener: () => void) => () => void;
 }
 
-async function getTauriWindow() {
-  if (typeof window === "undefined" || !("__TAURI_INTERNALS__" in window)) {
-    return null;
-  }
-  try {
-    const { getCurrentWindow } = await import("@tauri-apps/api/window");
-    return getCurrentWindow();
-  } catch {
-    return null;
-  }
-}
-
-async function withWindow(
-  run: (win: NonNullable<Awaited<ReturnType<typeof getTauriWindow>>>) => Promise<void>,
-) {
-  try {
-    const win = await getTauriWindow();
-    if (win) {
-      await run(win);
-    }
-  } catch (error) {
-    console.error("Window operation failed", error);
-  }
-}
-
+// Electron owns caption controls and handles double clicks in draggable regions.
+// Forced custom controls accept explicit operations (for isolated UI previews).
 export const defaultWindowOperations: WindowBridgeOperations = {
-  minimize: () => withWindow((win) => win.minimize()),
-  toggleMaximize: () => withWindow((win) => win.toggleMaximize()),
-  close: () => withWindow((win) => win.close()),
-  isMaximized: async () => {
-    try {
-      const win = await getTauriWindow();
-      return win ? await win.isMaximized() : false;
-    } catch {
-      return false;
-    }
-  },
-  isFullscreen: async () => {
-    try {
-      const win = await getTauriWindow();
-      return win ? await win.isFullscreen() : false;
-    } catch {
-      return false;
-    }
-  },
-  onResized: (listener: () => void) => {
-    let unlisten: (() => void) | null = null;
-    let active = true;
-
-    void getTauriWindow().then((win) => {
-      if (!win || !active) return;
-      void win.listen("tauri://resize", listener).then((unlistenFn) => {
-        if (!active) {
-          unlistenFn();
-        } else {
-          unlisten = unlistenFn;
-        }
-      });
-    });
-
-    return () => {
-      active = false;
-      unlisten?.();
-    };
-  },
+  minimize: async () => {},
+  toggleMaximize: async () => {},
+  close: async () => {},
+  isMaximized: async () => false,
+  isFullscreen: async () =>
+    typeof window !== "undefined"
+      ? (window.desktopBridge?.getWindowFullscreenState?.() ?? false)
+      : false,
 };
 
 export function handleTopbarDoubleClick(

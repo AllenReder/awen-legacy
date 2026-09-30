@@ -4,6 +4,10 @@ status: accepted
 
 # Interruptible Workbench motion
 
+ADR-0031 amends the navigation input, continuous route, shared indicator and
+overlay architecture described here; its rules take precedence where they differ.
+
+
 The design session agreed to establish motion principles for the whole frontend,
 with the first implementation covering Sidebar visibility, Sliding Tab switches
 and the Tab indicator, and Pane layout changes. Motion should follow direct input

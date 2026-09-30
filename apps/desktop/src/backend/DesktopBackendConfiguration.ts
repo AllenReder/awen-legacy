@@ -262,7 +262,7 @@ interface SharedBootstrapInput {
 }
 
 // What the launch runs inside the distro. The staged runtime is the release's
-// self-contained `t3` executable (Node inside); the mounted server tree is a
+// `bin/awen` launcher using the preflight-checked distro Node; the mounted server tree is a
 // script that needs the distro's own Node.
 type WslPreflightRuntime =
   | {
@@ -392,7 +392,10 @@ const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(f
     if (!serverTree.ok) {
       return { ok: false, reason: serverTree.reason, fatal: serverTree.fatal } as const;
     }
-    const windowsEntryPath = environment.path.join(serverTree.root, "apps/server/dist/bin.mjs");
+    const windowsEntryPath = environment.path.join(
+      serverTree.root,
+      environment.isPackaged ? "dist/bin.mjs" : "apps/server/dist/bin.mjs",
+    );
     const entryExists = yield* fileSystem
       .exists(windowsEntryPath)
       .pipe(Effect.orElseSucceed(() => false));
@@ -430,8 +433,8 @@ const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(f
   if (input.runtimeArchive !== null) {
     const runtime = yield* wslEnv.prepareRuntime(runningDistro, input.runtimeArchive);
     if (runtime.ok) {
-      // The staged runtime supplies its own Node and node-pty. Provider PATH
-      // discovery must not require either dependency for runtime readiness.
+      // The staged archive carries Linux dependencies and uses the distro Node.
+      // Its launcher and PATH probe establish readiness together.
       const stagedProbe = yield* wslEnv.probeRuntime(runningDistro, runtime.linuxAppRoot);
       if (stagedProbe.ok) {
         yield* wslServerTree.cleanupLegacy;
@@ -439,7 +442,7 @@ const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(f
           _tag: "Ready",
           runningDistro,
           windowsEntryPath: environment.backendEntryPath,
-          runtime: { kind: "executable", entryPath: `${runtime.linuxAppRoot}/t3` },
+          runtime: { kind: "executable", entryPath: `${runtime.linuxAppRoot}/bin/awen` },
           resolvedPath: stagedProbe.resolvedPath,
           runtimeId: input.runtimeArchive.runtimeId,
         } as const;
@@ -493,7 +496,7 @@ const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(f
     runtime: {
       kind: "node-script",
       nodePath: nodePtyResult.nodePath,
-      linuxEntryPath: `${mounted.linuxAppRoot}/apps/server/dist/bin.mjs`,
+      linuxEntryPath: `${mounted.linuxAppRoot}/${environment.isPackaged ? "dist/bin.mjs" : "apps/server/dist/bin.mjs"}`,
     },
     resolvedPath: nodePtyResult.resolvedPath,
   } as const;
@@ -558,8 +561,6 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
       desktopBootstrapToken: input.bootstrapToken,
       tailscaleServeEnabled: backendExposure.tailscaleServeEnabled,
       tailscaleServePort: backendExposure.tailscaleServePort,
-      desktopTelemetryFd: 4,
-      desktopTelemetryControlFd: 5,
       ...Option.match(input.resourceMonitorPath, {
         onNone: () => ({}),
         onSome: (resourceMonitorPath) => ({ resourceMonitorPath }),
@@ -568,22 +569,13 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
     };
 
     return {
-      executablePath: process.execPath,
-      // Packaged builds only, so a dev instance never shares the cache with the
-      // prod app it is often run from. `--require` rather than NODE_COMPILE_CACHE,
-      // so the setting does not leak into the provider and terminal processes
-      // the backend starts.
-      args: [
-        ...(environment.isPackaged ? ["--require", environment.compileCachePath] : []),
-        environment.backendEntryPath,
-        "--bootstrap-fd",
-        "3",
-      ],
+      executablePath: environment.backendNodePath,
+      args: [environment.backendEntryPath],
       entryPath: environment.backendEntryPath,
       cwd: environment.backendCwd,
       env: {
         ...backendChildEnvPatch(),
-        ELECTRON_RUN_AS_NODE: "1",
+        ELECTRON_RUN_AS_NODE: undefined,
       },
       // Primary wants process.env (PATH, dev-runner's AWEN_HOME, etc.).
       extendEnv: true,
@@ -649,7 +641,7 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
   };
 
   // The archive is the primary packaged WSL path: it installs directly into
-  // the distro's ext4 filesystem. The server.asar extraction service is only
+  // the distro's ext4 filesystem. The Windows runtime-copy service is only
   // consulted lazily if the archive is unavailable or cannot be staged.
   const archivePath = environment.path.join(environment.resourcesPath, WSL_RUNTIME_ARCHIVE_NAME);
   const archiveHashPath = environment.path.join(
@@ -687,7 +679,7 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
             runtimeId: `sha256-${archiveHash}`,
             sha256: archiveHash,
           },
-    // Packaged builds run the self-contained Linux runtime and, on fallback,
+    // Packaged builds run the staged Linux runtime and, on fallback,
     // whatever Linux node-pty the mounted tree carries, so the WSL backend never
     // needs a compiler, node-gyp, or network on first launch. Compiling from
     // source is a dev-only convenience: a checkout has no Linux binary, and

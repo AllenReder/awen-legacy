@@ -55,11 +55,7 @@ import { useUiStateStore } from "../uiStateStore";
 import { syncBrowserChromeTheme } from "../hooks/useTheme";
 import { configureClientTracing } from "../observability/clientTracing";
 import { resolveInitialServerAuthGateState } from "../environments/primary";
-import {
-  desktopRuntimeConfigSettled,
-  readDesktopRuntimeConfigError,
-} from "../desktop/runtimeConfigError";
-import { isTauri } from "../env";
+import { readDesktopRuntimeConfigError } from "../desktop/runtimeConfigError";
 import { hasHostedPairingRequest, isHostedStaticApp } from "../hostedPairing";
 import { isLocalEnvironmentDisabled } from "../localEnvironment";
 import { shellEnvironment } from "../state/shell";
@@ -97,13 +93,6 @@ export const Route = createRootRoute({
           status: "hosted-static",
         } as const,
       };
-    }
-
-    if (isTauri) {
-      // Wait for the desktop shell's config read so a launcher failure is
-      // recorded before we attempt (and fail) the primary environment
-      // bootstrap; the error view can then name the launcher's code.
-      await desktopRuntimeConfigSettled;
     }
 
     const authGateState = await resolveInitialServerAuthGateState();
@@ -286,7 +275,8 @@ function GlassAppearanceSync() {
   const backgroundMaskDarkOpacity = useClientSettings(
     (settings) => settings.backgroundMaskDarkOpacity,
   );
-  const blurRadius = useClientSettings((settings) => settings.sidebarBlur);
+  const contentBlur = useClientSettings((settings) => settings.contentBackdropBlur);
+  const stageEnabled = useClientSettings((settings) => settings.windowGlassEnabled);
   const sidebarOpacity = useClientSettings((settings) => settings.sidebarOpacity);
   const topbarOpacity = useClientSettings((settings) => settings.topbarOpacity);
   const workbenchOpacity = useClientSettings((settings) => settings.workbenchOpacity);
@@ -296,19 +286,25 @@ function GlassAppearanceSync() {
   const artworkOpacity = useClientSettings((settings) => settings.chatBackgroundOpacity);
 
   useEffect(() => {
-    applyMaterialSettings({
-      stageEnabled: true,
-      backgroundMaskLightOpacity,
-      backgroundMaskDarkOpacity,
-      blurRadius,
-      sidebarOpacity,
-      topbarOpacity,
-      workbenchOpacity,
-      workbenchGlass,
-      overlayOpacity,
-    });
+    const apply = () =>
+      applyMaterialSettings({
+        stageEnabled,
+        backgroundMaskLightOpacity,
+        backgroundMaskDarkOpacity,
+        contentBlur,
+        sidebarOpacity,
+        topbarOpacity,
+        workbenchOpacity,
+        workbenchGlass,
+        overlayOpacity,
+      });
+    apply();
+    const preference = window.matchMedia("(prefers-reduced-transparency: reduce)");
+    preference.addEventListener("change", apply);
+    return () => preference.removeEventListener("change", apply);
   }, [
-    blurRadius,
+    contentBlur,
+    stageEnabled,
     backgroundMaskLightOpacity,
     backgroundMaskDarkOpacity,
     sidebarOpacity,

@@ -13,7 +13,7 @@ import { Badge } from "../ui/badge";
 import { SidebarFooter, SidebarHeader, useSidebar } from "../ui/sidebar";
 import { SidebarProviderUpdatePill } from "./SidebarProviderUpdatePill";
 import { SidebarTitlebarButton } from "./SidebarTitlebarControl";
-import { SidebarUpdateArchitectureWarning, SidebarUpdatePill } from "./SidebarUpdatePill";
+import { SidebarUpdateArchitectureWarning } from "./SidebarUpdatePill";
 
 export interface SidebarChromeHeaderProps {
   readonly mode?: "main" | "settings";
@@ -147,7 +147,6 @@ export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
     >
       <SidebarProviderUpdatePill />
       <SidebarUpdateArchitectureWarning />
-      <SidebarUpdatePill />
     </SidebarFooter>
   );
 });

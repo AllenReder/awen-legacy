@@ -1,7 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
-import { DesktopSnapShotId } from "@awen/contracts";
+import { DEFAULT_CLIENT_SETTINGS, DesktopSnapShotId } from "@awen/contracts";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -26,6 +26,7 @@ vi.mock("electron", async (importOriginal) => ({
       setUserAgent: vi.fn(),
     })),
   },
+  nativeTheme: { prefersReducedTransparency: false },
   screen: {
     getAllDisplays: vi.fn(() => [
       {
@@ -50,6 +51,7 @@ import {
   MENU_ACTION_CHANNEL,
   SNAP_SHOT_EVENT_CHANNEL,
   TRACKPAD_SCROLL_END_CHANNEL,
+  TRACKPAD_SCROLL_PHASE_CHANNEL,
   WINDOW_FULLSCREEN_STATE_CHANNEL,
 } from "../ipc/channels.ts";
 import * as DesktopServerExposure from "../backend/DesktopServerExposure.ts";
@@ -115,6 +117,8 @@ function makeFakeBrowserWindow() {
     }),
     restore: vi.fn(),
     setBackgroundColor: vi.fn(),
+    setBackgroundMaterial: vi.fn(),
+    setVibrancy: vi.fn(),
     setAutoHideCursor: vi.fn(),
     setFullScreen: vi.fn(),
     setOpacity: vi.fn(),
@@ -140,6 +144,7 @@ function makeFakeBrowserWindow() {
     send: webContents.send,
     setZoomLevel: webContents.setZoomLevel,
     setWindowButtonPosition: window.setWindowButtonPosition,
+    setVibrancy: window.setVibrancy,
     setBackgroundThrottling: webContents.setBackgroundThrottling,
     setAutoHideCursor: window.setAutoHideCursor,
     setFullScreen: window.setFullScreen,
@@ -194,23 +199,26 @@ const electronThemeLayer = Layer.succeed(ElectronTheme.ElectronTheme, {
   onUpdated: () => Effect.void,
 } satisfies ElectronTheme.ElectronTheme["Service"]);
 
-const desktopEnvironmentLayer = DesktopEnvironment.layer(environmentInput).pipe(
-  Layer.provide(
-    Layer.mergeAll(
-      NodeServices.layer,
-      DesktopConfig.layerTest({
-        AWEN_PORT: "3773",
-        VITE_DEV_SERVER_URL: "http://127.0.0.1:5733",
-      }),
+const makeDesktopEnvironmentLayer = (platform: NodeJS.Platform = "darwin") =>
+  DesktopEnvironment.layer({ ...environmentInput, platform }).pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        NodeServices.layer,
+        DesktopConfig.layerTest({
+          AWEN_PORT: "3773",
+          VITE_DEV_SERVER_URL: "http://127.0.0.1:5733",
+        }),
+      ),
     ),
-  ),
-);
+  );
+const desktopEnvironmentLayer = makeDesktopEnvironmentLayer();
 
 const desktopWindowBoundsEquivalence = Schema.toEquivalence(
   DesktopAppSettings.DesktopWindowBoundsSchema,
 );
 
 function makeTestLayer(input: {
+  readonly platform?: NodeJS.Platform;
   readonly window: Electron.BrowserWindow;
   readonly createCount: Ref.Ref<number>;
   readonly mainWindow: Ref.Ref<Option.Option<Electron.BrowserWindow>>;
@@ -226,6 +234,7 @@ function makeTestLayer(input: {
   readonly onPopupTemplate?: (input: ElectronMenu.ElectronMenuTemplateInput) => Effect.Effect<void>;
   readonly previewZoomReapplies?: number[];
   readonly onReveal?: (window: Electron.BrowserWindow) => void;
+  readonly clientSettings?: DesktopClientSettings.DesktopClientSettings["Service"]["get"];
 }) {
   let desktopSettings = input.desktopSettings ?? DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS;
   const desktopAppSettingsLayer = Layer.succeed(DesktopAppSettings.DesktopAppSettings, {
@@ -286,9 +295,11 @@ function makeTestLayer(input: {
     Layer.provide(
       Layer.mergeAll(
         desktopAssetsLayer,
-        desktopEnvironmentLayer,
+        input.platform ? makeDesktopEnvironmentLayer(input.platform) : desktopEnvironmentLayer,
         desktopAppSettingsLayer,
-        desktopClientSettingsLayer,
+        input.clientSettings
+          ? Layer.mock(DesktopClientSettings.DesktopClientSettings)({ get: input.clientSettings })
+          : desktopClientSettingsLayer,
         desktopServerExposureLayer,
         DesktopState.layer,
         electronAppLayer,
@@ -430,6 +441,44 @@ const captureOne = DesktopSnapShotId.make("11111111-1111-4111-8111-111111111111"
 const captureTwo = DesktopSnapShotId.make("22222222-2222-4222-8222-222222222222");
 
 describe("DesktopWindow", () => {
+  it("uses Windows acrylic only on supported builds", () => {
+    assert.isFalse(DesktopWindow.isWindowGlassSupported("win32", "10.0.19045"));
+    assert.isFalse(DesktopWindow.isWindowGlassSupported("win32", "10.0.22000"));
+    assert.isTrue(DesktopWindow.isWindowGlassSupported("win32", "10.0.22621"));
+    assert.isFalse(DesktopWindow.isWindowGlassSupported("linux", "6.8.0"));
+  });
+
+  it.effect("preserves disabled glass across theme updates and window recreation", () =>
+    Effect.gen(function* () {
+      const fake = makeFakeBrowserWindow();
+      const options: Electron.BrowserWindowConstructorOptions[] = [];
+      const layer = makeTestLayer({
+        window: fake.window,
+        createCount: yield* Ref.make(0),
+        mainWindow: yield* Ref.make(Option.none<Electron.BrowserWindow>()),
+        createdWindowOptions: options,
+        clientSettings: Effect.succeedSome({
+          ...DEFAULT_CLIENT_SETTINGS,
+          windowGlassEnabled: false,
+        }),
+      });
+      yield* Effect.gen(function* () {
+        const desktop = yield* DesktopWindow.DesktopWindow;
+        yield* desktop.createMain;
+        assert.isUndefined(options[0]?.vibrancy);
+        yield* desktop.syncAppearance;
+        assert.deepEqual(fake.setVibrancy.mock.calls.at(-1), [null]);
+        yield* desktop.setGlassEnabled(true);
+        assert.deepEqual(fake.setVibrancy.mock.calls.at(-1), ["under-window"]);
+        yield* desktop.setGlassEnabled(false);
+        yield* desktop.syncAppearance;
+        assert.deepEqual(fake.setVibrancy.mock.calls.at(-1), [null]);
+        yield* desktop.createMain;
+        assert.isUndefined(options[1]?.vibrancy);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
   it.effect("shows native context menus for browser guests and sign-in popups", () =>
     Effect.gen(function* () {
       const host = makeFakeBrowserWindow();
@@ -623,6 +672,8 @@ describe("DesktopWindow", () => {
         assert.equal(yield* Ref.get(createCount), 1);
         assert.equal(createdWindowOptions[0]?.width, 1100);
         assert.equal(createdWindowOptions[0]?.height, 780);
+        assert.isFalse(createdWindowOptions[0]?.transparent);
+        assert.equal(createdWindowOptions[0]?.vibrancy, "under-window");
         assert.isUndefined(createdWindowOptions[0]?.x);
         assert.isUndefined(createdWindowOptions[0]?.y);
         assert.isTrue(createdWindowOptions[0]?.disableAutoHideCursor);
@@ -631,6 +682,34 @@ describe("DesktopWindow", () => {
         assert.deepEqual(fakeWindow.loadURL.mock.calls[0], ["awen-dev://app/"]);
         assert.equal(fakeWindow.openDevTools.mock.calls.length, 1);
       }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("keeps Windows native window interactions with a system backdrop", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const createdWindowOptions: Electron.BrowserWindowConstructorOptions[] = [];
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        const options = createdWindowOptions[0];
+        assert.isFalse(options?.transparent);
+        assert.equal(options?.titleBarStyle, "hidden");
+        const overlay = options?.titleBarOverlay;
+        assert.equal(typeof overlay === "object" ? overlay.height : undefined, 36);
+      }).pipe(
+        Effect.provide(
+          makeTestLayer({
+            platform: "win32",
+            window: fakeWindow.window,
+            createCount,
+            mainWindow,
+            createdWindowOptions,
+          }),
+        ),
+      );
     }),
   );
 
@@ -724,6 +803,11 @@ describe("DesktopWindow", () => {
         const onInput = fakeWindow.webContentsListeners.get("input-event");
         if (!onInput) return yield* Effect.die("input-event listener was not registered");
         onInput({}, { type: "gestureScrollUpdate" });
+        assert.isTrue(
+          send.mock.calls.some(
+            ([channel, phase]) => channel === TRACKPAD_SCROLL_PHASE_CHANNEL && phase === "changed",
+          ),
+        );
         assert.notInclude(
           send.mock.calls.map(([channel]) => channel),
           TRACKPAD_SCROLL_END_CHANNEL,
@@ -785,10 +869,10 @@ describe("DesktopWindow", () => {
           yield* desktopWindow.zoomMain(direction);
           const position = fakeWindow.setWindowButtonPosition.mock.lastCall?.[0];
           assert.isDefined(position);
-          // The 14-point native buttons should share the zoomed 52px header's center.
-          const headerCenter = 26 * fakeWindow.window.webContents.getZoomFactor();
+          // The 14-point native buttons should share the zoomed 36px header's center.
+          const headerCenter = 18 * fakeWindow.window.webContents.getZoomFactor();
           assert.isAtMost(Math.abs(position.y + 7 - headerCenter), 0.5);
-          assert.equal(position.x, 16);
+          assert.equal(position.x, 10);
         }
 
         fakeWindow.isFullScreen.mockReturnValue(true);
@@ -798,7 +882,7 @@ describe("DesktopWindow", () => {
 
         fakeWindow.isFullScreen.mockReturnValue(false);
         fakeWindow.windowListeners.get("leave-full-screen")?.();
-        assert.deepEqual(fakeWindow.setWindowButtonPosition.mock.lastCall, [{ x: 16, y: 19 }]);
+        assert.deepEqual(fakeWindow.setWindowButtonPosition.mock.lastCall, [{ x: 10, y: 11 }]);
       }).pipe(Effect.provide(layer));
     }),
   );
@@ -1309,10 +1393,7 @@ describe("DesktopWindow", () => {
         assert.equal(fakeWindow.loadURL.mock.calls.length, 1);
 
         yield* TestClock.adjust(100);
-        assert.deepEqual(fakeWindow.loadURL.mock.calls, [
-          ["awen-dev://app/"],
-          ["awen-dev://app/"],
-        ]);
+        assert.deepEqual(fakeWindow.loadURL.mock.calls, [["awen-dev://app/"], ["awen-dev://app/"]]);
         assert.equal(fakeWindow.reload.mock.calls.length, 0);
 
         didFailLoad({}, -9, "ERR_UNEXPECTED", "awen-dev://app/", true);

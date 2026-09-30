@@ -23,6 +23,8 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import { importDesktopArtwork } from "../../app/DesktopArtwork.ts";
+import * as DesktopWindow from "../../window/DesktopWindow.ts";
 import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
 import * as DesktopLocalEnvironmentAuth from "../../backend/DesktopLocalEnvironmentAuth.ts";
 import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
@@ -266,10 +268,18 @@ export const pickFile = DesktopIpc.makeIpcMethod({
     const selected = yield* dialog.pickFiles({
       owner: yield* electronWindow.focusedMainOrFirst,
       defaultPath: Option.fromNullishOr(options?.initialPath),
-      filters: options?.filters?.map((f) => ({ name: f.name, extensions: [...f.extensions] })) ?? [],
+      filters:
+        options?.filters?.map((f) => ({ name: f.name, extensions: [...f.extensions] })) ?? [],
       multiple: false,
     });
-    return selected[0] ?? null;
+    const selectedPath = selected[0];
+    if (!selectedPath) return null;
+    // This picker currently selects Workbench Artwork. Copy the chosen file
+    // into owned storage so both the canvas and Settings survive a restart.
+    const environment = yield* DesktopEnvironment.DesktopEnvironment;
+    return yield* Effect.tryPromise(() =>
+      importDesktopArtwork(selectedPath, environment.stateDir, environment.isDevelopment),
+    );
   }),
 });
 
@@ -381,26 +391,8 @@ export const setWindowGlassEnabled = DesktopIpc.makeIpcMethod({
   payload: Schema.Boolean,
   result: Schema.Void,
   handler: Effect.fn("desktop.ipc.window.setWindowGlassEnabled")(function* (enabled) {
-    const electronWindow = yield* ElectronWindow.ElectronWindow;
-    const windowOpt = yield* electronWindow.focusedMainOrFirst;
-    if (Option.isNone(windowOpt)) return;
-    const win = windowOpt.value;
-    if (process.platform === "darwin") {
-      win.setVibrancy(enabled ? "under-window" : null);
-      win.setBackgroundColor(enabled ? "#00000000" : "#18181b");
-    } else if (process.platform === "win32") {
-      win.setBackgroundMaterial(enabled ? "acrylic" : "none");
-      win.setBackgroundColor(enabled ? "#00000000" : "#18181b");
-    }
-  }),
-});
-
-export const setWindowBackgroundBlur = DesktopIpc.makeIpcMethod({
-  channel: IpcChannels.SET_WINDOW_BACKGROUND_BLUR_CHANNEL,
-  payload: Schema.Number,
-  result: Schema.Void,
-  handler: Effect.fn("desktop.ipc.window.setWindowBackgroundBlur")(function* () {
-    // Electron native vibrancy handles background blur automatically
+    const desktopWindow = yield* DesktopWindow.DesktopWindow;
+    yield* desktopWindow.setGlassEnabled(enabled);
   }),
 });
 
@@ -487,4 +479,14 @@ export const checkSystemPermission = DesktopIpc.makeIpcMethod({
     const check = yield* safariPermissionCheck;
     return yield* Effect.promise(check);
   }),
+});
+
+export const getWindowGlassSupported = DesktopIpc.makeSyncIpcMethod({
+  channel: "desktop:get-window-glass-supported",
+  result: Schema.Boolean,
+  handler: () =>
+    Effect.gen(function* () {
+      const environment = yield* DesktopEnvironment.DesktopEnvironment;
+      return DesktopWindow.isWindowGlassSupported(environment.platform);
+    }),
 });

@@ -2,7 +2,7 @@
 
 Awen uses one SemVer version for the web app, Windows/macOS desktop installers,
 and Linux x64 daemon. The root `package.json` is authoritative; the version
-script synchronizes package manifests and the desktop Cargo/Tauri versions.
+script synchronizes package manifests; Electron uses the desktop manifest directly.
 Changing the version also increments the numeric macOS bundle build number.
 Ordinary commits and merges never publish artifacts.
 
@@ -29,7 +29,7 @@ web/server workspace, runs the test suite in shards, and compiles the desktop
 shell on Linux. On pull requests and pushes to `main` it then runs
 `build-installers.yml` - the same workflow a release calls - which packages the
 Linux x64 daemon, the Windows installer, and both macOS DMGs, and verifies the
-resource seal and the architecture of each macOS app before upload.
+installed daemon resources and desktop startup before upload.
 
 ## Publish
 
@@ -45,12 +45,14 @@ all product versions, bundles the daemon and Node runtime with the desktop
 installers on Windows and both macOS architectures, builds and smoke-tests the Linux x64 daemon package,
 and publishes all assets with GitHub-generated release notes. A SemVer version
 containing a prerelease suffix becomes a GitHub prerelease; a version without a
-suffix becomes a stable release. The workflow never moves a shared channel or
+suffix becomes a stable release. Electron updater metadata is published together with its exact installer files.
+The workflow never
 publishes an npm package.
 
-Prereleases use the Windows NSIS `.exe` installer. WiX `.msi` requires a
-numeric-only prerelease identifier, so it cannot bundle versions such as
-`0.1.0-alpha.2`. Stable releases build both installer formats.
+Windows releases use the Electron NSIS `.exe` installer. macOS releases also
+include the ZIP archive and Electron updater metadata. Installing an update
+restarts the local daemon and may interrupt Agent and Terminal Sessions; an
+ordinary quit keeps those Sessions running.
 
 Rehearse a release without publishing by running the `Release` workflow
 manually against the release commit: it validates the version, builds and
@@ -75,3 +77,5 @@ by an incomplete bundle signature. To publish a Developer ID
 signed and notarized DMG, set `APPLE_CERTIFICATE` (base64 `.p12`),
 `APPLE_CERTIFICATE_PASSWORD`, `APPLE_ID`, `APPLE_PASSWORD` (app-specific),
 `APPLE_TEAM_ID`, and `KEYCHAIN_PASSWORD` as repository secrets.
+
+Desktop resources share one layout: `resources/runtime/{node,dist/bin.mjs,dist/client,node_modules}` (Windows uses `node.exe`). Linux development requires `pkg-config`, `libsecret-1-dev`, and a display (CI uses Xvfb); this release does not publish Linux desktop installers.

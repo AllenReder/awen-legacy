@@ -11,13 +11,18 @@ const expectedDesktopBridgeApis = [
   "getLocalEnvironmentBootstraps",
   "getPathForFile",
   "pickFolder",
+  "inspectSshHostTrust",
+  "inspectSshEnvironmentPlan",
+  "trustSshHost",
+  "getSshEnvironmentProgress",
+  "cancelSshEnvironment",
 ];
 const clerkPasskeysGlobal = "__clerk_internal_electron_passkeys";
 const preloadExecutionTimeoutMs = 1_000;
 const desktopPackage = JSON.parse(
   NodeFS.readFileSync(new URL("../package.json", import.meta.url), "utf8"),
 );
-const electronVersion = desktopPackage.dependencies.electron;
+const electronVersion = desktopPackage.devDependencies.electron;
 
 const isSyntaxNode = (value) =>
   typeof value === "object" && value !== null && "type" in value && typeof value.type === "string";

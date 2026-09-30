@@ -4,7 +4,7 @@ import { defineConfig } from "vite-plus";
 import { isDesktopRuntimeExternalDependency } from "../../scripts/lib/desktop-external-packages.ts";
 import { loadRepoEnv } from "../../scripts/lib/public-config.ts";
 
-const repoEnv = loadRepoEnv();
+Object.assign(process.env, loadRepoEnv());
 
 // The main process is bundled the same way the server CLI is: every JS
 // dependency is inlined and only packages Node must load from disk stay
@@ -13,24 +13,28 @@ const repoEnv = loadRepoEnv();
 // bundle that already carries its own copy of the same libraries.
 const isMainProcessExternal = (id: string) =>
   id === "electron" || id.startsWith("electron/") || isDesktopRuntimeExternalDependency(id);
+const isElectronModule = (id: string) => id === "electron" || id.startsWith("electron/");
 const shouldLaunchElectronAfterPack = process.env.AWEN_DESKTOP_DEV === "1";
 
 export default defineConfig({
   run: {
     tasks: {
       build: {
+        command: "node scripts/build-trackpad.mjs && node scripts/build-preview-annotation-css.mjs && vp pack",
+        cache: false,
+      },
+      "dev:desktop": {
         command:
-          "node scripts/build-preview-annotation-css.mjs && vp pack",
+          "node scripts/build-trackpad.mjs && node scripts/build-preview-annotation-css.mjs && cross-env AWEN_DESKTOP_DEV=1 vp pack --watch",
         cache: false,
       },
       dev: {
         command:
-          "node scripts/build-preview-annotation-css.mjs && cross-env AWEN_DESKTOP_DEV=1 vp pack --watch",
+          "node scripts/build-trackpad.mjs && node scripts/build-preview-annotation-css.mjs && cross-env AWEN_DESKTOP_DEV=1 vp pack --watch",
         cache: false,
       },
       "dev:bundle": {
-        command:
-          "node scripts/build-preview-annotation-css.mjs && vp pack --watch",
+        command: "node scripts/build-trackpad.mjs && node scripts/build-preview-annotation-css.mjs && vp pack --watch",
         cache: false,
       },
       "dev:electron": {
@@ -95,6 +99,7 @@ export default defineConfig({
       sourcemap: true,
       outExtensions: () => ({ js: ".cjs" }),
       entry: ["src/preload.ts"],
+      deps: { neverBundle: isElectronModule },
     },
     {
       format: "cjs",
@@ -105,6 +110,7 @@ export default defineConfig({
       entry: ["src/preview-pick-preload.ts"],
       deps: {
         alwaysBundle: (id) => id === "react-grab" || id.startsWith("react-grab/"),
+        neverBundle: isElectronModule,
       },
     },
     {
@@ -114,6 +120,7 @@ export default defineConfig({
       sourcemap: true,
       outExtensions: () => ({ js: ".cjs" }),
       entry: ["src/preview-pip-preload.ts"],
+      deps: { neverBundle: isElectronModule },
     },
     {
       // Sandboxed preloads must be self-contained, without shared runtime chunks.
@@ -123,6 +130,7 @@ export default defineConfig({
       sourcemap: true,
       outExtensions: () => ({ js: ".cjs" }),
       entry: ["src/mac-permission-preload.ts"],
+      deps: { neverBundle: isElectronModule },
     },
   ],
   test: {

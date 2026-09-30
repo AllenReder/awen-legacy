@@ -97,6 +97,7 @@ function makeDesktopWindowLayer(
     dispatchSnapShotEvent: () => Effect.void,
     zoomMain: () => Effect.void,
     syncAppearance: Effect.void,
+    setGlassEnabled: () => Effect.void,
   });
 }
 

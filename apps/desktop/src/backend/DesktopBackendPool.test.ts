@@ -9,6 +9,8 @@ import * as Stream from "effect/Stream";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
+import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import * as DesktopServerExposure from "./DesktopServerExposure.ts";
 import * as DesktopObservability from "../app/DesktopObservability.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopTelemetryPublisher from "../telemetry/DesktopTelemetryPublisher.ts";
@@ -48,6 +50,14 @@ function makePoolLayer(
     Layer.provideMerge(
       Layer.mergeAll(
         FileSystem.layerNoop({}),
+        Layer.succeed(
+          DesktopEnvironment.DesktopEnvironment,
+          {} as DesktopEnvironment.DesktopEnvironment["Service"],
+        ),
+        Layer.succeed(
+          DesktopServerExposure.DesktopServerExposure,
+          {} as DesktopServerExposure.DesktopServerExposure["Service"],
+        ),
         Layer.succeed(
           ChildProcessSpawner.ChildProcessSpawner,
           ChildProcessSpawner.make(() => Effect.die("unexpected child process spawn")),
@@ -100,6 +110,7 @@ function makePoolLayer(
           dispatchSnapShotEvent: () => Effect.void,
           zoomMain: () => Effect.die("unexpected zoom"),
           syncAppearance: Effect.void,
+          setGlassEnabled: () => Effect.void,
         } satisfies DesktopWindow.DesktopWindow["Service"]),
       ),
     ),

@@ -110,7 +110,14 @@ const MODE_ARGS = {
   ],
   "dev:server": ["run", "--filter=@awen/server", "dev"],
   "dev:web": ["run", "--filter=@awen/web", "dev"],
-  "dev:desktop": ["run", "--filter=@awen/desktop", "--filter=@awen/web", "dev"],
+  "dev:desktop": [
+    "run",
+    "--filter=@awen/desktop",
+    "--filter=@awen/web",
+    "--filter=@awen/server",
+    "--parallel",
+    "dev:desktop",
+  ],
 } as const satisfies Record<string, ReadonlyArray<string>>;
 
 type DevMode = keyof typeof MODE_ARGS;

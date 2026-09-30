@@ -1,16 +1,6 @@
 import { useEffect, useLayoutEffect, useRef } from "react";
 
-import {
-  FLUID_MOTION_DURATION_MS,
-  FLUID_MOTION_EASING,
-  scaledMotionDuration,
-  skipAutomaticWorkbenchMotion,
-} from "./workbenchMotion";
-import {
-  getTabTransition,
-  getTabTransitionFrame,
-  subscribeTabTransitionFrame,
-} from "./tabTransition";
+import { getTabTransitionFrame, subscribeTabTransitionFrame } from "./tabTransition";
 import type { TabIndicatorGeometry } from "./tabTransition";
 import { useTabTransition } from "./tabTransitionReact";
 import { getViewportMetrics, subscribeViewportMetrics } from "./viewportTracking";
@@ -82,7 +72,7 @@ export interface TabIndicatorOptions {
 
 /**
  * Positions the shared Topbar Tab underbar (ADR-0019). It follows Tab switch
- * progress directly and animates with Apple fluid easing on ordinary changes.
+ * progress directly. The live Tab transition is the only motion clock.
  * For a Scrolling Tab it also carries the Viewport's position and width
  * (ADR-0025), driven by the metrics the Viewport owner publishes.
  *
@@ -96,9 +86,7 @@ export function useTabIndicator(
 ): React.RefObject<HTMLSpanElement | null> {
   const { stripRef, activeTabId, revision, dragging } = options;
   const indicatorRef = useRef<HTMLSpanElement | null>(null);
-  const lastGeometryRef = useRef<TabIndicatorGeometry | null>(null);
-  const wasTransitioningRef = useRef(false);
-  const animationRef = useRef<Animation | null>(null);
+  const drawRef = useRef<(() => void) | null>(null);
   const cacheRef = useRef<{ key: string | null; map: Map<string, TabIndicatorGeometry> }>({
     key: null,
     map: new Map(),
@@ -113,39 +101,21 @@ export function useTabIndicator(
     if (typeof strip.getBoundingClientRect !== "function") return;
     if (revision === "") return;
 
-    // `getAnimations()` forces a style flush; track the one animation we start.
-    const cancelIndicatorAnimation = () => {
-      animationRef.current?.cancel();
-      animationRef.current = null;
-    };
-
+    // The ring ends at the final Tab, excluding spare flex space in the strip.
+    const ringLength = () =>
+      Math.max(0, ...Array.from(cacheRef.current.map.values(), (tab) => tab.left + tab.width));
     const write = (geometry: TabIndicatorGeometry) => {
-      writeTransform(indicatorStyle, geometry.left);
-      writeWidth(indicatorStyle, geometry.width);
-      lastGeometryRef.current = geometry;
-    };
-
-    const animateTo = (geometry: TabIndicatorGeometry) => {
-      const previous = lastGeometryRef.current;
-      cancelIndicatorAnimation();
-      write(geometry);
-      if (
-        dragging ||
-        (previous?.left === geometry.left && previous.width === geometry.width) ||
-        skipAutomaticWorkbenchMotion() ||
-        previous === null ||
-        typeof indicator.animate !== "function"
-      ) {
-        return;
+      const length = ringLength();
+      const left = length > 0 ? ((geometry.left % length) + length) % length : geometry.left;
+      const firstWidth = length > 0 ? Math.min(geometry.width, length - left) : geometry.width;
+      writeTransform(indicatorStyle, left);
+      writeWidth(indicatorStyle, firstWidth);
+      const wrap = indicator.firstElementChild as HTMLElement | null;
+      if (wrap) {
+        wrap.style.display = firstWidth < geometry.width ? "block" : "none";
+        wrap.style.transform = `translateX(${-length}px)`;
+        wrap.style.width = `${geometry.width - firstWidth}px`;
       }
-      cancelIndicatorAnimation();
-      animationRef.current = indicator.animate(
-        [
-          { transform: `translateX(${previous.left}px)`, width: `${previous.width}px` },
-          { transform: `translateX(${geometry.left}px)`, width: `${geometry.width}px` },
-        ],
-        { duration: scaledMotionDuration(FLUID_MOTION_DURATION_MS), easing: FLUID_MOTION_EASING },
-      );
     };
 
     // Re-measure the strip only when its own layout changed, never per switch.
@@ -178,14 +148,11 @@ export function useTabIndicator(
     const followViewport = () => {
       const geometry = restingGeometryFor(activeTabId);
       if (geometry === null) return;
-      cancelIndicatorAnimation();
       write(geometry);
     };
 
     if (transition !== null) {
-      wasTransitioningRef.current = true;
       // Gesture progress drives the underbar directly; drop any in-flight ease.
-      cancelIndicatorAnimation();
       const applyFrame = () => {
         const frame = getTabTransitionFrame();
         if (frame === null) return;
@@ -199,8 +166,12 @@ export function useTabIndicator(
         // where its Viewport was scrolled to, so travelling whole Tab boxes
         // would start the bar at the wrong edge and snap its width on landing.
         const from = restingGeometryFor(left.tabId);
-        const to = restingGeometryFor(right.tabId);
+        let to = restingGeometryFor(right.tabId);
         if (from === null || to === null) return;
+        const ids = Array.from(cacheRef.current.map.keys());
+        if (ids.indexOf(left.tabId) === ids.length - 1 && ids.indexOf(right.tabId) === 0) {
+          to = { ...to, left: to.left + ringLength() };
+        }
         const progress =
           left.slot === right.slot ? 0 : (frame.position - left.slot) / (right.slot - left.slot);
         write({
@@ -208,6 +179,7 @@ export function useTabIndicator(
           width: from.width + (to.width - from.width) * progress,
         });
       };
+      drawRef.current = applyFrame;
       applyFrame();
       // An endpoint can move without a frame behind it: committing a switch
       // reveals the incoming Tab's focused Pane, which scrolls its Viewport.
@@ -222,45 +194,23 @@ export function useTabIndicator(
       };
     }
 
-    const wasTransitioning = wasTransitioningRef.current;
-    wasTransitioningRef.current = false;
+    drawRef.current = followViewport;
     const geometry = restingGeometryFor(activeTabId);
-    if (geometry !== null) {
-      if (dragging || wasTransitioning) {
-        cancelIndicatorAnimation();
-        write(geometry);
-      } else animateTo(geometry);
-    }
+    if (geometry !== null) write(geometry);
     return subscribeViewportMetrics(followViewport);
   }, [stripRef, activeTabId, revision, dragging, transition]);
-
-  useEffect(
-    () => () => {
-      animationRef.current?.cancel();
-      animationRef.current = null;
-    },
-    [],
-  );
 
   useEffect(() => {
     const strip = stripRef.current;
     if (strip === null || typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(() => {
-      cacheRef.current = { key: null, map: new Map() };
-      if (getTabTransition() !== null) return;
-      const indicator = indicatorRef.current;
-      const indicatorStyle = (indicator as { style?: CSSStyleDeclaration } | null)?.style;
-      if (indicator === null || !indicatorStyle) return;
-      const measured = measureTabGeometry(strip, activeTabId);
-      if (measured === null) return;
-      const geometry = applyViewportGeometry(measured, getViewportMetrics(activeTabId));
-      writeTransform(indicatorStyle, geometry.left);
-      writeWidth(indicatorStyle, geometry.width);
-      lastGeometryRef.current = geometry;
+      cacheRef.current = { key: revision, map: measureAllTabs(strip) };
+      drawRef.current?.();
     });
     observer.observe(strip);
+    for (const tab of strip.querySelectorAll<HTMLElement>("[data-tab-id]")) observer.observe(tab);
     return () => observer.disconnect();
-  }, [stripRef, activeTabId]);
+  }, [stripRef, revision]);
 
   return indicatorRef;
 }

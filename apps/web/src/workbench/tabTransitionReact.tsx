@@ -17,6 +17,18 @@ export function useTabTransition() {
   return useSyncExternalStore(subscribeTabTransition, getTabTransition, getTabTransition);
 }
 
+let directActivation = false;
+
+/** A fully aligned gesture checkpoint already has its presentation in place. */
+export function activateNavigationCheckpoint(tabId: string): void {
+  directActivation = true;
+  try {
+    useWorkbenchStore.getState().activateTab(tabId);
+  } finally {
+    directActivation = false;
+  }
+}
+
 /** Direction is intent, including when navigation wraps past the last Tab. */
 export function switchAdjacentTab(dir: -1 | 1): void {
   const store = useWorkbenchStore.getState();
@@ -55,6 +67,7 @@ export function TabTransitionController() {
         return;
       }
       if (state.activeTabId === previous.activeTabId) return;
+      if (directActivation) return;
       const inFlight = getTabTransition();
       if (inFlight?.toTabId === state.activeTabId) return;
       if (state.tabs.length <= 1 || skipAutomaticWorkbenchMotion()) {

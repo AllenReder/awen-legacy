@@ -323,7 +323,6 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
             <MaterialSurface
               kind="sidebar"
               className="flex h-full min-h-0 w-full flex-col border-r border-[var(--material-edge)]"
-              data-tauri-drag-region="deep"
             >
               {isOnSettings ? <SettingsSidebarNav pathname={pathname} /> : <AwenSidebar />}
             </MaterialSurface>

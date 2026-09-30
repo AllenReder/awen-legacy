@@ -1,6 +1,5 @@
 import type { DesktopUpdateChannel } from "@awen/contracts";
 
-const NIGHTLY_VERSION_PATTERN = /^[^-+]+-nightly\.\d{8}\.\d+$/;
 // Preview builds are the maintainers' test train, cut by hand from unreleased
 // branches to exercise the release flow. They share nightly's branding but
 // are packaged without an update feed (see
@@ -14,5 +13,14 @@ export function isNightlyDesktopVersion(version: string): boolean {
 }
 
 export function resolveDefaultDesktopUpdateChannel(appVersion: string): DesktopUpdateChannel {
-  return NIGHTLY_VERSION_PATTERN.test(appVersion) ? "prerelease" : "stable";
+  return /^[^-+]+-(?:alpha|beta|nightly)(?:\.|$)/.test(appVersion) ? "prerelease" : "stable";
+}
+
+/** UI labels differ from electron-updater's GitHub release channels. */
+export function resolveElectronUpdaterChannel(
+  channel: DesktopUpdateChannel,
+  appVersion: string,
+): string {
+  if (channel === "stable") return "latest";
+  return /^[^-+]+-(alpha|beta|nightly)(?:\.|$)/.exec(appVersion)?.[1] ?? "alpha";
 }

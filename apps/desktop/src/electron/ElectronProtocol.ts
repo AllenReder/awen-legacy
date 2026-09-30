@@ -2,7 +2,6 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as NodeTimersPromises from "node:timers/promises";
 import * as Path from "effect/Path";
 import Mime from "@effect/platform-node/Mime";
@@ -56,6 +55,7 @@ export class ElectronProtocolUnregistrationError extends Schema.TaggedError<Elec
 // built client from disk (`assetDirectory`).
 export type DesktopProtocolRegistrationInput = {
   readonly scheme: string;
+  readonly artworkDirectory?: string;
   readonly clerkFrontendApiHostname?: string | undefined;
 } & ({ readonly targetOrigin: URL } | { readonly assetDirectory: string });
 
@@ -272,6 +272,16 @@ export const make = Effect.gen(function* () {
         Effect.try({
           try: () => {
             Electron.protocol.handle(input.scheme, async (request) => {
+              const url = new URL(request.url);
+              if (input.artworkDirectory && url.pathname.startsWith("/artwork/")) {
+                const name = url.pathname.slice("/artwork/".length);
+                if (!/^[a-f0-9]{64}\.(?:png|jpe?g|webp|gif|avif)$/.test(name))
+                  return new Response(null, { status: 404 });
+                const assetRequest = new Request(`${url.protocol}//${url.host}/${name}`, {
+                  method: request.method,
+                });
+                return await runPromise(serveDesktopAsset(assetRequest, input.artworkDirectory));
+              }
               if ("assetDirectory" in input) {
                 return withContentSecurityPolicy(
                   await runPromise(serveDesktopAsset(request, input.assetDirectory)),

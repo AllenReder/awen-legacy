@@ -164,8 +164,9 @@ _Avoid_: Stacked switch, carousel, page flip, split slide
 
 **Tab switch progress**:
 The continuous 0–1 measure of one source-to-destination Sliding Tab switch,
-shared by the Tab cards and Tab indicator. Gesture-driven progress is reversible
-until release and does not itself imply that the destination is active.
+shared by the Tab cards and Tab indicator. A partial crossing is reversible;
+reaching full travel activates the destination as a checkpoint so the same gesture
+can continue through its Layout pan and into another crossing (ADR-0031).
 _Avoid_: Scroll offset, swipe amount
 
 **Tab indicator**:
@@ -330,8 +331,9 @@ color values for light or dark modes.
 _Avoid_: Skin, Palette file, CSS style
 
 **Window Glass**:
-The desktop-translucent frosted glass effect achieved through native OS window
-composition (macOS WindowServer blur or Windows Acrylic/Mica) and client tinting.
+The frosted appearance of the desktop behind Awen, supplied by the platform's
+window material and Awen's tinting. Its strength is separate from the blur of
+application content behind floating surfaces.
 _Avoid_: CSS blur, Backdrop filter, Translucency hack
 
 **Glass Stage**:
@@ -339,6 +341,12 @@ The native desktop composition layer behind the web view that supplies the
 window-wide frosted-glass base. It is a platform capability, not a Theme,
 Sidebar, Workbench, or View.
 _Avoid_: Glass background, CSS stage, Global blur layer
+
+**Content Backdrop Blur**:
+The configurable frosted treatment of application content behind Overlay and
+composer surfaces. Its strength is independent of Window Glass, surface opacity,
+and the dimming around a modal dialog.
+_Avoid_: Window blur radius, Desktop blur, Tint opacity
 
 **Background Mask**:
 A window-wide tint that brightens the blurred desktop in light mode or darkens

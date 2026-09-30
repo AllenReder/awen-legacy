@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactElement } from "react";
 
+import { isElectron } from "../../env";
 import { cn, usesCustomWindowChrome } from "../../lib/utils";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
@@ -37,7 +38,8 @@ export function WindowControls({
 }: WindowControlsProps) {
   const isCustomChromePlatform =
     typeof navigator !== "undefined" && usesCustomWindowChrome(navigator.platform);
-  const shouldRender = forceVisible || (isDesktopEnvironment() && isCustomChromePlatform);
+  const shouldRender =
+    forceVisible || (!isElectron && isDesktopEnvironment() && isCustomChromePlatform);
 
   const [isMaximized, setIsMaximized] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);

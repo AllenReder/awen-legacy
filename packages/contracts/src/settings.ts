@@ -120,16 +120,16 @@ export const BackgroundMaskOpacity = Schema.Int.check(
 export const DEFAULT_BACKGROUND_MASK_LIGHT_OPACITY = 10;
 export const DEFAULT_BACKGROUND_MASK_DARK_OPACITY = 35;
 
-export const MIN_SIDEBAR_BLUR = 1;
-export const MAX_SIDEBAR_BLUR = 64;
-export const SidebarBlur = Schema.Int.check(
+export const MIN_CONTENT_BACKDROP_BLUR = 0;
+export const MAX_CONTENT_BACKDROP_BLUR = 32;
+export const ContentBackdropBlur = Schema.Int.check(
   Schema.isBetween({
-    minimum: MIN_SIDEBAR_BLUR,
-    maximum: MAX_SIDEBAR_BLUR,
+    minimum: MIN_CONTENT_BACKDROP_BLUR,
+    maximum: MAX_CONTENT_BACKDROP_BLUR,
   }),
 );
-export type SidebarBlur = typeof SidebarBlur.Type;
-export const DEFAULT_SIDEBAR_BLUR: SidebarBlur = 24;
+export type ContentBackdropBlur = typeof ContentBackdropBlur.Type;
+export const DEFAULT_CONTENT_BACKDROP_BLUR: ContentBackdropBlur = 16;
 
 export const WorkbenchGlass = Schema.Boolean;
 export type WorkbenchGlass = typeof WorkbenchGlass.Type;
@@ -474,7 +474,10 @@ export const ClientSettingsSchema = Schema.Struct({
   backgroundMaskDarkOpacity: BackgroundMaskOpacity.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_BACKGROUND_MASK_DARK_OPACITY)),
   ),
-  sidebarBlur: SidebarBlur.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_BLUR))),
+  windowGlassEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  contentBackdropBlur: ContentBackdropBlur.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_CONTENT_BACKDROP_BLUR)),
+  ),
   workbenchGlass: WorkbenchGlass.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_WORKBENCH_GLASS)),
   ),
@@ -1571,7 +1574,8 @@ export const ClientSettingsPatch = Schema.Struct({
   topbarOpacity: Schema.optionalKey(TopbarOpacity),
   backgroundMaskLightOpacity: Schema.optionalKey(BackgroundMaskOpacity),
   backgroundMaskDarkOpacity: Schema.optionalKey(BackgroundMaskOpacity),
-  sidebarBlur: Schema.optionalKey(SidebarBlur),
+  windowGlassEnabled: Schema.optionalKey(Schema.Boolean),
+  contentBackdropBlur: Schema.optionalKey(ContentBackdropBlur),
   workbenchGlass: Schema.optionalKey(WorkbenchGlass),
   workbenchOpacity: Schema.optionalKey(WorkbenchOpacity),
   chatBackgroundPath: Schema.optionalKey(ChatBackgroundPath),

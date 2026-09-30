@@ -91,15 +91,21 @@ jobs:
       - name: Ensure Electron runtime
         run: pnpm --filter @awen/desktop ensure:electron
       - name: Compile the desktop shell
-        run: vp run --filter @awen/desktop build
+        run: pnpm exec vp run --filter @awen/desktop build
       - name: Verify preload bundle
         run: node apps/desktop/scripts/verify-preload-bundle.mjs
       - name: Typecheck the desktop shell
         run: pnpm --filter @awen/desktop typecheck
       - name: Test the desktop shell
         run: pnpm --filter @awen/desktop test
+      - name: Install Linux desktop dependencies
+        run: sudo apt-get update && sudo apt-get install -y xvfb libsecret-1-dev libgtk-3-0 libnss3 libasound2t64
+      - name: Build daemon, client and Linux cookie helper
+        run: |
+          pnpm build
+          node apps/desktop/scripts/build-browser-secret.mjs
       - name: Desktop smoke test
-        run: pnpm --filter @awen/desktop smoke-test
+        run: xvfb-run -a pnpm --filter @awen/desktop smoke-test
 
   installers:
     name: Release installers

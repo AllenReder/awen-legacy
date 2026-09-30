@@ -168,7 +168,7 @@ const withPackagedWslHarness = <A, E, R>(
     const archivePath = path.join(baseDir, "wsl-runtime.tar.gz");
     const hashPath = `${archivePath}.sha256`;
     const mountedAppRoot = "/mnt/c/app.asar.unpacked";
-    const mountedEntryPath = path.join(baseDir, "app.asar.unpacked/apps/server/dist/bin.mjs");
+    const mountedEntryPath = path.join(baseDir, "app.asar.unpacked/dist/bin.mjs");
     yield* fileSystem.makeDirectory(path.dirname(mountedEntryPath), { recursive: true });
     yield* fileSystem.writeFileString(mountedEntryPath, "");
     yield* fileSystem.writeFileString(archivePath, "archive");
@@ -234,16 +234,12 @@ describe("DesktopBackendConfiguration", () => {
         const first = yield* configuration.resolvePrimary;
         const second = yield* configuration.resolvePrimary;
 
-        assert.equal(first.executablePath, process.execPath);
-        assert.deepEqual(first.args.slice(0, 3), [
-          "--require",
-          environment.compileCachePath,
-          environment.backendEntryPath,
-        ]);
+        assert.equal(first.executablePath, environment.backendNodePath);
+        assert.deepEqual(first.args, [environment.backendEntryPath]);
         assert.equal(first.entryPath, environment.backendEntryPath);
         assert.equal(first.cwd, environment.backendCwd);
         assert.equal(first.captureOutput, true);
-        assert.equal(first.env.ELECTRON_RUN_AS_NODE, "1");
+        assert.isUndefined(first.env.ELECTRON_RUN_AS_NODE);
         assert.isUndefined(first.env.AWEN_PORT);
         assert.isUndefined(first.env.AWEN_MODE);
         assert.isUndefined(first.env.AWEN_DESKTOP_LAN_HOST);
@@ -261,50 +257,49 @@ describe("DesktopBackendConfiguration", () => {
     ),
   );
 
-  it.effect("resolvePrimary starts from server.asar without materializing the WSL tree", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-desktop-backend-config-test-",
-      });
-      const resourcesPath = path.join(baseDir, "resources");
+  it.effect(
+    "resolvePrimary starts from the standalone runtime without materializing the WSL tree",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-desktop-backend-config-test-",
+        });
+        const resourcesPath = path.join(baseDir, "resources");
 
-      const config = yield* Effect.gen(function* () {
-        const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
-        return yield* configuration.resolvePrimary;
-      }).pipe(
-        Effect.provide(
-          DesktopBackendConfiguration.layer.pipe(
-            Layer.provideMerge(serverExposureLayer),
-            Layer.provideMerge(DesktopAppSettings.layerTest()),
-            Layer.provideMerge(DesktopWslEnvironment.layerTest()),
-            Layer.provideMerge(
-              Layer.succeed(
-                DesktopWslServerTree.DesktopWslServerTree,
-                DesktopWslServerTree.DesktopWslServerTree.of({
-                  ensure: Effect.die("Windows primary must not extract the WSL server tree"),
-                  cleanupLegacy: Effect.die("Windows primary must not clean the WSL server tree"),
+        const config = yield* Effect.gen(function* () {
+          const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+          return yield* configuration.resolvePrimary;
+        }).pipe(
+          Effect.provide(
+            DesktopBackendConfiguration.layer.pipe(
+              Layer.provideMerge(serverExposureLayer),
+              Layer.provideMerge(DesktopAppSettings.layerTest()),
+              Layer.provideMerge(DesktopWslEnvironment.layerTest()),
+              Layer.provideMerge(
+                Layer.succeed(
+                  DesktopWslServerTree.DesktopWslServerTree,
+                  DesktopWslServerTree.DesktopWslServerTree.of({
+                    ensure: Effect.die("Windows primary must not extract the WSL server tree"),
+                    cleanupLegacy: Effect.die("Windows primary must not clean the WSL server tree"),
+                  }),
+                ),
+              ),
+              Layer.provideMerge(
+                makeEnvironmentLayer(baseDir, {
+                  appPath: `${resourcesPath}/app.asar`,
+                  platform: "win32",
+                  resourcesPath,
                 }),
               ),
             ),
-            Layer.provideMerge(
-              makeEnvironmentLayer(baseDir, {
-                appPath: `${resourcesPath}/app.asar`,
-                platform: "win32",
-                resourcesPath,
-              }),
-            ),
           ),
-        ),
-      );
+        );
 
-      assert.equal(
-        config.entryPath,
-        path.join(resourcesPath, "server.asar/apps/server/dist/bin.mjs"),
-      );
-      assert.equal(config.env.ELECTRON_RUN_AS_NODE, "1");
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+        assert.equal(config.entryPath, path.join(resourcesPath, "runtime/dist/bin.mjs"));
+        assert.isUndefined(config.env.ELECTRON_RUN_AS_NODE);
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("resolveWsl reuses the primary's bootstrap token", () =>
@@ -327,7 +322,7 @@ describe("DesktopBackendConfiguration", () => {
       const baseDir = yield* fileSystem.makeTempDirectoryScoped({
         prefix: "t3-desktop-backend-config-test-",
       });
-      const entryPath = path.join(baseDir, "apps/server/dist/bin.mjs");
+      const entryPath = path.join(baseDir, "dist/bin.mjs");
       yield* fileSystem.makeDirectory(path.dirname(entryPath), { recursive: true });
       yield* fileSystem.writeFileString(entryPath, "");
 
@@ -432,17 +427,14 @@ describe("DesktopBackendConfiguration", () => {
             },
           ]);
           assert.deepEqual(observedProbeRoots, [linuxAppRoot]);
-          assert.equal(
-            config.entryPath,
-            path.join(baseDir, "server.asar/apps/server/dist/bin.mjs"),
-          );
+          assert.equal(config.entryPath, path.join(baseDir, "runtime/dist/bin.mjs"));
           assert.deepEqual(config.args, [
             "-d",
             "Ubuntu",
             "--exec",
             "env",
             `PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${resolvedPath}`,
-            `${linuxAppRoot}/t3`,
+            `${linuxAppRoot}/bin/awen`,
             "--bootstrap-fd",
             "0",
           ]);
@@ -485,12 +477,12 @@ describe("DesktopBackendConfiguration", () => {
 
           assert.deepEqual(observedRuntimeIds, [`sha256-${firstHash}`, `sha256-${secondHash}`]);
           assert.equal(first.wslRuntimeId, observedRuntimeIds[0]);
-          assert.include(first.args, `/runtime/sha256-${firstHash}/t3`);
+          assert.include(first.args, `/runtime/sha256-${firstHash}/bin/awen`);
           assert.equal(second.wslRuntimeId, observedRuntimeIds[1]);
-          assert.include(second.args, `/runtime/sha256-${secondHash}/t3`);
+          assert.include(second.args, `/runtime/sha256-${secondHash}/bin/awen`);
           assert.isUndefined(invalidIdentity.wslRuntimeId);
           assert.include(invalidIdentity.args, "/usr/bin/node");
-          assert.include(invalidIdentity.args, `${mountedAppRoot}/apps/server/dist/bin.mjs`);
+          assert.include(invalidIdentity.args, `${mountedAppRoot}/dist/bin.mjs`);
         }),
     );
   });
@@ -516,7 +508,7 @@ describe("DesktopBackendConfiguration", () => {
           assert.deepEqual(observedNodePtyRoots, [mountedAppRoot]);
           assert.equal(config.entryPath, mountedEntryPath);
           assert.include(config.args, "/usr/bin/node");
-          assert.include(config.args, `${mountedAppRoot}/apps/server/dist/bin.mjs`);
+          assert.include(config.args, `${mountedAppRoot}/dist/bin.mjs`);
           assert.isUndefined(config.wslRuntimeId);
           assert.isTrue(Option.isNone(config.preflightFailure));
         }),
@@ -556,7 +548,7 @@ describe("DesktopBackendConfiguration", () => {
           assert.deepEqual(observedProbeRoots, [stagedAppRoot]);
           assert.deepEqual(observedNodePtyRoots, [mountedAppRoot]);
           assert.include(config.args, "/usr/bin/node");
-          assert.include(config.args, `${mountedAppRoot}/apps/server/dist/bin.mjs`);
+          assert.include(config.args, `${mountedAppRoot}/dist/bin.mjs`);
           assert.notInclude(config.args, `${stagedAppRoot}/t3`);
           assert.equal(config.entryPath, mountedEntryPath);
           assert.isUndefined(config.wslRuntimeId);
@@ -645,13 +637,13 @@ describe("DesktopBackendConfiguration", () => {
         const baseDir = yield* fileSystem.makeTempDirectoryScoped({
           prefix: "t3-desktop-backend-config-test-",
         });
-        const entryPath = path.join(baseDir, "apps/server/dist/bin.mjs");
+        const entryPath = path.join(baseDir, "dist/bin.mjs");
         yield* fileSystem.makeDirectory(path.dirname(entryPath), { recursive: true });
         yield* fileSystem.writeFileString(entryPath, "");
 
         const nodePath = "/home/test user's/.nvm/versions/node/v22.0.0/bin/node";
         const linuxAppRoot = "/tmp/t3 code's launch";
-        const linuxEntryPath = `${linuxAppRoot}/apps/server/dist/bin.mjs`;
+        const linuxEntryPath = `${linuxAppRoot}/dist/bin.mjs`;
         const resolvedPath = "/home/test user/bin:/opt/test's tools/bin:/usr/bin:/bin";
         const devServerUrl = "http://127.0.0.1:5733/dev%20assets/?label=hello%20world";
         const config = yield* Effect.gen(function* () {
@@ -1156,7 +1148,10 @@ describe("DesktopBackendConfiguration", () => {
           // wsl-only is persisted but WSL is unavailable, so the primary must
           // not spawn wsl.exe (which would loop on preflight failures while the
           // Connections backend control is hidden). Resolve the Windows primary.
-          assert.equal(config.executablePath, process.execPath);
+          assert.equal(
+            config.executablePath,
+            (yield* DesktopEnvironment.DesktopEnvironment).backendNodePath,
+          );
           assert.equal(config.bootstrap.awenHome, environment.baseDir);
           assert.isTrue(Option.isNone(config.preflightFailure));
         }).pipe(
@@ -1424,8 +1419,8 @@ describe("DesktopBackendConfiguration", () => {
         const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
         const config = yield* configuration.resolvePrimary;
         assert.equal(config.bootstrap.resourceMonitorPath, monitorPath);
-        assert.equal(config.bootstrap.desktopTelemetryFd, 4);
-        assert.equal(config.bootstrap.desktopTelemetryControlFd, 5);
+        assert.isUndefined(config.bootstrap.desktopTelemetryFd);
+        assert.isUndefined(config.bootstrap.desktopTelemetryControlFd);
       }).pipe(
         Effect.provide(
           DesktopBackendConfiguration.layer.pipe(

@@ -100,6 +100,9 @@ export interface LocalDaemonLaunchOptions {
   readonly reservePort?: () => Promise<number>;
   readonly serverInvocation?: LocalDaemonServerInvocation;
   readonly currentDirectory?: string;
+  readonly expectedServerVersion?: string;
+  readonly bindHost?: string;
+  readonly environment?: NodeJS.ProcessEnv;
 }
 
 export interface LocalDaemonServerInvocation {
@@ -653,9 +656,10 @@ async function spawnManagedServer(input: {
   const invocation = input.options.serverInvocation ?? defaultServerInvocation();
   const environment: NodeJS.ProcessEnv = {
     ...process.env,
+    ...input.options.environment,
     AWEN_HOME: input.baseDir,
     AWEN_MODE: "desktop",
-    AWEN_HOST: "127.0.0.1",
+    AWEN_HOST: input.options.bindHost ?? "127.0.0.1",
     AWEN_PORT: String(input.port),
     AWEN_NO_BROWSER: "1",
     AWEN_DAEMON_ID: input.daemonId,
@@ -672,7 +676,7 @@ async function spawnManagedServer(input: {
       "--mode",
       "desktop",
       "--host",
-      "127.0.0.1",
+      input.options.bindHost ?? "127.0.0.1",
       "--port",
       String(input.port),
       "--base-dir",
@@ -862,17 +866,31 @@ export async function startLocalDaemon(
     const requested = requestedDaemonPort();
 
     if (existing.status === "ready") {
-      if (requested._tag !== "set") {
-        return descriptorFromState(existing.state);
+      let versionMatches = true;
+      if (options.expectedServerVersion !== undefined) {
+        const descriptor = await requestJson(
+          new URL("/.well-known/awen/environment", existing.state.origin).href,
+          { method: "GET", headers: { accept: "application/json" } },
+          options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
+        );
+        if (
+          descriptor.status !== 200 ||
+          !isRecord(descriptor.body) ||
+          typeof descriptor.body.serverVersion !== "string"
+        ) {
+          throw new LocalDaemonError(
+            "daemon-version-unavailable",
+            "Cannot verify the running daemon version.",
+          );
+        }
+        versionMatches = descriptor.body.serverVersion === options.expectedServerVersion;
       }
-      const existingPort = portOfOrigin(existing.state.origin);
-      if (existingPort === requested.port) {
-        return descriptorFromState(existing.state);
-      }
-      await assertRequestedPortAvailable(requested);
-      // Already inside the launch lock: re-entering it from this process can
-      // never succeed, because the lock record names this very pid, so a
-      // nested `stopLocalDaemon` would spin until `launch-lock-timeout`.
+      const portMatches =
+        requested._tag !== "set" || portOfOrigin(existing.state.origin) === requested.port;
+      if (versionMatches && portMatches) return descriptorFromState(existing.state);
+      // Version replacement is atomic under the launch lock and only signals a
+      // daemon whose identity and bootstrap credential were verified above.
+      if (!portMatches) await assertRequestedPortAvailable(requested);
       await stopLocalDaemonLocked({ baseDir: options.baseDir, confirm: true });
     } else if (existing.status !== "absent") {
       await reconcileUnattachedRecord({ paths, existing });

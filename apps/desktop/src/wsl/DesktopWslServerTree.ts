@@ -8,17 +8,9 @@ import * as Semaphore from "effect/Semaphore";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 
-// Packaged Windows builds ship the server tree inside resources/server.asar
-// (see scripts/build-desktop-artifact.ts). The Windows primary reads it in
-// place through the asar-aware ELECTRON_RUN_AS_NODE runtime, but the WSL
-// backend launches plain `wsl.exe -- node`, which cannot read an asar archive.
-// This fallback service materializes the archive into a real, version-keyed
-// directory only when the distro-local runtime cannot be prepared.
-//
-// Reading through Electron's patched fs also transparently returns the
-// contents of files that electron-builder/asar left in the server.asar.unpacked
-// sibling (native binaries), so a single walk of the archive yields the
-// complete tree.
+// Packaged Windows resources/runtime is copied into writable state for the
+// mounted WSL fallback. The preferred runtime lives inside the Linux distro.
+// Version-keyed copies and atomic completion markers prevent partial cache reuse.
 
 export type WslServerTreeResult =
   | { readonly ok: true; readonly root: string }
@@ -47,9 +39,9 @@ export class DesktopWslServerTree extends Context.Service<
   DesktopWslServerTree,
   {
     // Resolves the directory the WSL backend should treat as the app root
-    // (the directory containing apps/server/dist and node_modules). In dev
-    // the checkout already is that directory; packaged Windows builds extract
-    // server.asar on first use.
+    // (dist and node_modules in packaged builds). In dev the checkout already
+    // is that directory; packaged Windows builds copy the resources/runtime
+    // tree into writable state before mounted-fallback native provisioning.
     readonly ensure: Effect.Effect<WslServerTreeResult>;
     // Removes the Windows-side extraction cache after a distro-local runtime
     // has proven healthy. Serialized with ensure so cleanup cannot race an

@@ -2,9 +2,7 @@
  * Platform facts shared by the appearance layer and the terminal renderer.
  *
  * The native desktop bridge is authoritative when it reports a known platform.
- * Tauri's bridge returns the sentinel `"other"` until its runtime config
- * resolves — and permanently when that config fails — so an unknown value must
- * fall through to the browser signals instead of being treated as "not
+ * Unknown native values fall through to browser signals instead of being treated as "not
  * Windows". Browser `navigator` signals only classify the OS; they never imply
  * a native glass stage.
  */

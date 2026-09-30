@@ -3,7 +3,6 @@ import type { ConfirmDialogOptions, ContextMenuItem, LocalApi } from "@awen/cont
 import { requestConfirmDialog } from "./confirmDialog";
 import { dismissContextMenu, showContextMenuFallback } from "./contextMenuFallback";
 import { readBrowserClientSettings, writeBrowserClientSettings } from "./clientPersistenceStorage";
-import { isElectron } from "./env";
 
 let cachedApi: LocalApi | undefined;
 
@@ -47,18 +46,11 @@ function createBrowserLocalApi(): LocalApi {
         items: readonly ContextMenuItem<T>[],
         position?: { x: number; y: number },
       ): Promise<T | null> => {
-        if (isElectron && window.desktopBridge) {
-          return window.desktopBridge.showContextMenu(items, position) as Promise<T | null>;
-        }
         return showContextMenuFallback(items, position);
       },
-      // A native desktop menu blocks keyboard input and closes on outside
-      // interaction, so nothing to do there; the DOM fallback needs an explicit
-      // dismiss when the state behind it goes away.
+      // Application menus use one renderer path on every platform, including pointer callbacks.
       close: async () => {
-        if (!isElectron) {
-          dismissContextMenu();
-        }
+        dismissContextMenu();
       },
     },
     persistence: {

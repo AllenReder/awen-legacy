@@ -51,3 +51,11 @@ node_modules/
 .pnpm-store/
 .pi/
 apps/desktop/runtime/
+
+apps/desktop/dist-package/
+native/browser-secret/build/
+
+apps/desktop/wsl-runtime.tar.gz*
+
+# Native trackpad input addon
+/native/trackpad/build/

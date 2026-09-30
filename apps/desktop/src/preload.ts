@@ -1,5 +1,6 @@
 import type {
   DesktopBridge,
+  DesktopTrackpadInput,
   DesktopPreviewPointerEvent,
   DesktopPreviewRecordingInputEvent,
   DesktopPreviewRecordingFrame,
@@ -30,6 +31,8 @@ function isSnapShotEvent(value: unknown): value is DesktopSnapShotEvent {
 
 // oxlint-disable-next-line awen/no-global-process-runtime -- Electron exposes the client platform in its sandboxed preload process.
 const clientPlatform = process.platform;
+const nativeTrackpadSupported =
+  clientPlatform === "darwin" && ipcRenderer.sendSync("desktop:get-trackpad-supported") === true;
 
 if (clientPlatform === "darwin") {
   // Native window buttons do not scale with Chromium zoom. Keep their reserved
@@ -55,10 +58,13 @@ function unwrapEnsureSshEnvironmentResult(result: unknown) {
       "message" in result && typeof result.message === "string"
         ? result.message
         : "SSH authentication cancelled.";
-    throw new Error(message);
+    throw new Error(`[awen-ssh-cancelled] ${message}`);
   }
   return result as Awaited<ReturnType<DesktopBridge["ensureSshEnvironment"]>>;
 }
+
+const daemonSsh = (operation: string, body?: unknown) =>
+  ipcRenderer.invoke("desktop:daemon-ssh", { operation, body });
 
 contextBridge.exposeInMainWorld("desktopBridge", {
   getAppBranding: () => {
@@ -70,6 +76,35 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   },
   getPathForFile: (file: File) => webUtils.getPathForFile(file),
   getClientPlatform: () => clientPlatform,
+  ...(nativeTrackpadSupported
+    ? {
+        onTrackpadInput: (listener: (input: DesktopTrackpadInput) => void) => {
+          const handler = (_event: Electron.IpcRendererEvent, input: unknown) => {
+            if (typeof input !== "object" || input === null) return;
+            const packet = input as DesktopTrackpadInput;
+            if (!["begin", "update", "end", "momentum", "finish", "cancel"].includes(packet.phase))
+              return;
+            if (
+              ![
+                packet.gestureId,
+                packet.sequence,
+                packet.deltaX,
+                packet.deltaY,
+                packet.time,
+                packet.x,
+                packet.y,
+              ].every(Number.isFinite)
+            )
+              return;
+            listener(packet);
+          };
+          ipcRenderer.on("desktop:trackpad-input", handler);
+          return () => ipcRenderer.removeListener("desktop:trackpad-input", handler);
+        },
+      }
+    : {}),
+  getWindowGlassSupported: () =>
+    ipcRenderer.sendSync("desktop:get-window-glass-supported") === true,
   setNotificationBadge: (badge) =>
     ipcRenderer.invoke(IpcChannels.SET_NOTIFICATION_BADGE_CHANNEL, badge),
   onNotificationBadgeClear: (listener) => {
@@ -81,6 +116,20 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     const handler = () => listener();
     ipcRenderer.on(IpcChannels.TRACKPAD_SCROLL_END_CHANNEL, handler);
     return () => ipcRenderer.removeListener(IpcChannels.TRACKPAD_SCROLL_END_CHANNEL, handler);
+  },
+  onTrackpadScrollPhase: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, phase: unknown) => {
+      if (
+        phase === "began" ||
+        phase === "changed" ||
+        phase === "ended" ||
+        phase === "momentum" ||
+        phase === "cancelled"
+      )
+        listener(phase);
+    };
+    ipcRenderer.on(IpcChannels.TRACKPAD_SCROLL_PHASE_CHANNEL, handler);
+    return () => ipcRenderer.removeListener(IpcChannels.TRACKPAD_SCROLL_PHASE_CHANNEL, handler);
   },
   getSystemLocale: () => {
     const result = ipcRenderer.sendSync(IpcChannels.GET_SYSTEM_LOCALE_CHANNEL);
@@ -124,41 +173,61 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   setConnectionCatalog: (catalog) =>
     ipcRenderer.invoke(IpcChannels.SET_CONNECTION_CATALOG_CHANNEL, catalog),
   clearConnectionCatalog: () => ipcRenderer.invoke(IpcChannels.CLEAR_CONNECTION_CATALOG_CHANNEL),
-  discoverSshHosts: () => ipcRenderer.invoke(IpcChannels.DISCOVER_SSH_HOSTS_CHANNEL),
-  resolveSshHost: (alias) => ipcRenderer.invoke(IpcChannels.RESOLVE_SSH_HOST_CHANNEL, alias),
+  discoverSshHosts: () => daemonSsh("hosts"),
+  resolveSshHost: (alias) => daemonSsh("resolve", { alias }),
+  inspectSshHostTrust: (target) => daemonSsh("trust", target),
+  inspectSshEnvironmentPlan: (target) => daemonSsh("plan", target),
+  trustSshHost: (target, keyType, fingerprint) =>
+    daemonSsh("accept", { target, keyType, fingerprint }),
   ensureSshEnvironment: async (target, options) =>
     unwrapEnsureSshEnvironmentResult(
-      await ipcRenderer.invoke(IpcChannels.ENSURE_SSH_ENVIRONMENT_CHANNEL, {
+      await daemonSsh("ensure", {
         target,
-        ...(options === undefined ? {} : { options }),
+        options: options
+          ? { issuePairingToken: options.issuePairingToken, operationId: options.operationId }
+          : undefined,
       }),
     ),
-  disconnectSshEnvironment: (target) =>
-    ipcRenderer.invoke(IpcChannels.DISCONNECT_SSH_ENVIRONMENT_CHANNEL, target),
-  fetchSshEnvironmentDescriptor: (httpBaseUrl) =>
-    ipcRenderer.invoke(IpcChannels.FETCH_SSH_ENVIRONMENT_DESCRIPTOR_CHANNEL, { httpBaseUrl }),
+  getSshEnvironmentProgress: (operationId) => daemonSsh("progress", { operationId }),
+  cancelSshEnvironment: (operationId) => daemonSsh("cancel", { operationId }),
+  disconnectSshEnvironment: (target) => daemonSsh("disconnect", target),
+  fetchSshEnvironmentDescriptor: (httpBaseUrl) => daemonSsh("descriptor", { httpBaseUrl }),
   bootstrapSshBearerSession: (httpBaseUrl, credential) =>
-    ipcRenderer.invoke(IpcChannels.BOOTSTRAP_SSH_BEARER_SESSION_CHANNEL, {
-      httpBaseUrl,
-      credential,
-    }),
+    daemonSsh("bootstrap", { httpBaseUrl, credential }),
   fetchSshSessionState: (httpBaseUrl, bearerToken) =>
-    ipcRenderer.invoke(IpcChannels.FETCH_SSH_SESSION_STATE_CHANNEL, { httpBaseUrl, bearerToken }),
+    daemonSsh("session", { httpBaseUrl, bearerToken }),
   issueSshWebSocketTicket: (httpBaseUrl, bearerToken) =>
-    ipcRenderer.invoke(IpcChannels.ISSUE_SSH_WEBSOCKET_TOKEN_CHANNEL, { httpBaseUrl, bearerToken }),
+    daemonSsh("ticket", { httpBaseUrl, bearerToken }),
   onSshPasswordPrompt: (listener) => {
-    const wrappedListener = (_event: Electron.IpcRendererEvent, request: unknown) => {
-      if (typeof request !== "object" || request === null) return;
-      listener(request as Parameters<typeof listener>[0]);
+    const seen = new Set<string>();
+    let stopped = false;
+    let polling = false;
+    const poll = async () => {
+      if (stopped || polling) return;
+      polling = true;
+      try {
+        const pending = (await daemonSsh("prompts")) as Parameters<typeof listener>[0][];
+        for (const request of pending) {
+          if (!stopped && !seen.has(request.requestId)) {
+            seen.add(request.requestId);
+            listener(request);
+          }
+        }
+      } catch {
+        /* Setup reports failures; retry polling on the next interval. */
+      } finally {
+        polling = false;
+      }
     };
-
-    ipcRenderer.on(IpcChannels.SSH_PASSWORD_PROMPT_CHANNEL, wrappedListener);
+    void poll();
+    const interval = window.setInterval(() => void poll(), 250);
     return () => {
-      ipcRenderer.removeListener(IpcChannels.SSH_PASSWORD_PROMPT_CHANNEL, wrappedListener);
+      stopped = true;
+      window.clearInterval(interval);
     };
   },
   resolveSshPasswordPrompt: (requestId, password) =>
-    ipcRenderer.invoke(IpcChannels.RESOLVE_SSH_PASSWORD_PROMPT_CHANNEL, { requestId, password }),
+    daemonSsh("resolvePrompt", { requestId, password }),
   getServerExposureState: () => ipcRenderer.invoke(IpcChannels.GET_SERVER_EXPOSURE_STATE_CHANNEL),
   setServerExposureMode: (mode) =>
     ipcRenderer.invoke(IpcChannels.SET_SERVER_EXPOSURE_MODE_CHANNEL, mode),
@@ -235,8 +304,6 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     ipcRenderer.sendSync(IpcChannels.GET_WINDOW_FULLSCREEN_STATE_CHANNEL) === true,
   setWindowGlassEnabled: (enabled: boolean) =>
     ipcRenderer.invoke(IpcChannels.SET_WINDOW_GLASS_ENABLED_CHANNEL, enabled),
-  setWindowBackgroundBlur: (radius: number) =>
-    ipcRenderer.invoke(IpcChannels.SET_WINDOW_BACKGROUND_BLUR_CHANNEL, radius),
   onWindowFullscreenStateChange: (listener) => {
     const wrappedListener = (_event: Electron.IpcRendererEvent, fullscreen: unknown) => {
       if (typeof fullscreen !== "boolean") return;

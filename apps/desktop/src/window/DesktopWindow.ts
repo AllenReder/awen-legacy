@@ -1,3 +1,5 @@
+// @effect-diagnostics nodeBuiltinImport:off -- Native material support follows the host OS release.
+import * as NodeOS from "node:os";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -23,6 +25,7 @@ import {
   QUIT_SHORTCUT_CHANNEL,
   SNAP_SHOT_EVENT_CHANNEL,
   TRACKPAD_SCROLL_END_CHANNEL,
+  TRACKPAD_SCROLL_PHASE_CHANNEL,
   WINDOW_FULLSCREEN_STATE_CHANNEL,
 } from "../ipc/channels.ts";
 import * as PreviewManager from "../preview/Manager.ts";
@@ -30,17 +33,29 @@ import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopClientSettings from "../settings/DesktopClientSettings.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import { makeQuitShortcutHandler } from "./QuitHold.ts";
+import { attachNativeTrackpad } from "./NativeTrackpad.ts";
 
-const TITLEBAR_HEIGHT = 40;
+export function isWindowGlassSupported(
+  platform: NodeJS.Platform,
+  release = NodeOS.release(),
+): boolean {
+  if (platform === "darwin") return true;
+  if (platform !== "win32") return false;
+  const [major = 0, , build = 0] = release.split(".").map(Number);
+  return major > 10 || (major === 10 && build >= 22621);
+}
+
+const TITLEBAR_HEIGHT = 36;
 // Matches --workspace-topbar-height in apps/web/src/index.css. Native macOS
 // buttons are 14 points tall and do not scale with the renderer's zoom.
-const MACOS_WORKSPACE_TOPBAR_HEIGHT = 52;
+const MACOS_WORKSPACE_TOPBAR_HEIGHT = 36;
 const MACOS_WINDOW_BUTTON_RADIUS = 7;
+const MACOS_WINDOW_BUTTON_LEFT_INSET = 10;
 
 function syncMacosWindowButtons(window: Electron.BrowserWindow): void {
   if (window.isDestroyed() || window.isFullScreen()) return;
   window.setWindowButtonPosition({
-    x: 16,
+    x: MACOS_WINDOW_BUTTON_LEFT_INSET,
     y: Math.round(
       (MACOS_WORKSPACE_TOPBAR_HEIGHT * window.webContents.getZoomFactor()) / 2 -
         MACOS_WINDOW_BUTTON_RADIUS,
@@ -135,6 +150,7 @@ export class DesktopWindow extends Context.Service<
     // guest page instead of the app UI. The menu routes here to always target
     // the main window.
     readonly zoomMain: (direction: MainWindowZoomDirection) => Effect.Effect<void>;
+    readonly setGlassEnabled: (enabled: boolean) => Effect.Effect<void>;
     readonly syncAppearance: Effect.Effect<void>;
   }
 >()("@awen/desktop/window/DesktopWindow") {}
@@ -259,7 +275,7 @@ function getWindowTitleBarOptions(
     return {
       titleBarStyle: "hiddenInset",
       trafficLightPosition: {
-        x: 16,
+        x: MACOS_WINDOW_BUTTON_LEFT_INSET,
         y: MACOS_WORKSPACE_TOPBAR_HEIGHT / 2 - MACOS_WINDOW_BUTTON_RADIUS,
       },
     };
@@ -279,6 +295,7 @@ function syncWindowAppearance(
   window: Electron.BrowserWindow,
   shouldUseDarkColors: boolean,
   platform: NodeJS.Platform,
+  glassEnabled: boolean,
 ): Effect.Effect<void> {
   return Effect.sync(() => {
     if (window.isDestroyed()) {
@@ -286,11 +303,15 @@ function syncWindowAppearance(
     }
 
     if (platform === "darwin") {
-      window.setVibrancy("under-window");
-      window.setBackgroundColor("#00000000");
+      window.setVibrancy(glassEnabled ? "under-window" : null);
+      window.setBackgroundColor(
+        glassEnabled ? "#00000000" : getInitialWindowBackgroundColor(shouldUseDarkColors),
+      );
     } else if (platform === "win32") {
-      window.setBackgroundMaterial("acrylic");
-      window.setBackgroundColor("#00000000");
+      window.setBackgroundMaterial(glassEnabled ? "acrylic" : "none");
+      window.setBackgroundColor(
+        glassEnabled ? "#00000000" : getInitialWindowBackgroundColor(shouldUseDarkColors),
+      );
     } else {
       window.setBackgroundColor(getInitialWindowBackgroundColor(shouldUseDarkColors));
     }
@@ -330,6 +351,18 @@ export const make = Effect.gen(function* () {
   const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
   const clientSettings = yield* DesktopClientSettings.DesktopClientSettings;
   const electronApp = yield* ElectronApp.ElectronApp;
+  const glassEnabledRef = yield* Ref.make<Option.Option<boolean>>(Option.none());
+  const readGlassEnabled = Effect.gen(function* () {
+    const preview = yield* Ref.get(glassEnabledRef);
+    const saved = yield* clientSettings.get.pipe(Effect.orElseSucceed(() => Option.none()));
+    return (
+      Option.getOrElse(preview, () =>
+        Option.isSome(saved) ? saved.value.windowGlassEnabled : true,
+      ) &&
+      isWindowGlassSupported(environment.platform) &&
+      Electron.nativeTheme.prefersReducedTransparency !== true
+    );
+  });
   // Window-side latch for the primary backend's readiness. Set by
   // handleBackendReady (driven by the pool's onReady callback), cleared
   // by handleBackendNotReady (driven by onShutdown). Only consumed by
@@ -402,6 +435,7 @@ export const make = Effect.gen(function* () {
     if (persistedBounds !== null && initialBounds === DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE) {
       yield* logWindowWarning("saved main window bounds could not be restored; using defaults");
     }
+    const glassEnabled = yield* readGlassEnabled;
     const isTranslucentPlatform =
       environment.platform === "darwin" || environment.platform === "win32";
     const window = yield* electronWindow.create({
@@ -411,14 +445,19 @@ export const make = Effect.gen(function* () {
       show: false,
       autoHideMenuBar: true,
       ...(environment.platform === "darwin" ? { disableAutoHideCursor: true } : {}),
-      transparent: isTranslucentPlatform,
-      backgroundColor: isTranslucentPlatform
-        ? "#00000000"
-        : getInitialWindowBackgroundColor(shouldUseDarkColors),
-      ...(environment.platform === "darwin"
+      // System materials supply translucency without transparent-window mode,
+      // which breaks native resizing/maximize behavior and macOS shadows.
+      transparent: false,
+      backgroundColor:
+        isTranslucentPlatform && glassEnabled
+          ? "#00000000"
+          : getInitialWindowBackgroundColor(shouldUseDarkColors),
+      ...(environment.platform === "darwin" && glassEnabled
         ? { vibrancy: "under-window", visualEffectState: "active" }
         : {}),
-      ...(environment.platform === "win32" ? { backgroundMaterial: "acrylic" } : {}),
+      ...(environment.platform === "win32"
+        ? { backgroundMaterial: glassEnabled ? "acrylic" : "none" }
+        : {}),
       ...iconOption,
       title: environment.displayName,
       ...getWindowTitleBarOptions(shouldUseDarkColors, environment.platform),
@@ -440,6 +479,30 @@ export const make = Effect.gen(function* () {
     if (environment.platform === "darwin") {
       window.setAutoHideCursor(false);
     }
+    let nativeTrackpadAvailable = false;
+    if (environment.platform === "darwin") {
+      const addonPath = environment.isPackaged
+        ? environment.path.join(environment.resourcesPath, "trackpad", "awen-trackpad.node")
+        : environment.path.join(
+            environment.rootDir,
+            "native",
+            "trackpad",
+            "build",
+            environment.processArch,
+            "awen-trackpad.node",
+          );
+      const installed = yield* Effect.try(() => attachNativeTrackpad(window, addonPath)).pipe(
+        Effect.option,
+      );
+      nativeTrackpadAvailable = Option.isSome(installed);
+      if (!nativeTrackpadAvailable)
+        yield* logWindowWarning(
+          "native trackpad input unavailable; retaining native content scrolling",
+        );
+    }
+    window.webContents.ipc?.on("desktop:get-trackpad-supported", (event) => {
+      event.returnValue = nativeTrackpadAvailable;
+    });
     let boundsPersistFiber: Fiber.Fiber<void, never> | undefined;
     let pendingBoundsPersistFiber: Fiber.Fiber<void, never> | undefined;
     let boundsPersistenceEnabled = persistedBounds === null || restoredPersistedBounds;
@@ -681,6 +744,15 @@ export const make = Effect.gen(function* () {
     });
     window.webContents.on("input-event", (_event, input) => {
       if (input.type === "gestureScrollEnd") window.webContents.send(TRACKPAD_SCROLL_END_CHANNEL);
+      const phases: Readonly<Record<string, string>> = {
+        gestureScrollBegin: "began",
+        gestureScrollUpdate: "changed",
+        gestureScrollEnd: "ended",
+        gestureFlingStart: "momentum",
+        gestureFlingCancel: "cancelled",
+      };
+      const phase = phases[input.type];
+      if (phase) window.webContents.send(TRACKPAD_SCROLL_PHASE_CHANNEL, phase);
     });
 
     window.on("page-title-updated", (event) => {
@@ -1038,11 +1110,29 @@ export const make = Effect.gen(function* () {
       // own zoom, so put each guest back where the preview left it.
       yield* previewManager.reapplyZoom();
     }),
+    setGlassEnabled: (enabled) =>
+      Effect.gen(function* () {
+        yield* Ref.set(glassEnabledRef, Option.some(enabled));
+        const main = yield* electronWindow.main;
+        if (Option.isSome(main))
+          yield* syncWindowAppearance(
+            main.value,
+            yield* electronTheme.shouldUseDarkColors,
+            environment.platform,
+            yield* readGlassEnabled,
+          );
+      }),
     syncAppearance: Effect.gen(function* () {
+      const glassEnabled = yield* readGlassEnabled;
       const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
-      yield* electronWindow.syncAllAppearance((window) =>
-        syncWindowAppearance(window, shouldUseDarkColors, environment.platform),
-      );
+      const main = yield* electronWindow.main;
+      if (Option.isSome(main))
+        yield* syncWindowAppearance(
+          main.value,
+          shouldUseDarkColors,
+          environment.platform,
+          glassEnabled,
+        );
     }).pipe(Effect.withSpan("desktop.window.syncAppearance")),
   });
 });

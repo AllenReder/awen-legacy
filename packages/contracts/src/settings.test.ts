@@ -421,7 +421,11 @@ describe("ClientSettings window glass and backdrop settings", () => {
     expect(settings.topbarOpacity).toBe(50);
     expect(settings.backgroundMaskLightOpacity).toBe(10);
     expect(settings.backgroundMaskDarkOpacity).toBe(35);
-    expect(settings.sidebarBlur).toBe(24);
+    expect(settings.contentBackdropBlur).toBe(16);
+    expect(decodeClientSettings({ sidebarBlur: 64 }).contentBackdropBlur).toBe(16);
+    expect(decodeClientSettingsPatch({ contentBackdropBlur: 0 })).toEqual({
+      contentBackdropBlur: 0,
+    });
     expect(settings.workbenchGlass).toBe(true);
     expect(settings.workbenchOpacity).toBe(50);
     expect(settings.chatBackgroundPath).toBeNull();
@@ -432,7 +436,7 @@ describe("ClientSettings window glass and backdrop settings", () => {
   it("round-trips valid window glass updates", () => {
     const patch = {
       sidebarOpacity: 70,
-      sidebarBlur: 32,
+      contentBackdropBlur: 32,
       workbenchGlass: true,
       workbenchOpacity: 90,
       chatBackgroundPath: "/path/to/bg.png",
@@ -442,7 +446,7 @@ describe("ClientSettings window glass and backdrop settings", () => {
     expect(decodeClientSettingsPatch(patch)).toEqual(patch);
     const settings = decodeClientSettings(patch);
     expect(settings.sidebarOpacity).toBe(70);
-    expect(settings.sidebarBlur).toBe(32);
+    expect(settings.contentBackdropBlur).toBe(32);
     expect(settings.workbenchGlass).toBe(true);
     expect(settings.workbenchOpacity).toBe(90);
     expect(settings.chatBackgroundPath).toBe("/path/to/bg.png");
@@ -471,8 +475,8 @@ describe("ClientSettings window glass and backdrop settings", () => {
   it("rejects invalid window glass values", () => {
     expect(() => decodeClientSettingsPatch({ sidebarOpacity: 9 })).toThrow();
     expect(() => decodeClientSettingsPatch({ sidebarOpacity: 101 })).toThrow();
-    expect(() => decodeClientSettingsPatch({ sidebarBlur: 0 })).toThrow();
-    expect(() => decodeClientSettingsPatch({ sidebarBlur: 65 })).toThrow();
+    expect(() => decodeClientSettingsPatch({ contentBackdropBlur: -1 })).toThrow();
+    expect(() => decodeClientSettingsPatch({ contentBackdropBlur: 33 })).toThrow();
     expect(() => decodeClientSettingsPatch({ workbenchOpacity: 9 })).toThrow();
     expect(() => decodeClientSettingsPatch({ workbenchOpacity: 101 })).toThrow();
     expect(() => decodeClientSettingsPatch({ chatBackgroundOpacity: 4 })).toThrow();

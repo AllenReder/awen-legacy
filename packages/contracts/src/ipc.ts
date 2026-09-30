@@ -1318,14 +1318,29 @@ export const DesktopPreviewAutomationWaitForInputSchema = Schema.Struct({
 export const SystemSettingsPaneSchema = Schema.Literals(["full-disk-access"]);
 export type SystemSettingsPane = typeof SystemSettingsPaneSchema.Type;
 
+export interface DesktopTrackpadInput {
+  readonly gestureId: number;
+  readonly sequence: number;
+  readonly phase: "begin" | "update" | "end" | "momentum" | "finish" | "cancel";
+  readonly deltaX: number;
+  readonly deltaY: number;
+  readonly time: number;
+  readonly x: number;
+  readonly y: number;
+}
+
 export interface DesktopBridge {
   getAppBranding: () => DesktopAppBranding | null;
   /** The desktop client's OS platform, read from Electron's preload process. */
   getClientPlatform?: () => string;
+  onTrackpadInput?: (listener: (input: DesktopTrackpadInput) => void) => () => void;
   getPathForFile?: (file: File) => string;
   setNotificationBadge?: (badge: { count: number; image: string | null }) => Promise<void>;
   onNotificationBadgeClear?: (listener: () => void) => () => void;
   onTrackpadScrollEnd?: (listener: () => void) => () => void;
+  onTrackpadScrollPhase?: (
+    listener: (phase: "began" | "changed" | "ended" | "momentum" | "cancelled") => void,
+  ) => () => void;
   /**
    * The OS locale as a BCP-47 tag, which the renderer cannot read for itself:
    * the packaged app ships only the `en-US` Chromium locale pak, so
@@ -1424,8 +1439,8 @@ export interface DesktopBridge {
     }>;
     readonly initialPath?: string;
   }) => Promise<string | null>;
+  getWindowGlassSupported?: () => boolean;
   setWindowGlassEnabled?: (enabled: boolean) => Promise<void>;
-  setWindowBackgroundBlur?: (radius: number) => Promise<void>;
   showContextMenu: <T extends string>(
     items: readonly ContextMenuItem<T>[],
     position?: { x: number; y: number },

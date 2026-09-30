@@ -84,10 +84,27 @@ const formatInspection = (inspection: LocalDaemonInspection): string => {
   }
 };
 
-const runStart = (flags: { readonly baseDir: Option.Option<string>; readonly json: boolean }) =>
+const runStart = (flags: {
+  readonly baseDir: Option.Option<string>;
+  readonly json: boolean;
+  readonly expectedServerVersion: Option.Option<string>;
+  readonly bindHost: Option.Option<string>;
+}) =>
   Effect.gen(function* () {
     const baseDir = yield* resolveDaemonBaseDir(flags.baseDir);
-    return yield* tryDaemonOperation(() => startLocalDaemon({ baseDir })).pipe(
+    return yield* tryDaemonOperation(() =>
+      startLocalDaemon({
+        baseDir,
+        ...Option.match(flags.bindHost, {
+          onNone: () => ({}),
+          onSome: (bindHost) => ({ bindHost }),
+        }),
+        ...Option.match(flags.expectedServerVersion, {
+          onNone: () => ({}),
+          onSome: (expectedServerVersion) => ({ expectedServerVersion }),
+        }),
+      }),
+    ).pipe(
       Effect.matchEffect({
         onSuccess: (descriptor) =>
           flags.json
@@ -138,6 +155,14 @@ const runStop = (flags: {
   });
 
 const startCommand = Command.make("start", {
+  bindHost: Flag.string("host").pipe(
+    Flag.optional,
+    Flag.withDescription("Bind address for a managed desktop daemon."),
+  ),
+  expectedServerVersion: Flag.string("expected-server-version").pipe(
+    Flag.optional,
+    Flag.withDescription("Replace an owned daemon when synchronizing a desktop upgrade."),
+  ),
   baseDir: baseDirFlag,
   json: jsonFlag,
 }).pipe(

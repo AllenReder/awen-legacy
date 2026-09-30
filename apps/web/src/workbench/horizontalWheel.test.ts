@@ -6,39 +6,8 @@ import {
   normalizeWheelDelta,
   resolveHorizontalIntent,
   resolveHorizontalWheelDelta,
-  resolveLayoutPan,
   resolveWheelSwitchDirection,
-} from "./tabSwitchGesture";
-
-describe("resolveLayoutPan", () => {
-  it("scrolls within bounds without overscroll", () => {
-    expect(resolveLayoutPan({ startScrollLeft: 100, dragX: 40, maxScrollLeft: 300 })).toEqual({
-      scrollLeft: 60,
-      overscroll: 0,
-    });
-  });
-
-  it("reports overscroll past the left edge", () => {
-    expect(resolveLayoutPan({ startScrollLeft: 100, dragX: 160, maxScrollLeft: 300 })).toEqual({
-      scrollLeft: 0,
-      overscroll: 60,
-    });
-  });
-
-  it("reports overscroll past the right edge while dragging left", () => {
-    expect(resolveLayoutPan({ startScrollLeft: 0, dragX: -260, maxScrollLeft: 200 })).toEqual({
-      scrollLeft: 200,
-      overscroll: 60,
-    });
-  });
-
-  it("treats a layout with no overflow as immediately at its edge", () => {
-    expect(resolveLayoutPan({ startScrollLeft: 0, dragX: -30, maxScrollLeft: 0 })).toEqual({
-      scrollLeft: 0,
-      overscroll: 30,
-    });
-  });
-});
+} from "./horizontalWheel";
 
 describe("resolveHorizontalIntent", () => {
   it("prefers deltaX", () => {

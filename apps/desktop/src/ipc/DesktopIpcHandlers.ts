@@ -18,17 +18,7 @@ import {
   setServerExposureMode,
   setTailscaleServeEnabled,
 } from "./methods/serverExposure.ts";
-import {
-  bootstrapSshBearerSession,
-  disconnectSshEnvironment,
-  discoverSshHosts,
-  ensureSshEnvironment,
-  fetchSshEnvironmentDescriptor,
-  fetchSshSessionState,
-  issueSshWebSocketTicket,
-  resolveSshHost,
-  resolveSshPasswordPrompt,
-} from "./methods/sshEnvironment.ts";
+import * as DaemonSsh from "./methods/daemonSsh.ts";
 import {
   checkForUpdate,
   downloadUpdate,
@@ -42,6 +32,7 @@ import {
   getLocalEnvironmentBearerToken,
   getSystemLocale,
   getWindowFullscreenState,
+  getWindowGlassSupported,
   openExternal,
   openSystemSettings,
   checkSystemPermission,
@@ -53,7 +44,6 @@ import {
   pickThemeFiles,
   setTheme,
   setWindowGlassEnabled,
-  setWindowBackgroundBlur,
   showContextMenu,
 } from "./methods/window.ts";
 import {
@@ -85,6 +75,7 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handleSync(getAppBranding);
   yield* ipc.handleSync(getSystemLocale);
   yield* ipc.handleSync(getWindowFullscreenState);
+  yield* ipc.handleSync(getWindowGlassSupported);
   yield* ipc.handleSync(getLocalEnvironmentBootstraps);
   yield* ipc.handleSync(getLocalEnvironmentEnabled);
   yield* ipc.handle(setLocalEnvironmentEnabled);
@@ -108,15 +99,7 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(setConnectionCatalog);
   yield* ipc.handle(clearConnectionCatalog);
 
-  yield* ipc.handle(discoverSshHosts);
-  yield* ipc.handle(resolveSshHost);
-  yield* ipc.handle(ensureSshEnvironment);
-  yield* ipc.handle(disconnectSshEnvironment);
-  yield* ipc.handle(fetchSshEnvironmentDescriptor);
-  yield* ipc.handle(bootstrapSshBearerSession);
-  yield* ipc.handle(fetchSshSessionState);
-  yield* ipc.handle(issueSshWebSocketTicket);
-  yield* ipc.handle(resolveSshPasswordPrompt);
+  yield* ipc.handle(DaemonSsh.request);
 
   yield* ipc.handle(getServerExposureState);
   yield* ipc.handle(setServerExposureMode);
@@ -134,7 +117,6 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(pickThemeFiles);
   yield* ipc.handle(setTheme);
   yield* ipc.handle(setWindowGlassEnabled);
-  yield* ipc.handle(setWindowBackgroundBlur);
   yield* ipc.handle(showContextMenu);
   yield* ipc.handle(openExternal);
   yield* ipc.handle(openSystemSettings);

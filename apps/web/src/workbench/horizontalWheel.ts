@@ -1,34 +1,4 @@
-/**
- * Pure decision helpers for the right-button Layout pan and the wheel-driven
- * Sliding Tab switch. DOM-free so they can be exercised directly.
- */
-
-export interface PanPhaseInput {
-  readonly startScrollLeft: number;
-  /** Signed pointer travel since press; positive means the pointer moved right. */
-  readonly dragX: number;
-  readonly maxScrollLeft: number;
-}
-
-export interface PanPhaseResult {
-  scrollLeft: number;
-  /** Pixels the layout could not consume; this becomes Tab switch progress. */
-  readonly overscroll: number;
-}
-
-/**
- * Map pointer travel onto a Scrolling layout's horizontal offset, reporting the
- * travel that ran past either edge as overscroll.
- */
-export function resolveLayoutPan(input: PanPhaseInput): PanPhaseResult {
-  const maxScrollLeft = Math.max(0, input.maxScrollLeft);
-  const start = Math.min(maxScrollLeft, Math.max(0, input.startScrollLeft));
-  const scrollLeft = Math.min(maxScrollLeft, Math.max(0, start - input.dragX));
-  const consumed = input.dragX > 0 ? start : start - maxScrollLeft;
-  const overscroll = Math.max(0, Math.abs(input.dragX) - Math.abs(consumed));
-  return { scrollLeft, overscroll };
-}
-
+/** Discrete horizontal wheel routing; continuous gestures use continuousNavigation. */
 export interface HorizontalWheelInput {
   readonly deltaX: number;
   readonly deltaY: number;

@@ -294,3 +294,50 @@ it("re-places the bar when the incoming Tab's Viewport scrolls mid-switch", asyn
   expect(indicator.style.transform).toBe("translateX(100px)");
   expect(indicator.style.width).toBe("100px");
 });
+
+it.each([1, -1] as const)(
+  "projects a cyclic crossing across the strip boundary (direction %s)",
+  async (dir) => {
+    const wrap = { style: { display: "", transform: "", width: "" } };
+    const indicator = { style: { transform: "", width: "" }, firstElementChild: wrap };
+    const tabs = [0, 1, 2].map((index) => ({
+      dataset: { tabId: String(index) },
+      getBoundingClientRect: () => ({ left: index * 100, width: 100 }),
+    }));
+    const strip = {
+      scrollWidth: 500,
+      scrollLeft: 0,
+      getBoundingClientRect: () => ({ left: 0 }),
+      querySelectorAll: () => tabs,
+      querySelector: (selector: string) =>
+        tabs.find((tab) => selector.includes(`"${tab.dataset.tabId}"`)),
+    };
+    const ref = { current: strip as unknown as HTMLElement };
+    function Indicator() {
+      const indicatorRef = useTabIndicator({
+        stripRef: ref,
+        activeTabId: dir === 1 ? "2" : "0",
+        revision: "0,1,2",
+        dragging: false,
+      });
+      return <span ref={indicatorRef} />;
+    }
+    await act(() => {
+      renderer = create(<Indicator />, { createNodeMock: () => indicator });
+    });
+    await act(() =>
+      beginTabTransition({
+        fromTabId: dir === 1 ? "2" : "0",
+        toTabId: dir === 1 ? "0" : "2",
+        fromIndex: dir === 1 ? 2 : 0,
+        toIndex: dir === 1 ? 0 : 2,
+        dir,
+      }),
+    );
+    await act(() => setTabTransitionProgress(0.5));
+    expect(indicator.style.transform).toBe("translateX(250px)");
+    expect(indicator.style.width).toBe("50px");
+    expect(wrap.style.display).toBe("block");
+    expect(wrap.style.width).toBe("50px");
+  },
+);

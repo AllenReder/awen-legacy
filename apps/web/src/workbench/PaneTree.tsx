@@ -11,6 +11,7 @@ import {
 
 import type { EnvironmentAwenProject } from "@awen/client-runtime/state/models";
 import type { EnvironmentId } from "@awen/contracts";
+import { readLocalApi } from "../localApi";
 import { useEnvironment } from "../state/environments";
 import { cn } from "~/lib/utils";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
@@ -33,8 +34,7 @@ import {
   type PaneMenuRegistry,
 } from "./paneMenuRegistry";
 import { useTabTransition } from "./tabTransitionReact";
-import { useTabSwitchGesture } from "./useTabSwitchGesture";
-import { useTabSwitchWheel } from "./useTabSwitchWheel";
+import { useWorkbenchNavigation } from "./useWorkbenchNavigation";
 import {
   getTabTransitionCards,
   getTabTransitionFrame,
@@ -125,8 +125,7 @@ export function PaneTree({ snapshot, projects = EMPTY_PROJECTS }: PaneTreeProps)
     [],
   );
 
-  useTabSwitchGesture({ stageRef, onPaneContextMenu: registry.open });
-  useTabSwitchWheel(stageRef);
+  useWorkbenchNavigation({ stageRef, onPaneContextMenu: registry.open });
 
   const activeTransition =
     transition !== null &&
@@ -289,18 +288,27 @@ const TabPaneTree = memo(
       const viewport = viewportRef.current;
       if (!scrolling || !viewport) return;
 
-      if (dragState?.phase === "dragging" || document.documentElement.dataset.workbenchResizing) {
+      if (
+        viewport.closest("[data-navigation-owned]") ||
+        dragState?.phase === "dragging" ||
+        document.documentElement.dataset.workbenchResizing
+      ) {
         return;
       }
 
       // Scrolling away from where the entry left the Viewport is direct
       // manipulation, and outranks the entry, so this yields on its own.
-      entryRef.current = holdTabEntry(
-        entryRef.current,
-        entryDir,
-        tab.focusedPaneId,
-        viewport.scrollLeft,
-      );
+      const navigationEntry = viewport.dataset.navigationEntry;
+      delete viewport.dataset.navigationEntry;
+      entryRef.current =
+        navigationEntry === "1" || navigationEntry === "-1"
+          ? {
+              dir: navigationEntry === "1" ? 1 : -1,
+              focusedPaneId: tab.focusedPaneId,
+              settledAt: viewport.scrollLeft,
+              offset: viewport.scrollLeft,
+            }
+          : holdTabEntry(entryRef.current, entryDir, tab.focusedPaneId, viewport.scrollLeft);
       const heldEntry = entryRef.current;
 
       const rect = layout.rects.get(tab.focusedPaneId);
@@ -313,7 +321,7 @@ const TabPaneTree = memo(
         canvasWidth: layout.canvasWidth,
         viewportWidth: viewport.clientWidth,
         currentScrollLeft: viewport.scrollLeft,
-        ...(heldEntry === null ? {} : { entryDir: heldEntry.dir }),
+        ...(heldEntry === null ? {} : { entryDir: heldEntry.dir, entryOffset: heldEntry.offset }),
       });
 
       if (!target) return;
@@ -575,6 +583,18 @@ function Pane({ tab, projects, paneId, focused }: PaneProps) {
   const setFocused = useWorkbenchStore((s) => s.setFocused);
   const focusRequestId = useWorkbenchStore((s) => s.focusRequestId);
   const requestClosePane = useWorkbenchStore((s) => s.requestClosePane);
+  const paneMenuRegistry = usePaneMenuRegistry();
+  useEffect(
+    () =>
+      paneMenuRegistry?.register(paneId, (position) => {
+        void readLocalApi()
+          ?.contextMenu.show([{ id: "close", label: "Close Pane", icon: "x-circle" }], position)
+          .then((action) => {
+            if (action === "close") void requestClosePane(paneId);
+          });
+      }),
+    [paneMenuRegistry, paneId, requestClosePane],
+  );
   const closeError = useWorkbenchStore((s) => s.closeErrors.get(paneId));
   const view = tab.panes.get(paneId);
   const target = view?.target ?? null;
@@ -714,6 +734,7 @@ function PaneEnvironmentBadge({ environmentId }: { readonly environmentId: Envir
 }
 
 function PaneHeader({
+  paneId,
   breadcrumbs,
   focused,
   target,
@@ -727,6 +748,7 @@ function PaneHeader({
   readonly onDragStart: (event: ReactPointerEvent<HTMLElement>) => void;
   readonly onClose: () => void;
 }) {
+  const menuRegistry = usePaneMenuRegistry();
   return (
     <div
       tabIndex={0}
@@ -751,8 +773,14 @@ function PaneHeader({
         }
         onDragStart(event);
       }}
+      onKeyDown={(event) => {
+        if (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10")) return;
+        event.preventDefault();
+        const box = event.currentTarget.getBoundingClientRect();
+        menuRegistry?.open(paneId, { x: box.left, y: box.bottom });
+      }}
       onContextMenu={(event) => {
-        // Panes have no context menu; keep right-click from opening a stray one.
+        // The navigation owner opens the renderer menu on a non-dragging release.
         event.preventDefault();
         event.stopPropagation();
       }}

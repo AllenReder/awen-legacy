@@ -1,5 +1,12 @@
 # Material Surface Glass Architecture
 
+ADR-0030 supersedes this decision's Tauri compositor, native pixel-radius
+control, and window-control implementation choices. Content Backdrop Blur is now
+an independently configurable application setting; native Window Glass uses
+system material presets. The Windows WebView2 Overlay workaround below requires
+fresh Electron validation. The material hierarchy and appearance requirements
+remain accepted.
+
 Accepted; supersedes the web visual-layer parts of ADR-0009 while retaining its
 native macOS and Windows glass foundation. Awen separates Theme's opaque
 semantic colors from a Material system: a native Glass Stage supplies the
