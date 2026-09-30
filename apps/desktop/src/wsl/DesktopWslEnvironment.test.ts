@@ -441,7 +441,7 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
       runtimeId,
       runtimeParent: `${work}/home/.awen/wsl-runtime`,
       runtimeRoot: `${work}/home/.awen/wsl-runtime/${runtimeId}`,
-      serverEntry: `${work}/home/.awen/wsl-runtime/${runtimeId}/t3`,
+      serverEntry: `${work}/home/.awen/wsl-runtime/${runtimeId}/bin/awen`,
       installScript,
       install: (archive?: string, sha?: string) => runShell(installScript(archive, sha)),
     };
