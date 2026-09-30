@@ -52,6 +52,10 @@ export function finishTabSwitch(commit: boolean): void {
   const transition = getTabTransition();
   if (transition === null) return;
   if (commit) useWorkbenchStore.getState().activateTab(transition.toTabId);
+  // A fresh gesture can reverse a settle whose destination is already active.
+  // Align logical activation with the source before settling back to it, without
+  // letting the store observer retarget the live strip as a new click transition.
+  else activateNavigationCheckpoint(transition.fromTabId);
   animateTabTransitionTo(commit ? 1 : 0);
 }
 

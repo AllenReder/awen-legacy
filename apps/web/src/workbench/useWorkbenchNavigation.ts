@@ -142,6 +142,7 @@ export function useWorkbenchNavigation(options: {
       x: number;
       y: number;
       lastX: number;
+      startedAt: number;
       pane: string | null;
       dragging: boolean;
       moved: boolean;
@@ -179,6 +180,7 @@ export function useWorkbenchNavigation(options: {
         x: event.clientX,
         y: event.clientY,
         lastX: event.clientX,
+        startedAt: performance.now(),
         pane:
           event.target
             .closest<HTMLElement>("[data-workbench-pane-drag-handle]")
@@ -203,7 +205,7 @@ export function useWorkbenchNavigation(options: {
           source: "right-drag",
           phase: "begin",
           deltaX: 0,
-          time: performance.now(),
+          time: current.startedAt,
         });
       }
       navigation.dispatch({

@@ -169,6 +169,7 @@ it("an interrupted gesture settle cannot end a later click transition", async ()
     pointer("pointerdown", 700);
     now = 10;
     pointer("pointermove", 100);
+    now = 100;
     pointer("pointerup", 100);
   });
   now = 200;
@@ -227,6 +228,7 @@ it("a new right drag takes over the visible position of a settling Tab", async (
     pointer("pointerdown", 700);
     now = 10;
     pointer("pointermove", 100);
+    now = 100;
     pointer("pointerup", 100);
   });
   now = 100;
@@ -304,6 +306,55 @@ let sequence = 0;
 function packet(phase: DesktopTrackpadInput["phase"], deltaX = 0, gestureId = 1, deltaY = 0) {
   nativePhase!({ phase, gestureId, sequence: ++sequence, deltaX, deltaY, time: now, x: 0, y: 0 });
 }
+it.each([
+  ["right-drag", 400, true],
+  ["trackpad", 400, true],
+  ["right-drag", 100, false],
+  ["trackpad", 100, false],
+] as const)(
+  "%s reverses a settling crossing with %i px of reverse travel (paused: %s)",
+  async (source, reverseTravel, paused) => {
+    Object.assign(windowEvents, { desktopBridge });
+    await mount();
+    const original = useWorkbenchStore.getState().activeTabId;
+    await act(() => {
+      if (source === "right-drag") {
+        pointer("pointerdown", 700);
+        now = 10;
+        pointer("pointermove", 100);
+        pointer("pointerup", 100);
+      } else {
+        packet("begin");
+        now = 10;
+        packet("update", 600);
+        packet("end");
+      }
+    });
+    expect(useWorkbenchStore.getState().activeTabId).not.toBe(original);
+    expect(getTabTransitionFrame()).not.toBeNull();
+    await act(() => {
+      now = 20;
+      if (source === "right-drag") {
+        pointer("pointerdown", 100);
+        now = 30;
+        pointer("pointermove", 100 + reverseTravel);
+        if (paused) now = 130;
+        else expect(getTabTransitionFrame()!.progress).toBeGreaterThan(0.5);
+        pointer("pointerup", 100 + reverseTravel);
+      } else {
+        packet("begin", 0, 2);
+        now = 30;
+        packet("update", -reverseTravel, 2);
+        if (paused) now = 130;
+        else expect(getTabTransitionFrame()!.progress).toBeGreaterThan(0.5);
+        packet("end", 0, 2);
+      }
+    });
+    await settle();
+    expect(getTabTransitionFrame()).toBeNull();
+    expect(useWorkbenchStore.getState().activeTabId).toBe(original);
+  },
+);
 it("native displacement is consumed once and DOM wheel supplies no second movement", async () => {
   Object.assign(windowEvents, { desktopBridge });
   viewport.dataset.layoutMode = "scrolling";

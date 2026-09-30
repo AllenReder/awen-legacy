@@ -184,7 +184,11 @@ export function createContinuousNavigation(environment: NavigationEnvironment) {
         if (crossing) {
           const progress =
             environment.preview()?.progress ?? crossing.travel / Math.max(1, environment.width());
-          const commit = progress >= 0.5 || velocity * crossing.dir >= 0.35;
+          const directionalVelocity = velocity * crossing.dir;
+          // Release intent wins in either direction, including when a new gesture
+          // reverses a settling crossing that is still beyond halfway.
+          const commit =
+            Math.abs(directionalVelocity) >= 0.35 ? directionalVelocity > 0 : progress >= 0.5;
           if (!commit) restoreIncoming();
           environment.settle(commit, velocity);
           if (commit) session.tabId = crossing.toTabId;

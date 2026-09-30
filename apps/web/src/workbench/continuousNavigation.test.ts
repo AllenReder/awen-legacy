@@ -153,4 +153,26 @@ describe("continuous Workbench navigation", () => {
     fast.send("end", 0, 21);
     expect(fast.active()).toBe("1");
   });
+  it.each(["trackpad", "right-drag"] as const)(
+    "%s lets a reverse flick override halfway in either direction",
+    (source) => {
+      for (const dir of [-1, 1]) {
+        const f = fixture(source, [0, 0]);
+        f.send("update", 75 * dir, 20);
+        f.send("update", -10 * dir, 120);
+        f.send("update", -5 * dir, 130);
+        expect(f.preview()!.progress).toBeGreaterThan(0.5);
+        f.send("end", 0, 130);
+        expect(f.active()).toBe("0");
+      }
+    },
+  );
+  it("uses distance after a reverse flick has paused", () => {
+    const f = fixture("right-drag", [0, 0]);
+    f.send("update", 75, 20);
+    f.send("update", -10, 120);
+    f.send("update", -5, 130);
+    f.send("end", 0, 230);
+    expect(f.active()).toBe("1");
+  });
 });
