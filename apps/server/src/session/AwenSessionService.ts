@@ -1,5 +1,6 @@
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
+import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
 import {
   type AgentSessionSelectRefInput,
   type AgentSessionSelectRefResult,
@@ -184,6 +185,7 @@ function mapAssociateError(
 export const make = Effect.gen(function* () {
   const git = yield* GitVcsDriver.GitVcsDriver;
   const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
+  const vcsStatus = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
   const sql = yield* SqlClient.SqlClient;
   const crypto = yield* Crypto.Crypto;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -857,6 +859,7 @@ export const make = Effect.gen(function* () {
             ref?.current &&
             (!ref.worktreePath || sameDirectory(ref.worktreePath, cwd))
           ) {
+            yield* vcsStatus.refreshLocalStatus(cwd).pipe(Effect.ignoreCause({ log: true }));
             return { workspaceId, refName: ref.name };
           }
           if (!input.create && ref?.worktreePath && !sameDirectory(ref.worktreePath, cwd)) {
@@ -884,6 +887,9 @@ export const make = Effect.gen(function* () {
             ? yield* git.createRef({ cwd, refName: input.refName, switchRef: true })
             : yield* git.switchRef({ cwd, refName: input.refName });
           yield* gitWorkflow.invalidateStatus(cwd);
+          // Cache invalidation alone leaves the shared status stream's snapshot stale.
+          // Publish the local checkout immediately, without waiting for remote status.
+          yield* vcsStatus.refreshLocalStatus(cwd).pipe(Effect.ignoreCause({ log: true }));
           yield* orchestrationEngine.dispatch({
             type: "thread.meta.update",
             commandId: CommandId.make(`awen-session:select-ref:${yield* crypto.randomUUIDv4}`),
