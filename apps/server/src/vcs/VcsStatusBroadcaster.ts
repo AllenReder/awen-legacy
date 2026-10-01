@@ -29,6 +29,7 @@ import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as ServerSettings from "../serverSettings.ts";
 
+const LOCAL_VCS_STATUS_REFRESH_INTERVAL = Duration.seconds(2);
 const DEFAULT_VCS_STATUS_REFRESH_INTERVAL = Duration.seconds(30);
 const VCS_STATUS_REFRESH_FAILURE_BASE_DELAY = Duration.seconds(30);
 const VCS_STATUS_REFRESH_FAILURE_MAX_DELAY = Duration.minutes(15);
@@ -133,7 +134,7 @@ interface CachedVcsStatus {
   readonly remote: CachedValue<VcsStatusRemoteResult | null> | null;
 }
 
-interface ActiveRemotePoller {
+interface ActiveStatusPoller {
   readonly fiber: Fiber.Fiber<void, never>;
   readonly subscriberCount: number;
   readonly demandCwds: Ref.Ref<ReadonlyMap<string, number>>;
@@ -243,7 +244,7 @@ export const make = Effect.gen(function* () {
     }
     return lock.withPermits(1)(effect);
   };
-  const pollersRef = yield* SynchronizedRef.make(new Map<string, ActiveRemotePoller>());
+  const pollersRef = yield* SynchronizedRef.make(new Map<string, ActiveStatusPoller>());
 
   const getCachedStatus = Effect.fn("VcsStatusBroadcaster.getCachedStatus")(function* (
     cwd: string,
@@ -519,6 +520,31 @@ export const make = Effect.gen(function* () {
       );
     });
 
+  // Local checkout changes can come from PTYs, agents, or external tools. Keep
+  // their observed state fresh independently of fetch settings and remote locks.
+  const makeLocalRefreshLoop = (cwd: string, demandCwdsRef: Ref.Ref<ReadonlyMap<string, number>>) =>
+    Effect.gen(function* () {
+      const demandCwds = yield* Ref.get(demandCwdsRef);
+      const shouldRun = (yield* Effect.forEach(
+        [...demandCwds.keys()],
+        (demandCwd) => backgroundPolicy.shouldRunScopeWork({ type: "vcs-status", cwd: demandCwd }),
+        { concurrency: "unbounded" },
+      )).some(Boolean);
+      if (shouldRun) yield* refreshLocalStatusCore(cwd);
+    }).pipe(
+      Effect.catchCause((cause) => {
+        const interruptions = cause.reasons.filter(Cause.isInterruptReason);
+        if (interruptions.length > 0)
+          return Effect.failCause(Cause.fromReasons<never>(interruptions));
+        return Effect.logWarning("VCS local status refresh failed", {
+          cwdLength: cwd.length,
+          ...remoteRefreshFailureDiagnostics(cause),
+        });
+      }),
+      Effect.repeat(Schedule.spaced(LOCAL_VCS_STATUS_REFRESH_INTERVAL)),
+      Effect.delay(LOCAL_VCS_STATUS_REFRESH_INTERVAL),
+    );
+
   const makeRemoteRefreshLoop = (
     cwd: string,
     demandCwdsRef: Ref.Ref<ReadonlyMap<string, number>>,
@@ -603,7 +629,7 @@ export const make = Effect.gen(function* () {
     });
   };
 
-  const retainRemotePoller = Effect.fn("VcsStatusBroadcaster.retainRemotePoller")(function* (
+  const retainStatusPoller = Effect.fn("VcsStatusBroadcaster.retainStatusPoller")(function* (
     cwd: string,
     demandCwd: string,
     automaticRemoteRefreshInterval: Effect.Effect<Duration.Duration, never>,
@@ -630,12 +656,19 @@ export const make = Effect.gen(function* () {
 
       return Ref.make<ReadonlyMap<string, number>>(new Map([[demandCwd, 1]])).pipe(
         Effect.flatMap((demandCwds) =>
-          makeRemoteRefreshLoop(
-            cwd,
-            demandCwds,
-            automaticRemoteRefreshInterval,
-            refreshImmediately,
+          Effect.all(
+            [
+              makeLocalRefreshLoop(cwd, demandCwds),
+              makeRemoteRefreshLoop(
+                cwd,
+                demandCwds,
+                automaticRemoteRefreshInterval,
+                refreshImmediately,
+              ),
+            ],
+            { concurrency: "unbounded" },
           ).pipe(
+            Effect.asVoid,
             Effect.forkIn(broadcasterScope),
             Effect.map((fiber) => {
               const nextPollers = new Map(activePollers);
@@ -652,7 +685,7 @@ export const make = Effect.gen(function* () {
     });
   });
 
-  const releaseRemotePoller = Effect.fn("VcsStatusBroadcaster.releaseRemotePoller")(function* (
+  const releaseStatusPoller = Effect.fn("VcsStatusBroadcaster.releaseStatusPoller")(function* (
     cwd: string,
     demandCwd: string,
   ) {
@@ -702,7 +735,7 @@ export const make = Effect.gen(function* () {
         const initialLocal = yield* getOrLoadLocalStatus(cwd);
         const cachedStatus = yield* getCachedStatus(cwd);
         const initialRemote = cachedStatus?.remote?.value ?? null;
-        yield* retainRemotePoller(
+        yield* retainStatusPoller(
           cwd,
           input.cwd,
           options?.automaticRemoteRefreshInterval ??
@@ -710,7 +743,7 @@ export const make = Effect.gen(function* () {
           cachedStatus?.remote === null || cachedStatus?.remote === undefined,
         );
 
-        const release = releaseRemotePoller(cwd, input.cwd).pipe(Effect.ignore, Effect.asVoid);
+        const release = releaseStatusPoller(cwd, input.cwd).pipe(Effect.ignore, Effect.asVoid);
 
         return Stream.concat(
           Stream.make({
