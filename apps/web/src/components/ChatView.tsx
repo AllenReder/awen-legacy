@@ -1,4 +1,8 @@
-import { AgentSessionId } from "@awen/contracts";
+import {
+  AgentSessionId,
+  FILE_RESTORE_DISABLED_ACTIVITY_KIND,
+  FILE_RESTORE_DISABLED_SUMMARY,
+} from "@awen/contracts";
 import { sessionEnvironment } from "../state/projects";
 import { useExecutionPlanStore } from "../executionPlanStore";
 import { useSessionExecutionContext } from "../state/sessionContext";
@@ -6761,6 +6765,10 @@ export default function ChatView(props: ChatViewProps) {
     };
   }, [activeThreadId, composerRef]);
 
+  const fileRestoreDisabled =
+    activeThread?.activities.some(
+      (activity) => activity.kind === FILE_RESTORE_DISABLED_ACTIVITY_KIND,
+    ) ?? false;
   const [pendingRevert, setPendingRevert] = useState<{
     turnCount: number;
     messageId: MessageId;
@@ -9815,12 +9823,14 @@ export default function ChatView(props: ChatViewProps) {
             <AlertDialogDescription>
               Rewind chat to before this message. Your prompt and attachments return to the
               composer.
+              {fileRestoreDisabled ? ` ${FILE_RESTORE_DISABLED_SUMMARY}` : ""}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
             <Button
               variant="destructive"
+              disabled={fileRestoreDisabled}
               onClick={() => {
                 if (!pendingRevert || pendingRevert.routeThreadKey !== routeThreadKey) return;
                 setPendingRevert(null);

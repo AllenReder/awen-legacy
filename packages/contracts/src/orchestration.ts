@@ -2490,3 +2490,8 @@ export class OrchestrationSearchThreadsError extends Schema.TaggedError<Orchestr
     cause: Schema.optional(Schema.Defect()),
   },
 ) {}
+
+/** A turnless, permanent Session capability notice; conversation rewind retains it. */
+export const FILE_RESTORE_DISABLED_ACTIVITY_KIND = "checkpoint.file-restore-disabled";
+export const FILE_RESTORE_DISABLED_SUMMARY =
+  "The branch or Workspace changed. This Session now supports conversation rewind only; file restore is disabled.";

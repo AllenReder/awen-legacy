@@ -1111,7 +1111,7 @@ describe("resolveThreadMetadataUpdateForNextTurn", () => {
         currentBranch: "feature/thread",
         nextBranch: "feature/checkout",
       }),
-    ).toEqual({ branch: "feature/checkout", worktreePath: null });
+    ).toEqual({ branch: "feature/checkout" });
   });
 
   it("does not write metadata when the model and branch are unchanged", () => {

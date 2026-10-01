@@ -1,5 +1,4 @@
 import { WorkspaceId, type CheckpointRef, type ThreadId, type VcsError } from "@awen/contracts";
-import { isTemporaryWorktreeBranch } from "@awen/shared/git";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import type * as PlatformError from "effect/PlatformError";
@@ -64,10 +63,6 @@ export class ExecutionContextStore extends Context.Service<
       saved: ExecutionContext,
       current: ExecutionContext,
     ) => Effect.Effect<boolean, ExecutionContextError>;
-    readonly relinkHeadRef: (
-      threadId: ThreadId,
-      newRef: string,
-    ) => Effect.Effect<void, ExecutionContextError>;
   }
 >()("@awen/server/checkpointing/ExecutionContext/ExecutionContextStore") {}
 
@@ -195,29 +190,10 @@ const make = Effect.gen(function* () {
       true,
     );
     if (ancestry.exitCode !== 0) return false;
-    if (saved.headRef === current.headRef) return true;
-    if (
-      saved.headRef !== null &&
-      current.headRef !== null &&
-      isTemporaryWorktreeBranch(saved.headRef.replace(/^refs\/heads\//, ""))
-    ) {
-      return true;
-    }
-    return false;
+    return saved.headRef === current.headRef;
   });
 
-  const relinkHeadRef = Effect.fn("ExecutionContext.relinkHeadRef")(function* (
-    threadId: ThreadId,
-    newRef: string,
-  ) {
-    yield* sql`
-      UPDATE checkpoint_execution_contexts
-      SET head_ref = ${newRef}
-      WHERE thread_id = ${threadId} AND context_key LIKE 'turn:%'
-    `;
-  });
-
-  return { inspect, remember, find, forget, compatible, oidForRef, relinkHeadRef };
+  return { inspect, remember, find, forget, compatible, oidForRef };
 });
 
 export const layer = Layer.effect(ExecutionContextStore, make);
