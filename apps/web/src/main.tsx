@@ -6,10 +6,7 @@ import "./index.css";
 
 import { isDesktop, isElectron } from "./env";
 import { getRouter } from "./router";
-import {
-  syncDocumentElectronPlatformClasses,
-  syncDocumentWindowControlsOverlayClass,
-} from "./lib/windowControlsOverlay";
+import { syncDocumentWindowControlsOverlayClass } from "./lib/windowControlsOverlay";
 import { initializeWindowChrome } from "./lib/windowChrome";
 import { AppRoot } from "./AppRoot";
 import { clearChunkReloadGuard, reloadOnceForChunkLoadError } from "./lib/chunkReloadGuard";
@@ -24,7 +21,6 @@ const history = isDesktop ? createHashHistory() : createBrowserHistory();
 const router = getRouter(history);
 
 if (isElectron) {
-  syncDocumentElectronPlatformClasses(navigator.platform);
   syncDocumentWindowControlsOverlayClass();
 }
 
