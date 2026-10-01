@@ -680,7 +680,9 @@ export const make = Effect.gen(function* () {
         installContextMenu(popup, popup.webContents);
       });
     };
-    installContextMenu(window, window.webContents);
+    // Application surfaces own their renderer menus. Native editing menus are
+    // reserved for browser guests and their sign-in popups.
+    window.webContents.on("context-menu", (event) => event.preventDefault());
     window.webContents.on("did-attach-webview", (_event, contents) => {
       installContextMenu(window, contents);
     });

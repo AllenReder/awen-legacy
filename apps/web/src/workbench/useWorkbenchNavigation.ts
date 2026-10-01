@@ -148,6 +148,7 @@ export function useWorkbenchNavigation(options: {
       moved: boolean;
     } | null = null;
     let nextGesture = 0;
+    let suppressContextMenu = false;
     let trackpadOwner: "content" | "workbench" | null = null;
     let trackpadId = -1;
     let trackpadCancelled = false;
@@ -171,9 +172,20 @@ export function useWorkbenchNavigation(options: {
     const onDown = (event: PointerEvent) => {
       navigation.cancel();
       trackpadCancelled = true;
+      suppressContextMenu = false;
       if (event.button !== 2 || !(event.target instanceof Element) || !stage.contains(event.target))
         return;
       finishPointer(true);
+      // Selected text owns the right press; dragging it must not navigate Tabs.
+      const selection = window.getSelection?.();
+      if (
+        selection &&
+        !selection.isCollapsed &&
+        selection.anchorNode &&
+        stage.contains(selection.anchorNode) &&
+        !event.target.closest("[data-workbench-pane-drag-handle]")
+      )
+        return;
       pointer = {
         id: event.pointerId,
         gesture: ++nextGesture,
@@ -195,6 +207,7 @@ export function useWorkbenchNavigation(options: {
       const dx = event.clientX - current.x;
       const dy = event.clientY - current.y;
       current.moved ||= Math.hypot(dx, dy) >= 5;
+      suppressContextMenu ||= current.moved;
       if (!current.dragging) {
         if (Math.abs(dx) < 5 || Math.abs(dx) < Math.abs(dy)) return;
         current.dragging = true;
@@ -225,8 +238,15 @@ export function useWorkbenchNavigation(options: {
       navigation.cancel();
       trackpadCancelled = true;
     };
-    const onKey = () => cancel();
-    const onContextMenu = (event: Event) => event.preventDefault();
+    const onKey = () => {
+      suppressContextMenu = false;
+      cancel();
+    };
+    const onContextMenu = (event: Event) => {
+      if (suppressContextMenu || pointer?.dragging || pointer?.moved || pointer?.pane)
+        event.preventDefault();
+      suppressContextMenu = false;
+    };
     const hasInnerScroller = (target: Element | null) => {
       let node = target;
       while (node && node !== stage && !node.matches(".workbench-viewport")) {

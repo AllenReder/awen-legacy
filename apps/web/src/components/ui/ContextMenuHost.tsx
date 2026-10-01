@@ -24,6 +24,7 @@ import {
   PinIcon,
   PinOffIcon,
   PlusIcon,
+  QuoteIcon,
   SquareTerminalIcon,
   TrashIcon,
 } from "lucide-react";
@@ -72,6 +73,7 @@ const icons = {
   pin: PinIcon,
   "pin-off": PinOffIcon,
   plus: PlusIcon,
+  quote: QuoteIcon,
   terminal: SquareTerminalIcon,
   trash: TrashIcon,
 };

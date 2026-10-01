@@ -130,6 +130,37 @@ it("pans a single Scrolling Tab without trying to switch", async () => {
   expect(viewport.scrollLeft).toBe(100);
   expect(getTabTransitionFrame()).toBeNull();
 });
+
+it("leaves a text selection right-click to the content menu instead of navigating", async () => {
+  Object.assign(windowEvents, {
+    getSelection: () => ({ isCollapsed: false, anchorNode: viewport, focusNode: viewport }),
+  });
+  await mount();
+  const activeTab = useWorkbenchStore.getState().activeTabId;
+  await act(() => {
+    pointer("pointerdown", 700);
+    pointer("pointermove", 100);
+    pointer("pointerup", 100);
+  });
+  expect(useWorkbenchStore.getState().activeTabId).toBe(activeTab);
+  expect(getTabTransitionFrame()).toBeNull();
+  expect(event(stage, "contextmenu", {}).defaultPrevented).toBe(false);
+});
+
+it("suppresses the native menu after a right drag, then releases content right-clicks", async () => {
+  await mount();
+  await act(() => {
+    pointer("pointerdown", 700);
+    pointer("pointermove", 100);
+    pointer("pointerup", 100);
+  });
+  expect(event(stage, "contextmenu", {}).defaultPrevented).toBe(true);
+  await act(() => {
+    pointer("pointerdown", 100);
+    pointer("pointerup", 100);
+  });
+  expect(event(stage, "contextmenu", {}).defaultPrevented).toBe(false);
+});
 it("cancels below-halfway travel when the pointer pauses before release", async () => {
   await mount();
   const active = useWorkbenchStore.getState().activeTabId;

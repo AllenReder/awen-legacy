@@ -516,6 +516,12 @@ describe("DesktopWindow", () => {
       yield* Effect.gen(function* () {
         const desktopWindow = yield* DesktopWindow.DesktopWindow;
         yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        const hostContextMenu = host.webContentsListeners.get("context-menu");
+        assert.isDefined(hostContextMenu);
+        const preventHostMenu = vi.fn();
+        hostContextMenu({ preventDefault: preventHostMenu }, {});
+        assert.equal(preventHostMenu.mock.calls.length, 1);
+        assert.equal(yield* Queue.size(menus), 0);
         const attach = host.webContentsListeners.get("did-attach-webview");
         assert.isDefined(attach);
         attach({}, guest);
