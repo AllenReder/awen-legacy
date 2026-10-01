@@ -52,7 +52,14 @@ describe("shared overlay material", () => {
       css.indexOf("/* Native compositor blur"),
     );
     expect(block).toMatch(/backdrop-filter:\s*blur\(var\(--glass-blur\)\)/);
-    expect(block).toMatch(/var\(--overlay-film-opacity, 0.9\)/);
+    expect(block).toMatch(/var\(--overlay-film-opacity, 0.05\)/);
+    const roles = css.slice(
+      css.indexOf("/* Material roles derive"),
+      css.indexOf("/* System accessibility"),
+    );
+    expect(roles.match(/--overlay-film-opacity:/g)).toHaveLength(1);
+    expect(roles).toMatch(/--overlay-film-opacity:\s*var\(--material-overlay-opacity, 0\.05\)/);
+    expect(css).not.toContain("--material-overlay-glass-opacity");
     expect(css).not.toMatch(/html\.material-stage-windows \.material-surface-overlay/);
     expect(css).not.toMatch(/html\.material-stage-opaque \.material-surface-overlay\s*\{/);
   });

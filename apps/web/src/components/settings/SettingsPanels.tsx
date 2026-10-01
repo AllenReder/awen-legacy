@@ -1503,11 +1503,11 @@ export function AppearanceSettingsPanel() {
         />
         <SettingsRow
           {...searchableSetting("setting-overlay-opacity")}
-          description="Strength of the glass tint behind menus and dialogs. Dark glass uses a subtle film; 100% makes it solid."
+          description="Background tint opacity of menus, dialogs, and the composer. Applies equally in light and dark modes; 100% makes the tint solid."
           resetAction={
             settings.glassOpacity !== DEFAULT_UNIFIED_SETTINGS.glassOpacity ? (
               <SettingResetButton
-                label="overlay density"
+                label="overlay opacity"
                 onClick={() =>
                   updateSettings({ glassOpacity: DEFAULT_UNIFIED_SETTINGS.glassOpacity })
                 }
@@ -1523,7 +1523,7 @@ export function AppearanceSettingsPanel() {
                 {settings.glassOpacity}%
               </output>
               <input
-                aria-label="Overlay density"
+                aria-label="Overlay opacity"
                 className="settings-slider min-w-0 flex-1"
                 id="overlay-opacity"
                 max={MAX_GLASS_OPACITY}

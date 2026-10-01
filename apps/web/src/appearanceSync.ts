@@ -72,13 +72,6 @@ export function applyMaterialSettings(
     );
   }
 
-  // Density controls the glass film, not a 90%-opaque paint layer. The curve
-  // gives the default 90 a subtle 3.4% dark tint while retaining a solid 100.
-  root.style.setProperty(
-    "--material-overlay-glass-opacity",
-    `${Math.pow(Math.max(0, Math.min(100, options.overlayOpacity)) / 100, 32)}`,
-  );
-
   const contentBlur = Math.max(0, Math.min(32, Math.round(options.contentBlur)));
   root.style.setProperty("--glass-blur", `${contentBlur}px`);
   if (nativeStage) {

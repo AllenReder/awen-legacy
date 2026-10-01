@@ -417,17 +417,18 @@ describe("ClientSettings browser recording frame rate", () => {
 describe("ClientSettings window glass and backdrop settings", () => {
   it("defaults to standard window glass values", () => {
     const settings = decodeClientSettings({});
-    expect(settings.sidebarOpacity).toBe(50);
-    expect(settings.topbarOpacity).toBe(50);
+    expect(settings.sidebarOpacity).toBe(10);
+    expect(settings.topbarOpacity).toBe(10);
     expect(settings.backgroundMaskLightOpacity).toBe(10);
-    expect(settings.backgroundMaskDarkOpacity).toBe(35);
-    expect(settings.contentBackdropBlur).toBe(16);
-    expect(decodeClientSettings({ sidebarBlur: 64 }).contentBackdropBlur).toBe(16);
+    expect(settings.backgroundMaskDarkOpacity).toBe(30);
+    expect(settings.contentBackdropBlur).toBe(8);
+    expect(decodeClientSettings({ sidebarBlur: 64 }).contentBackdropBlur).toBe(8);
     expect(decodeClientSettingsPatch({ contentBackdropBlur: 0 })).toEqual({
       contentBackdropBlur: 0,
     });
+    expect(settings.windowGlassEnabled).toBe(true);
     expect(settings.workbenchGlass).toBe(true);
-    expect(settings.workbenchOpacity).toBe(50);
+    expect(settings.workbenchOpacity).toBe(10);
     expect(settings.chatBackgroundPath).toBeNull();
     expect(settings.chatBackgroundOpacity).toBe(24);
     expect(settings.chatBackgroundScope).toBe("all");
@@ -486,19 +487,22 @@ describe("ClientSettings window glass and backdrop settings", () => {
 });
 
 describe("ClientSettings glass opacity", () => {
-  it("defaults to a readable translucent surface", () => {
-    expect(decodeClientSettings({}).glassOpacity).toBe(90);
+  it("defaults to a light glass tint", () => {
+    expect(decodeClientSettings({}).glassOpacity).toBe(5);
   });
 
-  it.each([39, 101, 72.5])("rejects an invalid glass opacity: %s", (value) => {
+  it.each([4, 101, 72.5])("rejects an invalid glass opacity: %s", (value) => {
     expect(() => decodeClientSettings({ glassOpacity: value })).toThrow();
     expect(() => decodeClientSettingsPatch({ glassOpacity: value })).toThrow();
   });
 
-  it.each([40, 75, 100])("accepts a glass opacity within the supported range: %s", (value) => {
-    expect(decodeClientSettings({ glassOpacity: value }).glassOpacity).toBe(value);
-    expect(decodeClientSettingsPatch({ glassOpacity: value }).glassOpacity).toBe(value);
-  });
+  it.each([5, 20, 40, 75, 100])(
+    "accepts a glass opacity within the supported range: %s",
+    (value) => {
+      expect(decodeClientSettings({ glassOpacity: value }).glassOpacity).toBe(value);
+      expect(decodeClientSettingsPatch({ glassOpacity: value }).glassOpacity).toBe(value);
+    },
+  );
 });
 
 describe("ClientSettings appearance contrast", () => {

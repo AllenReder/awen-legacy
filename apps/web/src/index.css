@@ -113,7 +113,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(awen-mob
   --command-shell-inset: 0.5rem;
   --command-content-inset: 1rem;
   --floating-content-inset: 0.75rem;
-  --glass-blur: 16px;
+  --glass-blur: 8px;
   --glass-opacity: 80%;
   --glass-saturation: 1.14;
   --desktop-window-right-resize-inset: 0px;
@@ -162,7 +162,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(awen-mob
     --appearance-contrast-target: white;
     --app-scrollbar-thumb: rgb(255 255 255 / 8%);
     --app-scrollbar-thumb-hover: rgb(255 255 255 / 12%);
-    --glass-blur: 16px;
+    --glass-blur: 8px;
     --glass-saturation: 1.08;
   }
 }
@@ -352,7 +352,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(awen-mob
   @variant dark {
     --material-edge: color-mix(in srgb, var(--background) 28%, transparent);
     --material-background-mask-color: black;
-    --material-background-mask-opacity: var(--material-background-mask-dark-opacity, 0.35);
+    --material-background-mask-opacity: var(--material-background-mask-dark-opacity, 0.3);
   }
 }
 
@@ -390,12 +390,12 @@ html.material-stage-opaque #root {
 .material-surface-sidebar {
   background: color-mix(
     in srgb,
-    var(--sidebar) calc(var(--material-sidebar-opacity, 0.5) * 100%),
+    var(--sidebar) calc(var(--material-sidebar-opacity, 0.1) * 100%),
     transparent
   );
   background-color: color-mix(
     in srgb,
-    var(--sidebar) calc(var(--material-sidebar-opacity, 0.5) * 100%),
+    var(--sidebar) calc(var(--material-sidebar-opacity, 0.1) * 100%),
     transparent
   );
 }
@@ -403,12 +403,12 @@ html.material-stage-opaque #root {
 .material-surface-topbar {
   background: color-mix(
     in srgb,
-    var(--app-chrome-background) calc(var(--material-topbar-opacity, 0.5) * 100%),
+    var(--app-chrome-background) calc(var(--material-topbar-opacity, 0.1) * 100%),
     transparent
   );
   background-color: color-mix(
     in srgb,
-    var(--app-chrome-background) calc(var(--material-topbar-opacity, 0.5) * 100%),
+    var(--app-chrome-background) calc(var(--material-topbar-opacity, 0.1) * 100%),
     transparent
   );
 }
@@ -416,12 +416,12 @@ html.material-stage-opaque #root {
 .material-surface-workbench {
   background: color-mix(
     in srgb,
-    var(--canvas) calc(var(--material-workbench-opacity, 0.5) * 100%),
+    var(--canvas) calc(var(--material-workbench-opacity, 0.1) * 100%),
     transparent
   );
   background-color: color-mix(
     in srgb,
-    var(--canvas) calc(var(--material-workbench-opacity, 0.5) * 100%),
+    var(--canvas) calc(var(--material-workbench-opacity, 0.1) * 100%),
     transparent
   );
 }
@@ -429,12 +429,12 @@ html.material-stage-opaque #root {
 .material-surface-overlay {
   background: color-mix(
     in srgb,
-    var(--material-overlay-tint) calc(var(--overlay-film-opacity, 0.9) * 100%),
+    var(--material-overlay-tint) calc(var(--overlay-film-opacity, 0.05) * 100%),
     transparent
   );
   background-color: color-mix(
     in srgb,
-    var(--material-overlay-tint) calc(var(--overlay-film-opacity, 0.9) * 100%),
+    var(--material-overlay-tint) calc(var(--overlay-film-opacity, 0.05) * 100%),
     transparent
   );
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
@@ -503,7 +503,7 @@ html.material-stage-opaque .material-surface-workbench {
 @utility surface-glass {
   background: color-mix(
     in srgb,
-    var(--background) calc(var(--material-overlay-opacity, 0.9) * 100%),
+    var(--background) calc(var(--material-overlay-opacity, 0.05) * 100%),
     transparent
   );
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
@@ -523,7 +523,7 @@ html.material-stage-opaque .material-surface-workbench {
     ),
     color-mix(
       in srgb,
-      var(--background) calc(var(--material-overlay-opacity, 0.9) * 100%),
+      var(--background) calc(var(--material-overlay-opacity, 0.05) * 100%),
       transparent
     ) !important;
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
@@ -553,7 +553,7 @@ html.material-stage-opaque .material-surface-workbench {
 @utility dialog-glass {
   background: color-mix(
     in srgb,
-    var(--background) calc(var(--material-overlay-opacity, 0.9) * 100%),
+    var(--background) calc(var(--material-overlay-opacity, 0.05) * 100%),
     transparent
   );
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
@@ -2652,11 +2652,10 @@ html[data-theme-id] [data-app-sidebar] {
   --sidebar-row-active: color-mix(in srgb, var(--ring) 12%, transparent);
   --sidebar-row-selected: color-mix(in srgb, var(--ring) 8%, transparent);
   --material-overlay-tint: var(--popover);
-  --overlay-film-opacity: var(--material-overlay-opacity, 0.9);
+  --overlay-film-opacity: var(--material-overlay-opacity, 0.05);
   @variant dark {
     --sidebar-row-hover: rgb(255 255 255 / 8%);
     --material-overlay-tint: color-mix(in srgb, var(--popover) 88%, var(--foreground));
-    --overlay-film-opacity: var(--material-overlay-glass-opacity, 0.03434);
   }
 }
 

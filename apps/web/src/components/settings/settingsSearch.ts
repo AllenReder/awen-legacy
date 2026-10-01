@@ -173,9 +173,9 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "setting-overlay-opacity",
-    title: "Overlay density",
+    title: "Overlay opacity",
     to: "/settings/appearance",
-    searchTerms: ["menus dialogs frosted opacity transparency density"],
+    searchTerms: ["menus dialogs composer frosted opacity transparency density"],
   },
   {
     id: "setting-workbench-glass",

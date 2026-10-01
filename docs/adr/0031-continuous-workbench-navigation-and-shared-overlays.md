@@ -60,9 +60,11 @@ beneath a CSS-filtered overlay. In the native material stage, each GlassBackdrop
 anchors an opaque theme base below app content, confined to its exact sample
 bounds. It is removed on unmount and disabled with zero blur or reduced
 transparency. Its scale and opacity follow the material during transitions to
-prevent an opaque flash. Dark overlay density maps to a subtle glass film
-(approximately 3.4% tint at the default 90, solid at 100); light overlays retain
-their existing tint mapping. This retains real in-window content blur while deliberately
+prevent an opaque flash. Overlay opacity now maps directly to the background
+tint alpha in both light and dark modes, with a supported range of 5–100%.
+This supersedes the dark-only 32nd-power density curve, which made most of the
+slider visually ineffective. Theme tint colors remain mode-specific; content
+blur stays independent of tint opacity. This retains real in-window content blur while deliberately
 sacrificing desktop transmission only beneath the popup. Sidebar, Topbar and
 Workbench material settings are unchanged. Regression probes must therefore use
 transparent source pixels and actual app surfaces, not only opaque test stripes.
