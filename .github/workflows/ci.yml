@@ -71,10 +71,10 @@ jobs:
       - run: pnpm build
 
   tests:
-    # `apps/server` and `apps/web` hold most of the suite and used to run one
-    # after the other; `--shard` splits each of them across two runners and
-    # `test:packages` covers every other workspace package. A shard with no
-    # test file fails, so a package that silently loses its tests cannot pass.
+    # `apps/server` holds most of the suite, so `--shard` splits it across
+    # three runners; `apps/web` fits on one runner and `test:packages` covers
+    # every other workspace package. A shard with no test file fails, so a
+    # package that silently loses its tests cannot pass.
     name: Tests (${{ matrix.name }})
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -82,14 +82,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: server 1/2
-            command: pnpm test:server --shard=1/2
-          - name: server 2/2
-            command: pnpm test:server --shard=2/2
-          - name: web 1/2
-            command: pnpm test:web --shard=1/2
-          - name: web 2/2
-            command: pnpm test:web --shard=2/2
+          - name: server 1/3
+            command: pnpm test:server --shard=1/3
+          - name: server 2/3
+            command: pnpm test:server --shard=2/3
+          - name: server 3/3
+            command: pnpm test:server --shard=3/3
+          - name: web
+            command: pnpm test:web
           - name: workspace packages
             command: pnpm test:packages
     steps:
