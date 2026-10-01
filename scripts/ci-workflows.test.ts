@@ -19,6 +19,8 @@ interface WorkflowStep {
 interface WorkflowJob {
   readonly name?: string;
   readonly uses?: string;
+  readonly if?: string;
+  readonly needs?: readonly string[];
   readonly env?: Record<string, string>;
   readonly steps?: readonly WorkflowStep[];
   readonly "timeout-minutes"?: number;
@@ -163,12 +165,46 @@ describe("workflow structure", () => {
     );
     expect(release.text).not.toContain("pnpm install");
   });
-  it("installs Linux native dependencies before desktop tests and rejects skipped checks", () => {
+  it("installs Linux native dependencies before desktop tests", () => {
     const ci = workflows.find((workflow) => workflow.name === "ci.yml")!;
     const shell = ci.document.jobs?.["desktop-shell"]?.steps ?? [];
     expect(
       shell.findIndex((step) => step.name === "Install Linux desktop dependencies"),
     ).toBeLessThan(shell.findIndex((step) => step.name === "Test the desktop shell"));
-    expect(ci.text).not.toContain("success|skipped");
+  });
+
+  // An ordinary pull request must not pay for the four-target installer matrix,
+  // but `main`, tags and packaging changes must still build every artifact.
+  it("runs the installer matrix only for packaging inputs, and never skips it elsewhere", () => {
+    const ci = workflows.find((workflow) => workflow.name === "ci.yml")!;
+    expect(
+      stepsOf(ci).some(({ step }) => (step.run ?? "").includes("scripts/packaging-inputs.ts")),
+      "the detector must classify changes with scripts/packaging-inputs.ts",
+    ).toBe(true);
+
+    const installers = ci.document.jobs?.["installers"];
+    expect(installers?.needs).toEqual(["changes"]);
+    expect(installers?.if ?? "").toContain("github.event_name != 'pull_request'");
+    expect(installers?.if ?? "").toContain("needs.changes.outputs.packaging == 'true'");
+
+    const release = workflows.find((workflow) => workflow.name === "release.yml")!;
+    expect(
+      release.document.jobs?.["build"]?.if,
+      "tags always build the installers",
+    ).toBeUndefined();
+  });
+
+  // The gate is the required check, so the one tolerated skip has to be the one
+  // the detector asked for; anything else - including a vanished job - fails.
+  it("lets the gate pass only the deliberate installer skip", () => {
+    const ci = workflows.find((workflow) => workflow.name === "ci.yml")!;
+    const gate = (ci.document.jobs?.["gate"]?.steps ?? []).find(
+      (step) => step.name === "Require every upstream job to succeed",
+    );
+    const script = gate?.run ?? "";
+    expect(script).toContain('case "$INSTALLERS" in');
+    expect(script).toContain("skipped)");
+    expect(script).toContain("The installer matrix was skipped even though it was required.");
+    expect(script).toContain("exit 1");
   });
 });

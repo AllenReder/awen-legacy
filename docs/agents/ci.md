@@ -1,15 +1,17 @@
 # Continuous integration
 
-PRs and pushes to `main` run `.github/workflows/ci.yml`. Tagged releases and manual dry runs run `.github/workflows/release.yml`. Both call `build-installers.yml`; every PR verifies the same installers that a release publishes.
+PRs, pushes to `main` and manual runs use `.github/workflows/ci.yml`. Tagged releases and manual dry runs use `.github/workflows/release.yml`. Both call `build-installers.yml`, so the installers a release publishes come from the definition `main` and packaging-changing pull requests already ran.
+
+A pull request runs the four-target installer matrix only when it changes a packaging input: the desktop app, its native modules, the packaging scripts (`scripts/`), the dependency graph (`package.json`, `pnpm-lock.yaml`, `pnpm-workspace.yaml`) or the workflows (`.github/workflows/`). `scripts/packaging-inputs.ts` owns that list. Everything else is covered by `quality`, `tests` and the Linux `desktop-shell` smoke; the full matrix still runs on every push to `main`, every tag, and `gh workflow run ci.yml --ref <branch>` on demand.
 
 ## Required checks
 
 - `quality`: consistent versions, formatting, typecheck, lint and web/server build.
 - `tests`: server and web in two shards each; remaining workspace tests exclude desktop.
 - `desktop-shell`: Linux build, preload verification, desktop tests and Xvfb startup smoke. Install `pkg-config`, `libsecret-1-dev`, GTK, NSS and audio/display libraries before tests or native compilation.
-- `installers`: Linux x64 daemon, Windows x64 NSIS installer, macOS arm64 and x64 DMGs. Each platform verifies packaged runtime startup and installed Electron behavior. macOS uses native `macos-15` and `macos-15-intel` runners; Windows uses `windows-2025`.
+- `installers`: Linux x64 daemon, Windows x64 NSIS installer, macOS arm64 and x64 DMGs. Each platform verifies packaged runtime startup and installed Electron behavior. macOS uses native `macos-15` and `macos-15-intel` runners; Windows uses `windows-2025`. Runs on `main`, tags, manual runs and packaging-changing pull requests.
 - `assemble`: exact final inventory plus `SHA256SUMS`, uploaded as `release-assets` after every installer verification succeeds.
-- `CI gate`: requires every upstream job to succeed; skipped jobs do not pass.
+- `CI gate`: fails on any failure or cancellation. The one skip it tolerates is the installer matrix on a pull request the change detector cleared, and the gate re-checks that against the detector before passing.
 
 No Linux desktop installer is published. Linux GUI smoke validates Electron development support.
 

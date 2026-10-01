@@ -1,7 +1,8 @@
 # Tagged release. The installer jobs are the same workflow CI calls, so the
-# build a tag publishes is the build a pull request already rehearsed. Run this
-# workflow manually to dry-run a release: everything builds and uploads as
-# artifacts, and nothing is published unless `publish` is set on a tag ref.
+# build a tag publishes is the build `main` and packaging-changing pull requests
+# already ran. Run this workflow manually to dry-run a release: everything
+# builds and uploads as artifacts, and nothing is published unless `publish` is
+# set on a tag ref.
 name: Release
 
 on:

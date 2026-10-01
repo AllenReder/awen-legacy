@@ -1,8 +1,8 @@
 # One definition for every artifact the release publishes. `ci.yml` and
-# `release.yml` both call this workflow, so a pull request exercises exactly the
-# steps a tagged release runs. The Apple credential check lives here instead of
-# in the callers: pull requests from forks have no secrets and build ad-hoc
-# DMGs, while a release that has Developer ID secrets notarizes.
+# `release.yml` both call this workflow, so a tag publishes what `main` and
+# packaging-changing pull requests already built. The Apple credential check
+# lives here instead of in the callers: runs without secrets build ad-hoc DMGs,
+# while a release that has Developer ID secrets notarizes.
 name: Build release installers
 
 on:
