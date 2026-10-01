@@ -22,6 +22,7 @@ export function attachGlassSamplingUnderlay(surface: HTMLElement): () => void {
   const syncAppearance = () => {
     const style = getComputedStyle(surface);
     underlay.style.borderRadius = style.borderRadius;
+    underlay.style.clipPath = style.clipPath;
     underlay.style.opacity = style.opacity;
     underlay.style.scale = style.scale;
     underlay.style.transformOrigin = style.transformOrigin;
@@ -61,10 +62,18 @@ export function attachGlassSamplingUnderlay(surface: HTMLElement): () => void {
   surface.addEventListener("transitioncancel", syncAppearance);
   const observer = new MutationObserver(sync);
   observer.observe(root, { attributes: true, attributeFilter: ["class", "style"] });
+  observer.observe(surface, { attributes: true, attributeFilter: ["class", "style"] });
   if (surface.parentElement)
     observer.observe(surface.parentElement, {
       attributes: true,
-      attributeFilter: ["class", "style", "hidden", "data-open", "data-closed"],
+      attributeFilter: [
+        "class",
+        "style",
+        "hidden",
+        "data-open",
+        "data-closed",
+        "data-with-context",
+      ],
     });
   const resize = new ResizeObserver(sync);
   resize.observe(surface);

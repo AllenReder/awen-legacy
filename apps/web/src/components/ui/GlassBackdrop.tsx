@@ -3,7 +3,7 @@ import { attachGlassSamplingUnderlay } from "../../materialGlassSampling";
 import { cn } from "../../lib/utils";
 
 /**
- * Frosted glass backdrop for popovers, modals, and dropdown overlays.
+ * Frosted glass backdrop shared by composers, popovers, modals, and dropdown overlays.
  * Animates itself beside the content; its ancestors keep their geometry and
  * opacity stable so backdrop filtering can still sample the application.
  */
