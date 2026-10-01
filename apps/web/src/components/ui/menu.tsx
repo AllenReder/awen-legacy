@@ -58,7 +58,7 @@ function MenuPopup({
       >
         <MenuPrimitive.Popup
           className={cn(
-            "relative isolate flex origin-(--transform-origin) overflow-hidden rounded-lg border shadow-[0_16px_40px_-18px_rgb(0_0_0/55%)] outline-none focus:outline-none transition-opacity [transition-duration:calc(170ms*var(--motion-duration-scale,1))] data-ending-style:opacity-0 data-starting-style:opacity-0 dark:shadow-[0_18px_44px_-18px_rgb(0_0_0/80%)]",
+            "overlay-frame relative isolate flex origin-(--transform-origin) overflow-hidden rounded-lg border outline-none focus:outline-none ",
             !hasExplicitWidthClass && "min-w-32",
             className,
           )}

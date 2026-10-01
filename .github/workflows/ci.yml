@@ -1,13 +1,16 @@
-# Pull request and `main` gate. The installer jobs live in
-# `build-installers.yml`, the same workflow `release.yml` calls, so a pull
-# request exercises the macOS and Windows packaging steps a release runs; the
-# `ci gate` job is the single status check branch protection needs.
+# Pull request and `main` gate. `build-installers.yml` owns every packaging
+# step and `release.yml` calls the same workflow, so the installers a release
+# publishes come from one definition. An ordinary pull request runs `quality`,
+# `tests` and the Linux `desktop-shell` smoke; the four-target installer matrix
+# runs on `main`, on every tag and on pull requests that change a packaging
+# input. `ci gate` is the single status check branch protection needs.
 name: CI
 
 on:
   pull_request:
   push:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -17,6 +20,34 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    # A pull request only gets the installer matrix when it changes a file that
+    # can change how the installers are built. The list lives in
+    # `scripts/packaging-inputs.ts` so the workflow and its tests agree on it.
+    name: Detect packaging inputs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      packaging: ${{ steps.detect.outputs.packaging }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Detect packaging inputs
+        id: detect
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_EVENT_NAME}" != "pull_request" ]]; then
+            echo "packaging=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git fetch --no-tags origin "${BASE_REF}"
+          packaging="$(git diff --name-only "origin/${BASE_REF}...HEAD" | node scripts/packaging-inputs.ts)"
+          echo "packaging=$packaging" >> "$GITHUB_OUTPUT"
+
   quality:
     name: Typecheck, lint, and build
     runs-on: ubuntu-24.04
@@ -25,11 +56,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: package.json
-          cache: pnpm
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4.3.0
+        with:
+          cache: true
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - run: node scripts/version.ts check
@@ -64,11 +96,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: package.json
-          cache: pnpm
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4.3.0
+        with:
+          cache: true
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - run: ${{ matrix.command }}
@@ -81,46 +114,43 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: package.json
-          cache: pnpm
-      - name: Install Tauri system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes \
-            libwebkit2gtk-4.1-dev \
-            build-essential \
-            curl \
-            wget \
-            file \
-            libxdo-dev \
-            libssl-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4.3.0
+        with:
+          cache: true
+      - name: Install Linux desktop dependencies
+        run: sudo apt-get update && sudo apt-get install -y pkg-config xvfb libsecret-1-dev libgtk-3-0 libnss3 libasound2t64
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-      - name: Install Rust toolchain
-        run: |
-          rustup toolchain install stable --profile minimal --component rustfmt --component clippy
-          rustup default stable
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          workspaces: apps/desktop/src-tauri -> target
-          key: linux-x64
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      - name: Check Rust formatting
-        run: cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml --check
-      - name: Lint the desktop shell
-        run: cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets --locked -- -D warnings
+      - name: Ensure Electron runtime
+        run: pnpm --filter @awen/desktop ensure:electron
+      - name: Compile the desktop shell
+        run: pnpm exec vp run --filter @awen/desktop build
+      - name: Verify preload bundle
+        run: node apps/desktop/scripts/verify-preload-bundle.mjs
+      - name: Typecheck the desktop shell
+        run: pnpm --filter @awen/desktop typecheck
       - name: Test the desktop shell
-        run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --locked
-      - name: Compile the desktop shell without bundling
-        run: pnpm --filter @awen/desktop build --no-bundle
+        run: pnpm --filter @awen/desktop test
+      - name: Build daemon, client and Linux cookie helper
+        run: |
+          pnpm build
+          node apps/desktop/scripts/build-browser-secret.mjs
+      - name: Desktop smoke test
+        run: xvfb-run -a pnpm --filter @awen/desktop smoke-test
 
   installers:
     name: Release installers
+    needs: [changes]
+    # `main`, tags and manual runs always build the installers. A pull request
+    # only does when the detector found a packaging input, so an ordinary PR
+    # does not spend twenty runner-minutes rebuilding artifacts it cannot
+    # change; `quality`, `tests` and `desktop-shell` still cover that change.
+    if: >-
+      github.event_name != 'pull_request'
+      || needs.changes.outputs.packaging == 'true'
     uses: ./.github/workflows/build-installers.yml
     with:
       artifact-retention-days: 3
@@ -129,22 +159,43 @@ jobs:
   gate:
     name: CI gate
     if: always()
-    needs: [quality, tests, desktop-shell, installers]
+    needs: [changes, quality, tests, desktop-shell, installers]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Require every upstream job to succeed
         env:
-          RESULTS: ${{ join(needs.*.result, ' ') }}
+          CHANGES: ${{ needs.changes.result }}
+          QUALITY: ${{ needs.quality.result }}
+          TESTS: ${{ needs.tests.result }}
+          DESKTOP_SHELL: ${{ needs.desktop-shell.result }}
+          INSTALLERS: ${{ needs.installers.result }}
+          PACKAGING: ${{ needs.changes.outputs.packaging }}
+          EVENT: ${{ github.event_name }}
         run: |
           set -euo pipefail
-          echo "Upstream job results: $RESULTS"
-          for result in $RESULTS; do
-            case "$result" in
-              success|skipped) ;;
-              *)
-                echo "An upstream job did not succeed: $result" >&2
-                exit 1
-                ;;
-            esac
+          echo "changes=$CHANGES quality=$QUALITY tests=$TESTS desktop-shell=$DESKTOP_SHELL installers=$INSTALLERS"
+          for result in "$CHANGES" "$QUALITY" "$TESTS" "$DESKTOP_SHELL"; do
+            if [[ "$result" != "success" ]]; then
+              echo "A required job did not succeed: $result" >&2
+              exit 1
+            fi
           done
+          case "$INSTALLERS" in
+            success)
+              ;;
+            skipped)
+              # The installer matrix may only be skipped on a pull request the
+              # detector cleared; a skip anywhere else would let the gate pass
+              # without the packaging steps it promises to require.
+              if [[ "$EVENT" != "pull_request" || "$PACKAGING" == "true" ]]; then
+                echo "The installer matrix was skipped even though it was required." >&2
+                exit 1
+              fi
+              echo "Installer matrix deliberately skipped: no packaging input changed."
+              ;;
+            *)
+              echo "The installer matrix did not succeed: $INSTALLERS" >&2
+              exit 1
+              ;;
+          esac

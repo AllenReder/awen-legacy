@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "types": ["node", "electron"],
+    "lib": ["ESNext", "DOM", "esnext.disposable"]
+  },
+  "include": [
+    "src",
+    "vite.config.ts",
+    "../../scripts/lib",
+    "../server/src/localDaemon.ts",
+    "../server/src/localDaemonProtocol.ts"
+  ]
+}

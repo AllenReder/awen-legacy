@@ -1,5 +1,14 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, expect, it, vi } from "vite-plus/test";
+vi.mock("../env", () => ({
+  get isElectron() {
+    return typeof window !== "undefined" && window.desktopBridge !== undefined;
+  },
+  get isDesktop() {
+    return typeof window !== "undefined" && window.desktopBridge !== undefined;
+  },
+}));
+
 import type {
   AwenProjectId,
   AgentSessionId,
@@ -127,7 +136,7 @@ it("renders the selected compact Topbar Surface with real titles and a new-tab a
   );
 
   expect(html).toContain("data-workbench-window-chrome");
-  expect(html).toContain("data-tauri-drag-region");
+  expect(html).toContain("drag-region");
   expect(html).toContain("Dev server");
   expect(html).toContain('aria-label="Open Implement tabs"');
   expect(html).toContain('aria-label="New tab"');
@@ -187,11 +196,11 @@ it("omits window controls in standard non-desktop environment", () => {
   expect(html).not.toContain('data-slot="window-controls"');
 });
 
-it("renders window controls at the trailing end of the topbar when on Windows desktop", () => {
+it("reserves native window controls when on Windows desktop", () => {
   const snapshot = createTestSnapshot();
 
   vi.stubGlobal("window", {
-    __TAURI_INTERNALS__: {},
+    desktopBridge: {},
   });
   vi.stubGlobal("navigator", {
     platform: "Win32",
@@ -203,19 +212,19 @@ it("renders window controls at the trailing end of the topbar when on Windows de
     </SidebarProvider>,
   );
 
-  expect(html).toContain('data-slot="window-controls"');
-  expect(html).toContain('aria-label="Minimize"');
-  expect(html).toContain('aria-label="Maximize"');
-  expect(html).toContain('aria-label="Close"');
+  expect(html).not.toContain('data-slot="window-controls"');
+  expect(html).not.toContain('aria-label="Minimize"');
+  expect(html).not.toContain('aria-label="Maximize"');
+  expect(html).not.toContain('aria-label="Close"');
 
   vi.unstubAllGlobals();
 });
 
-it("renders window controls at the trailing end of the topbar when on Linux desktop", () => {
+it("reserves native window controls when on Linux desktop", () => {
   const snapshot = createTestSnapshot();
 
   vi.stubGlobal("window", {
-    __TAURI_INTERNALS__: {},
+    desktopBridge: {},
   });
   vi.stubGlobal("navigator", {
     platform: "Linux x86_64",
@@ -227,10 +236,10 @@ it("renders window controls at the trailing end of the topbar when on Linux desk
     </SidebarProvider>,
   );
 
-  expect(html).toContain('data-slot="window-controls"');
-  expect(html).toContain('aria-label="Minimize"');
-  expect(html).toContain('aria-label="Maximize"');
-  expect(html).toContain('aria-label="Close"');
+  expect(html).not.toContain('data-slot="window-controls"');
+  expect(html).not.toContain('aria-label="Minimize"');
+  expect(html).not.toContain('aria-label="Maximize"');
+  expect(html).not.toContain('aria-label="Close"');
 
   vi.unstubAllGlobals();
 });

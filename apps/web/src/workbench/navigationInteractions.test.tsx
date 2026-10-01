@@ -1,23 +1,22 @@
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
-import { useTabSwitchGesture } from "./useTabSwitchGesture";
-import { useTabSwitchWheel } from "./useTabSwitchWheel";
+import { useWorkbenchNavigation } from "./useWorkbenchNavigation";
+import type { DesktopTrackpadInput } from "@awen/contracts";
 import { TabTransitionController } from "./tabTransitionReact";
 import { getTabTransitionFrame, resetTabTransitionForTest } from "./tabTransition";
 import { emptyWorkbenchSnapshot, applyCreateTab } from "./workbenchState";
 import { resetWorkbenchStore, useWorkbenchStore } from "./workbenchStore";
 
 vi.mock("../contextMenuFallback", () => ({ dismissContextMenu: vi.fn() }));
-let nativePhase: ((event: { payload: { phase: string; momentumPhase: string } }) => void) | null =
-  null;
-vi.mock("@tauri-apps/api/event", () => ({
-  listen: async (_name: string, listener: typeof nativePhase) => {
+let nativePhase: ((input: DesktopTrackpadInput) => void) | null = null;
+const desktopBridge = {
+  onTrackpadInput: (listener: (input: DesktopTrackpadInput) => void) => {
     nativePhase = listener;
     return () => {
       nativePhase = null;
     };
   },
-}));
+};
 
 class Surface extends EventTarget {
   clientWidth = 800;
@@ -25,6 +24,13 @@ class Surface extends EventTarget {
   scrollLeft = 0;
   parentElement: Surface | null = null;
   dataset: Record<string, string> = {};
+  style: Record<string, string> = {};
+  matches(selector: string) {
+    return selector === ".workbench-viewport" && this === viewport;
+  }
+  querySelectorAll() {
+    return [viewport];
+  }
   contains() {
     return true;
   }
@@ -45,8 +51,7 @@ let reduced: boolean;
 const menu = vi.fn();
 function Probe() {
   const ref = { current: stage as unknown as HTMLElement };
-  useTabSwitchGesture({ stageRef: ref, onPaneContextMenu: menu });
-  useTabSwitchWheel(ref);
+  useWorkbenchNavigation({ stageRef: ref, onPaneContextMenu: menu });
   return <TabTransitionController />;
 }
 function event(target: EventTarget, name: string, values: Record<string, unknown>) {
@@ -55,17 +60,13 @@ function event(target: EventTarget, name: string, values: Record<string, unknown
   target.dispatchEvent(input);
   return input;
 }
-async function actEvent(run: () => Event) {
-  await act(() => {
-    run();
-  });
-}
 function pointer(name: string, x: number) {
-  event(name === "pointerdown" ? stage : windowEvents, name, {
+  event(windowEvents, name, {
     pointerId: 1,
     button: 2,
     clientX: x,
     clientY: 0,
+    target: viewport,
   });
 }
 async function mount(count = 2) {
@@ -74,6 +75,7 @@ async function mount(count = 2) {
   let state = emptyWorkbenchSnapshot(ids);
   for (let index = 1; index < count; index++) state = applyCreateTab(state, ids);
   useWorkbenchStore.setState(state);
+  viewport.dataset.tabId = state.activeTabId;
   await act(() => {
     renderer = create(<Probe />);
   });
@@ -97,7 +99,7 @@ beforeEach(() => {
   windowEvents = Object.assign(new EventTarget(), { matchMedia: () => ({ matches: reduced }) });
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("window", windowEvents);
-  vi.stubGlobal("document", {});
+  vi.stubGlobal("document", { elementFromPoint: () => viewport });
   vi.stubGlobal("Element", Surface);
   vi.stubGlobal("getComputedStyle", () => ({ overflowX: "auto" }));
   vi.spyOn(performance, "now").mockImplementation(() => now);
@@ -127,6 +129,37 @@ it("pans a single Scrolling Tab without trying to switch", async () => {
   });
   expect(viewport.scrollLeft).toBe(100);
   expect(getTabTransitionFrame()).toBeNull();
+});
+
+it("leaves a text selection right-click to the content menu instead of navigating", async () => {
+  Object.assign(windowEvents, {
+    getSelection: () => ({ isCollapsed: false, anchorNode: viewport, focusNode: viewport }),
+  });
+  await mount();
+  const activeTab = useWorkbenchStore.getState().activeTabId;
+  await act(() => {
+    pointer("pointerdown", 700);
+    pointer("pointermove", 100);
+    pointer("pointerup", 100);
+  });
+  expect(useWorkbenchStore.getState().activeTabId).toBe(activeTab);
+  expect(getTabTransitionFrame()).toBeNull();
+  expect(event(stage, "contextmenu", {}).defaultPrevented).toBe(false);
+});
+
+it("suppresses the native menu after a right drag, then releases content right-clicks", async () => {
+  await mount();
+  await act(() => {
+    pointer("pointerdown", 700);
+    pointer("pointermove", 100);
+    pointer("pointerup", 100);
+  });
+  expect(event(stage, "contextmenu", {}).defaultPrevented).toBe(true);
+  await act(() => {
+    pointer("pointerdown", 100);
+    pointer("pointerup", 100);
+  });
+  expect(event(stage, "contextmenu", {}).defaultPrevented).toBe(false);
 });
 it("cancels below-halfway travel when the pointer pauses before release", async () => {
   await mount();
@@ -167,6 +200,7 @@ it("an interrupted gesture settle cannot end a later click transition", async ()
     pointer("pointerdown", 700);
     now = 10;
     pointer("pointermove", 100);
+    now = 100;
     pointer("pointerup", 100);
   });
   now = 200;
@@ -180,7 +214,7 @@ it("an interrupted gesture settle cannot end a later click transition", async ()
   expect(getTabTransitionFrame()?.toTabId).toBe(tabs[1]!.id);
 });
 it("keeps a Tab settle running when the next trackpad gesture scrolls content", async () => {
-  Object.assign(windowEvents, { desktopBridge: {} });
+  Object.assign(windowEvents, { desktopBridge });
   vi.stubGlobal("navigator", { platform: "MacIntel" });
   const inner = new Surface();
   inner.scrollWidth = 1200;
@@ -195,7 +229,17 @@ it("keeps a Tab settle running when the next trackpad gesture scrolls content", 
     pending.forEach((callback) => callback(now));
   });
   expect(getTabTransitionFrame()).not.toBeNull();
-  nativePhase!({ payload: { phase: "began", momentumPhase: "none" } });
+  vi.stubGlobal("document", { elementFromPoint: () => inner });
+  nativePhase!({
+    phase: "begin",
+    gestureId: 1,
+    sequence: 1,
+    deltaX: 0,
+    deltaY: 0,
+    time: now,
+    x: 0,
+    y: 0,
+  });
   const wheel = event(stage, "wheel", {
     target: inner,
     deltaX: 30,
@@ -215,6 +259,7 @@ it("a new right drag takes over the visible position of a settling Tab", async (
     pointer("pointerdown", 700);
     now = 10;
     pointer("pointermove", 100);
+    now = 100;
     pointer("pointerup", 100);
   });
   now = 100;
@@ -271,7 +316,6 @@ it("routes Shift+wheel through inner scroller, layout, then cyclic Tab navigatio
 });
 it("does not turn a macOS-style stream of unmodified deltas into Tab switches", async () => {
   await mount(3);
-  const tabs = useWorkbenchStore.getState().tabs;
   const initialActive = useWorkbenchStore.getState().activeTabId;
   for (let index = 0; index < 40; index++) {
     await act(() => {
@@ -289,254 +333,152 @@ it("does not turn a macOS-style stream of unmodified deltas into Tab switches", 
   expect(getTabTransitionFrame()).toBeNull();
 });
 
-it("lets a macOS trackpad preview reverse before release and swallows its momentum", async () => {
-  Object.assign(windowEvents, { desktopBridge: {} });
-  vi.stubGlobal("navigator", { platform: "MacIntel" });
-  await mount(3);
-  const active = useWorkbenchStore.getState().activeTabId;
-  const wheel = (deltaX: number) =>
-    event(stage, "wheel", {
-      target: stage,
-      deltaX,
-      deltaY: 0,
-      deltaMode: 0,
-      shiftKey: false,
-      ctrlKey: false,
+let sequence = 0;
+function packet(phase: DesktopTrackpadInput["phase"], deltaX = 0, gestureId = 1, deltaY = 0) {
+  nativePhase!({ phase, gestureId, sequence: ++sequence, deltaX, deltaY, time: now, x: 0, y: 0 });
+}
+it.each([
+  ["right-drag", 400, true],
+  ["trackpad", 400, true],
+  ["right-drag", 100, false],
+  ["trackpad", 100, false],
+] as const)(
+  "%s reverses a settling crossing with %i px of reverse travel (paused: %s)",
+  async (source, reverseTravel, paused) => {
+    Object.assign(windowEvents, { desktopBridge });
+    await mount();
+    const original = useWorkbenchStore.getState().activeTabId;
+    await act(() => {
+      if (source === "right-drag") {
+        pointer("pointerdown", 700);
+        now = 10;
+        pointer("pointermove", 100);
+        pointer("pointerup", 100);
+      } else {
+        packet("begin");
+        now = 10;
+        packet("update", 600);
+        packet("end");
+      }
     });
-  nativePhase!({ payload: { phase: "began", momentumPhase: "none" } });
-  await act(() => {
-    wheel(80);
-    wheel(-60);
-  });
-  expect(getTabTransitionFrame()?.progress).toBeCloseTo(20 / 360);
-  nativePhase!({ payload: { phase: "ended", momentumPhase: "none" } });
-  expect(useWorkbenchStore.getState().activeTabId).toBe(active);
-  await actEvent(() => wheel(200));
-  expect(useWorkbenchStore.getState().activeTabId).toBe(active);
-});
-
-it("returns a paused trackpad swipe below 20% travel to its source Tab", async () => {
-  Object.assign(windowEvents, { desktopBridge: {} });
-  vi.stubGlobal("navigator", { platform: "MacIntel" });
-  await mount(2);
-  const active = useWorkbenchStore.getState().activeTabId;
-  nativePhase!({ payload: { phase: "began", momentumPhase: "none" } });
-  now = 10;
-  await actEvent(() =>
-    event(stage, "wheel", {
-      target: stage,
-      deltaX: 60,
-      deltaY: 0,
-      deltaMode: 0,
-      shiftKey: false,
-      ctrlKey: false,
-    }),
-  );
-  expect(getTabTransitionFrame()?.progress).toBeCloseTo(60 / 360);
-  now = 300;
-  nativePhase!({ payload: { phase: "ended", momentumPhase: "none" } });
-  expect(useWorkbenchStore.getState().activeTabId).toBe(active);
-});
-
-it("commits a paused trackpad swipe after 20% travel", async () => {
-  Object.assign(windowEvents, { desktopBridge: {} });
-  vi.stubGlobal("navigator", { platform: "MacIntel" });
-  await mount(2);
-  const target = useWorkbenchStore.getState().tabs[0]!.id;
-  nativePhase!({ payload: { phase: "began", momentumPhase: "none" } });
-  now = 10;
-  await actEvent(() =>
-    event(stage, "wheel", {
-      target: stage,
-      deltaX: 80,
-      deltaY: 0,
-      deltaMode: 0,
-      shiftKey: false,
-      ctrlKey: false,
-    }),
-  );
-  expect(getTabTransitionFrame()?.progress).toBeCloseTo(80 / 360);
-  now = 300;
-  nativePhase!({ payload: { phase: "ended", momentumPhase: "none" } });
-  expect(useWorkbenchStore.getState().activeTabId).toBe(target);
-});
-
-it("commits a short, fast directional trackpad flick before halfway", async () => {
-  Object.assign(windowEvents, { desktopBridge: {} });
-  vi.stubGlobal("navigator", { platform: "MacIntel" });
-  await mount(2);
-  const target = useWorkbenchStore.getState().tabs[0]!.id;
-  nativePhase!({ payload: { phase: "began", momentumPhase: "none" } });
-  now = 10;
-  await actEvent(() =>
-    event(stage, "wheel", {
-      target: stage,
-      deltaX: 40,
-      deltaY: 0,
-      deltaMode: 0,
-      shiftKey: false,
-      ctrlKey: false,
-    }),
-  );
-  expect(getTabTransitionFrame()?.progress).toBeCloseTo(40 / 360);
-  nativePhase!({ payload: { phase: "ended", momentumPhase: "none" } });
-  expect(useWorkbenchStore.getState().activeTabId).toBe(target);
-});
-
-it("commits one trackpad switch when direct input ends despite a long momentum tail", async () => {
-  Object.assign(windowEvents, { desktopBridge: {} });
-  vi.stubGlobal("navigator", { platform: "MacIntel" });
-  await mount(3);
-  const tabs = useWorkbenchStore.getState().tabs;
-  const wheel = () =>
-    event(stage, "wheel", {
-      target: stage,
-      deltaX: 20,
-      deltaY: 0,
-      deltaMode: 0,
-      shiftKey: false,
-      ctrlKey: false,
+    expect(useWorkbenchStore.getState().activeTabId).not.toBe(original);
+    expect(getTabTransitionFrame()).not.toBeNull();
+    await act(() => {
+      now = 20;
+      if (source === "right-drag") {
+        pointer("pointerdown", 100);
+        now = 30;
+        pointer("pointermove", 100 + reverseTravel);
+        if (paused) now = 130;
+        else expect(getTabTransitionFrame()!.progress).toBeGreaterThan(0.5);
+        pointer("pointerup", 100 + reverseTravel);
+      } else {
+        packet("begin", 0, 2);
+        now = 30;
+        packet("update", -reverseTravel, 2);
+        if (paused) now = 130;
+        else expect(getTabTransitionFrame()!.progress).toBeGreaterThan(0.5);
+        packet("end", 0, 2);
+      }
     });
-  nativePhase!({ payload: { phase: "began", momentumPhase: "none" } });
-  await act(() => {
-    for (let index = 0; index < 10; index++) wheel();
-  });
-  nativePhase!({ payload: { phase: "ended", momentumPhase: "none" } });
-  expect(useWorkbenchStore.getState().activeTabId).toBe(tabs[0]!.id);
-  await act(() => {
-    for (let index = 0; index < 100; index++) wheel();
-  });
-  expect(useWorkbenchStore.getState().activeTabId).toBe(tabs[0]!.id);
-  await actEvent(() =>
-    event(stage, "wheel", {
-      target: stage,
-      deltaX: 100,
-      deltaY: 0,
-      deltaMode: 0,
-      shiftKey: true,
-      ctrlKey: false,
-    }),
-  );
-  expect(useWorkbenchStore.getState().activeTabId).toBe(tabs[1]!.id);
-  nativePhase!({ payload: { phase: "none", momentumPhase: "ended" } });
-});
-
-it("holds content scroll ownership at the boundary until the next trackpad gesture", async () => {
-  Object.assign(windowEvents, { desktopBridge: {} });
-  vi.stubGlobal("navigator", { platform: "MacIntel" });
-  const inner = new Surface();
-  inner.scrollWidth = 850;
-  inner.parentElement = viewport;
-  await mount(2);
-  const active = useWorkbenchStore.getState().activeTabId;
-  const wheel = (deltaX: number) => {
-    const input = event(stage, "wheel", {
-      target: inner,
-      deltaX,
-      deltaY: 0,
-      deltaMode: 0,
-      shiftKey: false,
-      ctrlKey: false,
-    });
-    if (!input.defaultPrevented) {
-      inner.scrollLeft = Math.max(
-        0,
-        Math.min(inner.scrollWidth - inner.clientWidth, inner.scrollLeft + deltaX),
-      );
-    }
-    return input;
-  };
-  nativePhase!({ payload: { phase: "began", momentumPhase: "none" } });
-  await actEvent(() => wheel(100));
-  expect(inner.scrollLeft).toBe(50);
-  expect(getTabTransitionFrame()).toBeNull();
-  await actEvent(() => wheel(100));
-  expect(getTabTransitionFrame()).toBeNull();
-  nativePhase!({ payload: { phase: "ended", momentumPhase: "none" } });
-  nativePhase!({ payload: { phase: "began", momentumPhase: "none" } });
-  await actEvent(() => wheel(50));
-  expect(getTabTransitionFrame()?.progress).toBeCloseTo(50 / 360);
-  await actEvent(() => wheel(-100));
-  expect(getTabTransitionFrame()).toBeNull();
-  expect(inner.scrollLeft).toBe(0);
-  expect(useWorkbenchStore.getState().activeTabId).toBe(active);
-});
-
-it("keeps a reversed Tab preview in the same gesture even with no leftover travel", async () => {
-  Object.assign(windowEvents, { desktopBridge: {} });
-  vi.stubGlobal("navigator", { platform: "MacIntel" });
-  await mount(3);
-  const wheel = (deltaX: number) =>
-    event(stage, "wheel", {
-      target: stage,
-      deltaX,
-      deltaY: 0,
-      deltaMode: 0,
-      shiftKey: false,
-      ctrlKey: false,
-    });
-  nativePhase!({ payload: { phase: "began", momentumPhase: "none" } });
-  await actEvent(() => wheel(50));
-  await actEvent(() => wheel(-50));
-  expect(getTabTransitionFrame()).toBeNull();
-  await actEvent(() => wheel(-50));
-  expect(getTabTransitionFrame()).toBeNull();
-});
-
-it("keeps content momentum scrolling when the gesture never reaches a Tab", async () => {
-  Object.assign(windowEvents, { desktopBridge: {} });
-  vi.stubGlobal("navigator", { platform: "MacIntel" });
-  const inner = new Surface();
-  inner.scrollWidth = 1200;
-  inner.parentElement = viewport;
-  await mount(2);
-  const wheel = () => {
-    const input = event(stage, "wheel", {
-      target: inner,
-      deltaX: 30,
-      deltaY: 0,
-      deltaMode: 0,
-      shiftKey: false,
-      ctrlKey: false,
-    });
-    if (!input.defaultPrevented) inner.scrollLeft += 30;
-    return input;
-  };
-  nativePhase!({ payload: { phase: "began", momentumPhase: "none" } });
-  await actEvent(() => wheel());
-  nativePhase!({ payload: { phase: "ended", momentumPhase: "none" } });
-  await actEvent(() => wheel());
-  expect(inner.scrollLeft).toBe(60);
-  expect(getTabTransitionFrame()).toBeNull();
-});
-
-it("leaves Scrolling layout direct and momentum wheel events to native scrolling", async () => {
-  Object.assign(windowEvents, { desktopBridge: {} });
-  vi.stubGlobal("navigator", { platform: "MacIntel" });
+    await settle();
+    expect(getTabTransitionFrame()).toBeNull();
+    expect(useWorkbenchStore.getState().activeTabId).toBe(original);
+  },
+);
+it("native displacement is consumed once and DOM wheel supplies no second movement", async () => {
+  Object.assign(windowEvents, { desktopBridge });
   viewport.dataset.layoutMode = "scrolling";
   viewport.scrollWidth = 1200;
-  await mount(2);
-  const wheel = () =>
-    event(stage, "wheel", {
-      target: viewport,
-      deltaX: 30,
-      deltaY: 0,
-      deltaMode: 0,
-      shiftKey: false,
-      ctrlKey: false,
-    });
-  nativePhase!({ payload: { phase: "began", momentumPhase: "none" } });
-  const direct = wheel();
-  expect(direct.defaultPrevented).toBe(false);
-  viewport.scrollLeft = 30; // The WebView's native default action.
-  nativePhase!({ payload: { phase: "ended", momentumPhase: "none" } });
-  nativePhase!({ payload: { phase: "none", momentumPhase: "changed" } });
-  const momentum = wheel();
-  expect(momentum.defaultPrevented).toBe(false);
-  viewport.scrollLeft = viewport.scrollWidth - viewport.clientWidth;
-  const atBoundary = wheel();
-  expect(atBoundary.defaultPrevented).toBe(false);
+  await mount(1);
+  await act(() => {
+    packet("begin");
+    now = 10;
+    packet("update", 100);
+  });
+  const wheel = event(stage, "wheel", {
+    target: viewport,
+    deltaX: 100,
+    deltaY: 0,
+    deltaMode: 0,
+    shiftKey: false,
+    ctrlKey: false,
+  });
+  expect(wheel.defaultPrevented).toBe(true);
+  expect(viewport.scrollLeft).toBe(100);
+  await act(() => {
+    packet("end");
+    now = 20;
+    packet("momentum", 1000);
+  });
+  expect(viewport.scrollLeft).toBe(400);
   expect(getTabTransitionFrame()).toBeNull();
+});
+it("native vertical gestures and nested horizontal scrollers retain content ownership", async () => {
+  Object.assign(windowEvents, { desktopBridge });
+  const inner = new Surface();
+  inner.parentElement = viewport;
+  inner.scrollWidth = 1200;
+  await mount();
+  vi.stubGlobal("document", { elementFromPoint: () => inner });
+  await act(() => {
+    packet("begin");
+    packet("update", 500);
+  });
+  expect(getTabTransitionFrame()).toBeNull();
+  expect(
+    event(stage, "wheel", { target: inner, deltaX: 500, deltaY: 0, shiftKey: false })
+      .defaultPrevented,
+  ).toBe(false);
+  vi.stubGlobal("document", { elementFromPoint: () => viewport });
+  await act(() => {
+    packet("begin", 0, 2);
+    packet("update", 10, 2, 100);
+    packet("update", 500, 2);
+  });
+  expect(getTabTransitionFrame()).toBeNull();
+});
+it("a full native crossing activates immediately and stale momentum cannot cross another Tab", async () => {
+  Object.assign(windowEvents, { desktopBridge });
+  await mount(3);
+  const before = useWorkbenchStore.getState().activeTabId;
+  await act(() => {
+    packet("begin");
+    now = 10;
+    packet("update", 800);
+  });
+  const arrived = useWorkbenchStore.getState().activeTabId;
+  expect(arrived).not.toBe(before);
+  await act(() => {
+    packet("end");
+    packet("momentum", 3000);
+  });
+  expect(useWorkbenchStore.getState().activeTabId).toBe(arrived);
+  expect(getTabTransitionFrame()).toBeNull();
+});
+it("an outside pointer press cancels a preview and rejects the old native stream", async () => {
+  Object.assign(windowEvents, { desktopBridge });
+  await mount();
+  const before = useWorkbenchStore.getState().activeTabId;
+  await act(() => {
+    packet("begin");
+    now = 10;
+    packet("update", 600);
+  });
+  expect(getTabTransitionFrame()).not.toBeNull();
+  await act(() => {
+    event(windowEvents, "pointerdown", { button: 0 });
+    packet("update", 600);
+    packet("end");
+    packet("momentum", 600);
+  });
+  expect(getTabTransitionFrame()).toBeNull();
+  expect(useWorkbenchStore.getState().activeTabId).toBe(before);
+  await act(() => packet("finish"));
+  expect(
+    event(stage, "wheel", { target: viewport, deltaX: 20, deltaY: 0, shiftKey: false })
+      .defaultPrevented,
+  ).toBe(false);
 });
 it("drains queued wheel switches with reduced motion without a timeout", async () => {
   reduced = true;
@@ -575,4 +517,19 @@ it("retargets immediately for every discrete Shift+wheel notch", async () => {
   await settle();
   expect(getTabTransitionFrame()).toBeNull();
   expect(useWorkbenchStore.getState().activeTabId).toBe(tabs[0]!.id);
+});
+
+it("completed momentum relinquishes DOM wheel ownership", async () => {
+  Object.assign(windowEvents, { desktopBridge });
+  await mount(1);
+  await act(() => {
+    packet("begin");
+    packet("end");
+    packet("momentum", 20);
+    packet("finish");
+  });
+  expect(
+    event(stage, "wheel", { target: viewport, deltaX: 20, deltaY: 0, shiftKey: false })
+      .defaultPrevented,
+  ).toBe(false);
 });

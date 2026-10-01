@@ -17,6 +17,18 @@ export function useTabTransition() {
   return useSyncExternalStore(subscribeTabTransition, getTabTransition, getTabTransition);
 }
 
+let directActivation = false;
+
+/** A fully aligned gesture checkpoint already has its presentation in place. */
+export function activateNavigationCheckpoint(tabId: string): void {
+  directActivation = true;
+  try {
+    useWorkbenchStore.getState().activateTab(tabId);
+  } finally {
+    directActivation = false;
+  }
+}
+
 /** Direction is intent, including when navigation wraps past the last Tab. */
 export function switchAdjacentTab(dir: -1 | 1): void {
   const store = useWorkbenchStore.getState();
@@ -40,6 +52,10 @@ export function finishTabSwitch(commit: boolean): void {
   const transition = getTabTransition();
   if (transition === null) return;
   if (commit) useWorkbenchStore.getState().activateTab(transition.toTabId);
+  // A fresh gesture can reverse a settle whose destination is already active.
+  // Align logical activation with the source before settling back to it, without
+  // letting the store observer retarget the live strip as a new click transition.
+  else activateNavigationCheckpoint(transition.fromTabId);
   animateTabTransitionTo(commit ? 1 : 0);
 }
 
@@ -55,6 +71,7 @@ export function TabTransitionController() {
         return;
       }
       if (state.activeTabId === previous.activeTabId) return;
+      if (directActivation) return;
       const inFlight = getTabTransition();
       if (inFlight?.toTabId === state.activeTabId) return;
       if (state.tabs.length <= 1 || skipAutomaticWorkbenchMotion()) {

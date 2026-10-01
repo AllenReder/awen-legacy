@@ -1,0 +1,480 @@
+import type {
+  DesktopBridge,
+  DesktopTrackpadInput,
+  DesktopPreviewPointerEvent,
+  DesktopPreviewRecordingInputEvent,
+  DesktopPreviewRecordingFrame,
+  DesktopPreviewTabState,
+  DesktopSnapShotEvent,
+  DesktopUpdateChannel,
+  WindowChromeMetrics,
+} from "@awen/contracts";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
+
+import * as IpcChannels from "./ipc/channels.ts";
+
+const SNAP_SHOT_EVENT_TYPES = new Set([
+  "requested",
+  "started",
+  "ready",
+  "failed",
+  "shortcut-changed",
+]);
+function isSnapShotEvent(value: unknown): value is DesktopSnapShotEvent {
+  if (typeof value !== "object" || value === null) return false;
+  const { type, id } = value as { type?: unknown; id?: unknown };
+  return (
+    typeof type === "string" &&
+    SNAP_SHOT_EVENT_TYPES.has(type) &&
+    (id === undefined || typeof id === "string")
+  );
+}
+
+// oxlint-disable-next-line awen/no-global-process-runtime -- Electron exposes the client platform in its sandboxed preload process.
+const clientPlatform = process.platform;
+const nativeTrackpadSupported =
+  clientPlatform === "darwin" && ipcRenderer.sendSync("desktop:get-trackpad-supported") === true;
+
+function unwrapEnsureSshEnvironmentResult(result: unknown) {
+  if (
+    typeof result === "object" &&
+    result !== null &&
+    "type" in result &&
+    result.type === IpcChannels.SSH_PASSWORD_PROMPT_CANCELLED_RESULT
+  ) {
+    const message =
+      "message" in result && typeof result.message === "string"
+        ? result.message
+        : "SSH authentication cancelled.";
+    throw new Error(`[awen-ssh-cancelled] ${message}`);
+  }
+  return result as Awaited<ReturnType<DesktopBridge["ensureSshEnvironment"]>>;
+}
+
+const daemonSsh = (operation: string, body?: unknown) =>
+  ipcRenderer.invoke("desktop:daemon-ssh", { operation, body });
+
+contextBridge.exposeInMainWorld("desktopBridge", {
+  getAppBranding: () => {
+    const result = ipcRenderer.sendSync(IpcChannels.GET_APP_BRANDING_CHANNEL);
+    if (typeof result !== "object" || result === null) {
+      return null;
+    }
+    return result as ReturnType<DesktopBridge["getAppBranding"]>;
+  },
+  getPathForFile: (file: File) => webUtils.getPathForFile(file),
+  getClientPlatform: () => clientPlatform,
+  ...(nativeTrackpadSupported
+    ? {
+        onTrackpadInput: (listener: (input: DesktopTrackpadInput) => void) => {
+          const handler = (_event: Electron.IpcRendererEvent, input: unknown) => {
+            if (typeof input !== "object" || input === null) return;
+            const packet = input as DesktopTrackpadInput;
+            if (!["begin", "update", "end", "momentum", "finish", "cancel"].includes(packet.phase))
+              return;
+            if (
+              ![
+                packet.gestureId,
+                packet.sequence,
+                packet.deltaX,
+                packet.deltaY,
+                packet.time,
+                packet.x,
+                packet.y,
+              ].every(Number.isFinite)
+            )
+              return;
+            listener(packet);
+          };
+          ipcRenderer.on("desktop:trackpad-input", handler);
+          return () => ipcRenderer.removeListener("desktop:trackpad-input", handler);
+        },
+      }
+    : {}),
+  getWindowGlassSupported: () =>
+    ipcRenderer.sendSync("desktop:get-window-glass-supported") === true,
+  setNotificationBadge: (badge) =>
+    ipcRenderer.invoke(IpcChannels.SET_NOTIFICATION_BADGE_CHANNEL, badge),
+  onNotificationBadgeClear: (listener) => {
+    const handler = () => listener();
+    ipcRenderer.on(IpcChannels.SET_NOTIFICATION_BADGE_CHANNEL, handler);
+    return () => ipcRenderer.removeListener(IpcChannels.SET_NOTIFICATION_BADGE_CHANNEL, handler);
+  },
+  onTrackpadScrollEnd: (listener: () => void) => {
+    const handler = () => listener();
+    ipcRenderer.on(IpcChannels.TRACKPAD_SCROLL_END_CHANNEL, handler);
+    return () => ipcRenderer.removeListener(IpcChannels.TRACKPAD_SCROLL_END_CHANNEL, handler);
+  },
+  onTrackpadScrollPhase: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, phase: unknown) => {
+      if (
+        phase === "began" ||
+        phase === "changed" ||
+        phase === "ended" ||
+        phase === "momentum" ||
+        phase === "cancelled"
+      )
+        listener(phase);
+    };
+    ipcRenderer.on(IpcChannels.TRACKPAD_SCROLL_PHASE_CHANNEL, handler);
+    return () => ipcRenderer.removeListener(IpcChannels.TRACKPAD_SCROLL_PHASE_CHANNEL, handler);
+  },
+  getSystemLocale: () => {
+    const result = ipcRenderer.sendSync(IpcChannels.GET_SYSTEM_LOCALE_CHANNEL);
+    return typeof result === "string" ? result : null;
+  },
+  getLocalEnvironmentBootstraps: () => {
+    const result = ipcRenderer.sendSync(IpcChannels.GET_LOCAL_ENVIRONMENT_BOOTSTRAPS_CHANNEL);
+    if (!Array.isArray(result)) {
+      return [];
+    }
+    return result as ReturnType<DesktopBridge["getLocalEnvironmentBootstraps"]>;
+  },
+  getLocalEnvironmentBearerToken: () =>
+    ipcRenderer.invoke(IpcChannels.GET_LOCAL_ENVIRONMENT_BEARER_TOKEN_CHANNEL),
+  getLocalEnvironmentEnabled: () =>
+    ipcRenderer.sendSync(IpcChannels.GET_LOCAL_ENVIRONMENT_ENABLED_CHANNEL) !== false,
+  setLocalEnvironmentEnabled: (enabled) =>
+    ipcRenderer.invoke(IpcChannels.SET_LOCAL_ENVIRONMENT_ENABLED_CHANNEL, enabled),
+  getClientSettings: () => ipcRenderer.invoke(IpcChannels.GET_CLIENT_SETTINGS_CHANNEL),
+  setClientSettings: (settings) =>
+    ipcRenderer.invoke(IpcChannels.SET_CLIENT_SETTINGS_CHANNEL, settings),
+  requestSnapShotPermissions: (includeAccessibility) =>
+    ipcRenderer.invoke(IpcChannels.REQUEST_SNAP_SHOT_PERMISSIONS_CHANNEL, includeAccessibility),
+  getSnapShotState: () => ipcRenderer.invoke(IpcChannels.GET_SNAP_SHOT_STATE_CHANNEL),
+  setupSnapShot: (action) => ipcRenderer.invoke(IpcChannels.SETUP_SNAP_SHOT_CHANNEL, action),
+  previewSnapShotConfig: (request) =>
+    ipcRenderer.invoke(IpcChannels.PREVIEW_SNAP_SHOT_CONFIG_CHANNEL, request),
+  applySnapShotConfig: (id) => ipcRenderer.invoke(IpcChannels.APPLY_SNAP_SHOT_CONFIG_CHANNEL, id),
+  checkSnapShotShortcut: (shortcut) =>
+    ipcRenderer.invoke(IpcChannels.CHECK_SNAP_SHOT_SHORTCUT_CHANNEL, shortcut),
+  setSnapShotShortcutSuppressed: (suppressed) =>
+    ipcRenderer.invoke(IpcChannels.SET_SNAP_SHOT_SHORTCUT_SUPPRESSED_CHANNEL, suppressed),
+  listPendingSnapShots: () => ipcRenderer.invoke(IpcChannels.LIST_PENDING_SNAP_SHOTS_CHANNEL),
+  readSnapShot: (id) => ipcRenderer.invoke(IpcChannels.READ_SNAP_SHOT_CHANNEL, id),
+  setSnapShotAnimationDestination: (destination) =>
+    ipcRenderer.invoke(IpcChannels.SET_SNAP_SHOT_ANIMATION_DESTINATION_CHANNEL, destination),
+  dismissSnapShotAnimation: (id) =>
+    ipcRenderer.invoke(IpcChannels.DISMISS_SNAP_SHOT_ANIMATION_CHANNEL, id),
+  acknowledgeSnapShot: (id) => ipcRenderer.invoke(IpcChannels.ACKNOWLEDGE_SNAP_SHOT_CHANNEL, id),
+  getConnectionCatalog: () => ipcRenderer.invoke(IpcChannels.GET_CONNECTION_CATALOG_CHANNEL),
+  setConnectionCatalog: (catalog) =>
+    ipcRenderer.invoke(IpcChannels.SET_CONNECTION_CATALOG_CHANNEL, catalog),
+  clearConnectionCatalog: () => ipcRenderer.invoke(IpcChannels.CLEAR_CONNECTION_CATALOG_CHANNEL),
+  discoverSshHosts: () => daemonSsh("hosts"),
+  resolveSshHost: (alias) => daemonSsh("resolve", { alias }),
+  inspectSshHostTrust: (target) => daemonSsh("trust", target),
+  inspectSshEnvironmentPlan: (target) => daemonSsh("plan", target),
+  trustSshHost: (target, keyType, fingerprint) =>
+    daemonSsh("accept", { target, keyType, fingerprint }),
+  ensureSshEnvironment: async (target, options) =>
+    unwrapEnsureSshEnvironmentResult(
+      await daemonSsh("ensure", {
+        target,
+        options: options
+          ? { issuePairingToken: options.issuePairingToken, operationId: options.operationId }
+          : undefined,
+      }),
+    ),
+  getSshEnvironmentProgress: (operationId) => daemonSsh("progress", { operationId }),
+  cancelSshEnvironment: (operationId) => daemonSsh("cancel", { operationId }),
+  disconnectSshEnvironment: (target) => daemonSsh("disconnect", target),
+  fetchSshEnvironmentDescriptor: (httpBaseUrl) => daemonSsh("descriptor", { httpBaseUrl }),
+  bootstrapSshBearerSession: (httpBaseUrl, credential) =>
+    daemonSsh("bootstrap", { httpBaseUrl, credential }),
+  fetchSshSessionState: (httpBaseUrl, bearerToken) =>
+    daemonSsh("session", { httpBaseUrl, bearerToken }),
+  issueSshWebSocketTicket: (httpBaseUrl, bearerToken) =>
+    daemonSsh("ticket", { httpBaseUrl, bearerToken }),
+  onSshPasswordPrompt: (listener) => {
+    const seen = new Set<string>();
+    let stopped = false;
+    let polling = false;
+    const poll = async () => {
+      if (stopped || polling) return;
+      polling = true;
+      try {
+        const pending = (await daemonSsh("prompts")) as Parameters<typeof listener>[0][];
+        for (const request of pending) {
+          if (!stopped && !seen.has(request.requestId)) {
+            seen.add(request.requestId);
+            listener(request);
+          }
+        }
+      } catch {
+        /* Setup reports failures; retry polling on the next interval. */
+      } finally {
+        polling = false;
+      }
+    };
+    void poll();
+    const interval = window.setInterval(() => void poll(), 250);
+    return () => {
+      stopped = true;
+      window.clearInterval(interval);
+    };
+  },
+  resolveSshPasswordPrompt: (requestId, password) =>
+    daemonSsh("resolvePrompt", { requestId, password }),
+  getServerExposureState: () => ipcRenderer.invoke(IpcChannels.GET_SERVER_EXPOSURE_STATE_CHANNEL),
+  setServerExposureMode: (mode) =>
+    ipcRenderer.invoke(IpcChannels.SET_SERVER_EXPOSURE_MODE_CHANNEL, mode),
+  setTailscaleServeEnabled: (input) =>
+    ipcRenderer.invoke(IpcChannels.SET_TAILSCALE_SERVE_ENABLED_CHANNEL, input),
+  getAdvertisedEndpoints: () => ipcRenderer.invoke(IpcChannels.GET_ADVERTISED_ENDPOINTS_CHANNEL),
+  getWslState: () => ipcRenderer.invoke(IpcChannels.GET_WSL_STATE_CHANNEL),
+  setWslBackendEnabled: (enabled) =>
+    ipcRenderer.invoke(IpcChannels.SET_WSL_BACKEND_ENABLED_CHANNEL, enabled),
+  setWslDistro: (distro) => ipcRenderer.invoke(IpcChannels.SET_WSL_DISTRO_CHANNEL, distro),
+  setWslOnly: (enabled) => ipcRenderer.invoke(IpcChannels.SET_WSL_ONLY_CHANNEL, enabled),
+  pickFolder: (options) => ipcRenderer.invoke(IpcChannels.PICK_FOLDER_CHANNEL, options),
+  pickFile: (options) => ipcRenderer.invoke(IpcChannels.PICK_FILE_CHANNEL, options),
+  pickProjectFavicon: (initialPath) =>
+    ipcRenderer.invoke(IpcChannels.PICK_PROJECT_FAVICON_CHANNEL, initialPath),
+  pickThemeFiles: () => ipcRenderer.invoke(IpcChannels.PICK_THEME_FILES_CHANNEL, undefined),
+  setTheme: (theme) => ipcRenderer.invoke(IpcChannels.SET_THEME_CHANNEL, theme),
+  showContextMenu: (items, position) =>
+    ipcRenderer.invoke(IpcChannels.CONTEXT_MENU_CHANNEL, {
+      items,
+      ...(position === undefined ? {} : { position }),
+    }),
+  openExternal: (url: string) => ipcRenderer.invoke(IpcChannels.OPEN_EXTERNAL_CHANNEL, url),
+  checkSystemPermission: (pane: string) =>
+    ipcRenderer.invoke(IpcChannels.CHECK_SYSTEM_PERMISSION_CHANNEL, pane),
+  openSystemSettings: (pane: string) =>
+    ipcRenderer.invoke(IpcChannels.OPEN_SYSTEM_SETTINGS_CHANNEL, pane),
+  probeRemoteEditors: () => ipcRenderer.invoke(IpcChannels.PROBE_REMOTE_EDITORS_CHANNEL, undefined),
+  pasteAsText: () => ipcRenderer.invoke(IpcChannels.PASTE_AS_TEXT_CHANNEL, undefined),
+  onMenuAction: (listener) => {
+    const wrappedListener = (_event: Electron.IpcRendererEvent, action: unknown) => {
+      if (typeof action !== "string") return;
+      listener(action);
+    };
+
+    ipcRenderer.on(IpcChannels.MENU_ACTION_CHANNEL, wrappedListener);
+    return () => {
+      ipcRenderer.removeListener(IpcChannels.MENU_ACTION_CHANNEL, wrappedListener);
+    };
+  },
+  onSnapShotEvent: (listener) => {
+    const wrappedListener = (_event: Electron.IpcRendererEvent, event: unknown) => {
+      if (!isSnapShotEvent(event)) return;
+      listener(event);
+    };
+
+    ipcRenderer.on(IpcChannels.SNAP_SHOT_EVENT_CHANNEL, wrappedListener);
+    return () => {
+      ipcRenderer.removeListener(IpcChannels.SNAP_SHOT_EVENT_CHANNEL, wrappedListener);
+    };
+  },
+  onQuitShortcut: (listener) => {
+    const wrappedListener = (_event: Electron.IpcRendererEvent, hint: unknown) => {
+      if (typeof hint !== "object" || hint === null || !("state" in hint)) return;
+      if (hint.state === "up") {
+        listener({ state: "up" });
+        return;
+      }
+      if (
+        hint.state === "down" &&
+        "mode" in hint &&
+        (hint.mode === "hold" || hint.mode === "double-click")
+      ) {
+        listener({ state: "down", mode: hint.mode });
+      }
+    };
+
+    ipcRenderer.on(IpcChannels.QUIT_SHORTCUT_CHANNEL, wrappedListener);
+    return () => {
+      ipcRenderer.removeListener(IpcChannels.QUIT_SHORTCUT_CHANNEL, wrappedListener);
+    };
+  },
+  getWindowChromeMetrics: () => ipcRenderer.sendSync(IpcChannels.GET_WINDOW_CHROME_METRICS_CHANNEL),
+  onWindowChromeMetricsChange: (listener) => {
+    const wrappedListener = (_event: Electron.IpcRendererEvent, value: unknown) => {
+      if (typeof value !== "object" || value === null) return;
+      const metrics = value as Partial<WindowChromeMetrics>;
+      if (
+        typeof metrics.zoomFactor !== "number" ||
+        !Number.isFinite(metrics.zoomFactor) ||
+        metrics.zoomFactor <= 0 ||
+        typeof metrics.fullscreen !== "boolean"
+      )
+        return;
+      listener({ zoomFactor: metrics.zoomFactor, fullscreen: metrics.fullscreen });
+    };
+    ipcRenderer.on(IpcChannels.WINDOW_CHROME_METRICS_CHANNEL, wrappedListener);
+    return () =>
+      ipcRenderer.removeListener(IpcChannels.WINDOW_CHROME_METRICS_CHANNEL, wrappedListener);
+  },
+  getWindowFullscreenState: () =>
+    ipcRenderer.sendSync(IpcChannels.GET_WINDOW_FULLSCREEN_STATE_CHANNEL) === true,
+  setWindowGlassEnabled: (enabled: boolean) =>
+    ipcRenderer.invoke(IpcChannels.SET_WINDOW_GLASS_ENABLED_CHANNEL, enabled),
+  onWindowFullscreenStateChange: (listener) => {
+    const wrappedListener = (_event: Electron.IpcRendererEvent, fullscreen: unknown) => {
+      if (typeof fullscreen !== "boolean") return;
+      listener(fullscreen);
+    };
+
+    ipcRenderer.on(IpcChannels.WINDOW_FULLSCREEN_STATE_CHANNEL, wrappedListener);
+    return () => {
+      ipcRenderer.removeListener(IpcChannels.WINDOW_FULLSCREEN_STATE_CHANNEL, wrappedListener);
+    };
+  },
+  getUpdateState: () => ipcRenderer.invoke(IpcChannels.UPDATE_GET_STATE_CHANNEL),
+  setUpdateChannel: (channel: DesktopUpdateChannel) =>
+    ipcRenderer.invoke(IpcChannels.UPDATE_SET_CHANNEL_CHANNEL, channel),
+  checkForUpdate: () => ipcRenderer.invoke(IpcChannels.UPDATE_CHECK_CHANNEL),
+  onUpdateState: (listener) => {
+    const wrappedListener = (_event: Electron.IpcRendererEvent, state: unknown) => {
+      if (typeof state !== "object" || state === null) return;
+      listener(state as Parameters<typeof listener>[0]);
+    };
+
+    ipcRenderer.on(IpcChannels.UPDATE_STATE_CHANNEL, wrappedListener);
+    return () => {
+      ipcRenderer.removeListener(IpcChannels.UPDATE_STATE_CHANNEL, wrappedListener);
+    };
+  },
+  appActivation: {
+    setReady: (ready) =>
+      ipcRenderer.invoke(IpcChannels.DESKTOP_APP_ACTIVATION_READY_CHANNEL, ready),
+    complete: (response) =>
+      ipcRenderer.invoke(IpcChannels.DESKTOP_APP_ACTIVATION_COMPLETE_CHANNEL, response),
+    onRequest: (listener) => {
+      const wrappedListener = (_event: Electron.IpcRendererEvent, request: unknown) => {
+        if (typeof request !== "object" || request === null) return;
+        listener(request as Parameters<typeof listener>[0]);
+      };
+      ipcRenderer.on(IpcChannels.DESKTOP_APP_ACTIVATION_REQUEST_CHANNEL, wrappedListener);
+      return () => {
+        ipcRenderer.removeListener(
+          IpcChannels.DESKTOP_APP_ACTIVATION_REQUEST_CHANNEL,
+          wrappedListener,
+        );
+      };
+    },
+  },
+  preview: {
+    createTab: (tabId, defaults) =>
+      ipcRenderer.invoke(IpcChannels.PREVIEW_CREATE_TAB_CHANNEL, {
+        tabId,
+        zoomFactor: defaults?.zoomFactor,
+        colorScheme: defaults?.colorScheme,
+      }),
+    closeTab: (tabId) => ipcRenderer.invoke(IpcChannels.PREVIEW_CLOSE_TAB_CHANNEL, { tabId }),
+    registerWebview: (tabId, webContentsId) =>
+      ipcRenderer.invoke(IpcChannels.PREVIEW_REGISTER_WEBVIEW_CHANNEL, { tabId, webContentsId }),
+    navigate: (tabId, url) =>
+      ipcRenderer.invoke(IpcChannels.PREVIEW_NAVIGATE_CHANNEL, { tabId, url }),
+    goBack: (tabId) => ipcRenderer.invoke(IpcChannels.PREVIEW_GO_BACK_CHANNEL, { tabId }),
+    goForward: (tabId) => ipcRenderer.invoke(IpcChannels.PREVIEW_GO_FORWARD_CHANNEL, { tabId }),
+    refresh: (tabId) => ipcRenderer.invoke(IpcChannels.PREVIEW_REFRESH_CHANNEL, { tabId }),
+    zoomIn: (tabId) => ipcRenderer.invoke(IpcChannels.PREVIEW_ZOOM_IN_CHANNEL, { tabId }),
+    zoomOut: (tabId) => ipcRenderer.invoke(IpcChannels.PREVIEW_ZOOM_OUT_CHANNEL, { tabId }),
+    resetZoom: (tabId) => ipcRenderer.invoke(IpcChannels.PREVIEW_RESET_ZOOM_CHANNEL, { tabId }),
+    hardReload: (tabId) => ipcRenderer.invoke(IpcChannels.PREVIEW_HARD_RELOAD_CHANNEL, { tabId }),
+    setColorScheme: (tabId, colorScheme) =>
+      ipcRenderer.invoke(IpcChannels.PREVIEW_SET_COLOR_SCHEME_CHANNEL, { tabId, colorScheme }),
+    setAudioMuted: (tabId, audioMuted) =>
+      ipcRenderer.invoke(IpcChannels.PREVIEW_SET_AUDIO_MUTED_CHANNEL, { tabId, audioMuted }),
+    openDevTools: (tabId) =>
+      ipcRenderer.invoke(IpcChannels.PREVIEW_OPEN_DEVTOOLS_CHANNEL, { tabId }),
+    listBrowserImportSources: () => ipcRenderer.invoke(IpcChannels.PREVIEW_IMPORT_SOURCES_CHANNEL),
+    importBrowserCookies: (input) =>
+      ipcRenderer.invoke(IpcChannels.PREVIEW_IMPORT_COOKIES_CHANNEL, input),
+    clearCookies: (environmentId, profileId) =>
+      ipcRenderer.invoke(IpcChannels.PREVIEW_CLEAR_COOKIES_CHANNEL, { environmentId, profileId }),
+    clearCache: (environmentId, profileId) =>
+      ipcRenderer.invoke(IpcChannels.PREVIEW_CLEAR_CACHE_CHANNEL, { environmentId, profileId }),
+    getPreviewConfig: (environmentId, profileId) =>
+      ipcRenderer.invoke(IpcChannels.PREVIEW_GET_CONFIG_CHANNEL, { environmentId, profileId }),
+    setAnnotationTheme: (theme) =>
+      ipcRenderer.invoke(IpcChannels.PREVIEW_SET_ANNOTATION_THEME_CHANNEL, { theme }),
+    pickElement: (tabId) => ipcRenderer.invoke(IpcChannels.PREVIEW_PICK_ELEMENT_CHANNEL, { tabId }),
+    cancelPickElement: (tabId) =>
+      ipcRenderer.invoke(IpcChannels.PREVIEW_CANCEL_PICK_ELEMENT_CHANNEL, { tabId }),
+    captureScreenshot: (tabId) =>
+      ipcRenderer.invoke(IpcChannels.PREVIEW_CAPTURE_SCREENSHOT_CHANNEL, { tabId }),
+    revealArtifact: (path) =>
+      ipcRenderer.invoke(IpcChannels.PREVIEW_REVEAL_ARTIFACT_CHANNEL, { path }),
+    copyArtifactToClipboard: (path) =>
+      ipcRenderer.invoke(IpcChannels.PREVIEW_COPY_ARTIFACT_CHANNEL, { path }),
+    pictureInPicture: {
+      open: (tabId) =>
+        ipcRenderer.invoke(IpcChannels.PREVIEW_PICTURE_IN_PICTURE_OPEN_CHANNEL, { tabId }),
+      close: (tabId) =>
+        ipcRenderer.invoke(IpcChannels.PREVIEW_PICTURE_IN_PICTURE_CLOSE_CHANNEL, { tabId }),
+    },
+    recording: {
+      onInput: (listener: (event: DesktopPreviewRecordingInputEvent) => void) => {
+        const wrappedListener = (_event: Electron.IpcRendererEvent, event: unknown) => {
+          if (typeof event !== "object" || event === null) return;
+          listener(event as DesktopPreviewRecordingInputEvent);
+        };
+        ipcRenderer.on(IpcChannels.PREVIEW_RECORDING_INPUT_CHANNEL, wrappedListener);
+        return () =>
+          ipcRenderer.removeListener(IpcChannels.PREVIEW_RECORDING_INPUT_CHANNEL, wrappedListener);
+      },
+      startScreencast: (tabId) =>
+        ipcRenderer.invoke(IpcChannels.PREVIEW_RECORDING_START_CHANNEL, { tabId }),
+      stopScreencast: (tabId) =>
+        ipcRenderer.invoke(IpcChannels.PREVIEW_RECORDING_STOP_CHANNEL, { tabId }),
+      save: (tabId, mimeType, data) =>
+        ipcRenderer.invoke(IpcChannels.PREVIEW_RECORDING_SAVE_CHANNEL, {
+          tabId,
+          mimeType,
+          data,
+        }),
+      onFrame: (listener: (frame: DesktopPreviewRecordingFrame) => void) => {
+        const wrappedListener = (_event: Electron.IpcRendererEvent, frame: unknown) => {
+          if (typeof frame !== "object" || frame === null) return;
+          listener(frame as DesktopPreviewRecordingFrame);
+        };
+        ipcRenderer.on(IpcChannels.PREVIEW_RECORDING_FRAME_CHANNEL, wrappedListener);
+        return () =>
+          ipcRenderer.removeListener(IpcChannels.PREVIEW_RECORDING_FRAME_CHANNEL, wrappedListener);
+      },
+    },
+    automation: {
+      status: (tabId) =>
+        ipcRenderer.invoke(IpcChannels.PREVIEW_AUTOMATION_STATUS_CHANNEL, { tabId }),
+      snapshot: (tabId) =>
+        ipcRenderer.invoke(IpcChannels.PREVIEW_AUTOMATION_SNAPSHOT_CHANNEL, { tabId }),
+      click: (tabId, input) =>
+        ipcRenderer.invoke(IpcChannels.PREVIEW_AUTOMATION_CLICK_CHANNEL, { tabId, input }),
+      type: (tabId, input) =>
+        ipcRenderer.invoke(IpcChannels.PREVIEW_AUTOMATION_TYPE_CHANNEL, { tabId, input }),
+      press: (tabId, input) =>
+        ipcRenderer.invoke(IpcChannels.PREVIEW_AUTOMATION_PRESS_CHANNEL, { tabId, input }),
+      scroll: (tabId, input) =>
+        ipcRenderer.invoke(IpcChannels.PREVIEW_AUTOMATION_SCROLL_CHANNEL, { tabId, input }),
+      evaluate: (tabId, input) =>
+        ipcRenderer.invoke(IpcChannels.PREVIEW_AUTOMATION_EVALUATE_CHANNEL, { tabId, input }),
+      waitFor: (tabId, input) =>
+        ipcRenderer.invoke(IpcChannels.PREVIEW_AUTOMATION_WAIT_FOR_CHANNEL, { tabId, input }),
+    },
+    onStateChange: (listener) => {
+      const wrappedListener = (
+        _event: Electron.IpcRendererEvent,
+        tabId: unknown,
+        state: unknown,
+      ) => {
+        if (typeof tabId !== "string" || typeof state !== "object" || state === null) return;
+        listener(tabId, state as DesktopPreviewTabState);
+      };
+      ipcRenderer.on(IpcChannels.PREVIEW_STATE_CHANGE_CHANNEL, wrappedListener);
+      return () =>
+        ipcRenderer.removeListener(IpcChannels.PREVIEW_STATE_CHANGE_CHANNEL, wrappedListener);
+    },
+    onPointerEvent: (listener) => {
+      const wrappedListener = (_event: Electron.IpcRendererEvent, pointerEvent: unknown) => {
+        if (typeof pointerEvent !== "object" || pointerEvent === null) return;
+        listener(pointerEvent as DesktopPreviewPointerEvent);
+      };
+      ipcRenderer.on(IpcChannels.PREVIEW_POINTER_EVENT_CHANNEL, wrappedListener);
+      return () =>
+        ipcRenderer.removeListener(IpcChannels.PREVIEW_POINTER_EVENT_CHANNEL, wrappedListener);
+    },
+  },
+} satisfies DesktopBridge);

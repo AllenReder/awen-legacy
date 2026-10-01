@@ -162,7 +162,7 @@ type SshEnvironmentEffectContext =
   | NetService.NetService
   | SshPasswordPrompt;
 
-type SshEnvironmentEffectError =
+export type SshEnvironmentEffectError =
   | SshCommandError
   | SshInvalidTargetError
   | SshLaunchError

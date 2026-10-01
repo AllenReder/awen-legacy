@@ -2,17 +2,17 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { createHashHistory, createBrowserHistory } from "@tanstack/react-router";
 
-import { tauriDesktopBridgeReady } from "./desktop/tauriBridge";
 import "./index.css";
 
 import { isDesktop, isElectron } from "./env";
 import { getRouter } from "./router";
-import {
-  syncDocumentElectronPlatformClasses,
-  syncDocumentWindowControlsOverlayClass,
-} from "./lib/windowControlsOverlay";
+import { syncDocumentWindowControlsOverlayClass } from "./lib/windowControlsOverlay";
+import { initializeWindowChrome } from "./lib/windowChrome";
 import { AppRoot } from "./AppRoot";
 import { clearChunkReloadGuard, reloadOnceForChunkLoadError } from "./lib/chunkReloadGuard";
+
+const disposeWindowChrome = initializeWindowChrome();
+import.meta.hot?.dispose(disposeWindowChrome);
 
 // Native shells load the app from a file-backed asset protocol, so hash
 // history avoids path resolution issues. Browser dev keeps normal URLs.
@@ -21,7 +21,6 @@ const history = isDesktop ? createHashHistory() : createBrowserHistory();
 const router = getRouter(history);
 
 if (isElectron) {
-  syncDocumentElectronPlatformClasses(navigator.platform);
   syncDocumentWindowControlsOverlayClass();
 }
 
@@ -44,8 +43,8 @@ const app = <AppRoot router={router} />;
 // managed-auth runtime and the initial route's split chunks, before
 // rendering, so the splash holds until real UI paints instead of dropping to
 // a blank window while chunks download.
-export const startup = tauriDesktopBridgeReady
-  .then(() => router.load())
+export const startup = router
+  .load()
   .then(() => {
     // A route chunk failure still resolves router.load(): the error is parked in
     // the lazy component and surfaces through the route error boundary. Skip the

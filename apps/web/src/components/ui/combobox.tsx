@@ -193,7 +193,7 @@ function ComboboxPopup({
       >
         <span
           className={cn(
-            "relative isolate flex max-h-full min-w-(--anchor-width) max-w-(--available-width) origin-(--transform-origin) overflow-hidden rounded-lg border shadow-[0_16px_40px_-18px_rgb(0_0_0/55%)] dark:shadow-[0_18px_44px_-18px_rgb(0_0_0/80%)]",
+            "overlay-frame relative isolate flex max-h-full min-w-(--anchor-width) max-w-(--available-width) origin-(--transform-origin) overflow-hidden rounded-lg border",
             className,
           )}
         >

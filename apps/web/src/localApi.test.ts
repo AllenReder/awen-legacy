@@ -70,6 +70,34 @@ afterEach(() => {
 });
 
 describe("LocalApi", () => {
+  it.each([false, true])(
+    "keeps draggable menu items in the renderer (nested: %s)",
+    async (nested) => {
+      const onPointerDown = vi.fn();
+      const item = { id: "file-view", label: "Browse Files", onPointerDown };
+      const items = nested ? [{ id: "views", label: "Views", children: [item] }] : [item];
+      const showContextMenu = vi.fn(async (payload) => {
+        structuredClone(payload);
+        return null;
+      });
+      testWindow().desktopBridge = { showContextMenu } as unknown as DesktopBridge;
+      showContextMenuFallbackMock.mockResolvedValue("file-view");
+      const { createLocalApi } = await import("./localApi");
+      await expect(createLocalApi().contextMenu.show(items, { x: 4, y: 5 })).resolves.toBe(
+        "file-view",
+      );
+      expect(showContextMenuFallbackMock).toHaveBeenCalledWith(items, { x: 4, y: 5 });
+      expect(showContextMenu).not.toHaveBeenCalled();
+    },
+  );
+
+  it("dismisses renderer menus on desktop when dragging begins", async () => {
+    testWindow().desktopBridge = {} as DesktopBridge;
+    const { createLocalApi } = await import("./localApi");
+    await createLocalApi().contextMenu.close();
+    expect(dismissContextMenuMock).toHaveBeenCalledOnce();
+  });
+
   it("keeps backend operations out of the local host facade", async () => {
     const { createLocalApi } = await import("./localApi");
     const api = createLocalApi();
@@ -136,6 +164,7 @@ describe("LocalApi", () => {
     const { createLocalApi } = await import("./localApi");
     const api = createLocalApi();
     const items = [{ id: "delete", label: "Delete" }] as const;
+    showContextMenuFallbackMock.mockResolvedValue("delete");
 
     await expect(api.contextMenu.show(items)).resolves.toBe("delete");
     requestConfirmDialogMock.mockReturnValue(undefined);
@@ -144,7 +173,8 @@ describe("LocalApi", () => {
     await expect(api.persistence.getClientSettings()).resolves.toEqual(DEFAULT_CLIENT_SETTINGS);
     await api.persistence.setClientSettings(DEFAULT_CLIENT_SETTINGS);
 
-    expect(showContextMenu).toHaveBeenCalledWith(items, undefined);
+    expect(showContextMenuFallbackMock).toHaveBeenCalledWith(items, undefined);
+    expect(showContextMenu).not.toHaveBeenCalled();
     expect(pickFolder).toHaveBeenCalledWith({ initialPath: "/tmp" });
     expect(getClientSettings).toHaveBeenCalledTimes(1);
     expect(setClientSettings).toHaveBeenCalledWith(DEFAULT_CLIENT_SETTINGS);

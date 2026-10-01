@@ -14,6 +14,7 @@ import {
   OrchestrationSession,
   OrchestrationThread,
   WORKTREE_SETUP_ACTIVITY_KIND,
+  FILE_RESTORE_DISABLED_ACTIVITY_KIND,
 } from "@awen/contracts";
 import {
   legacyLinkedPullRequestOf,
@@ -86,7 +87,8 @@ function retainThreadActivities(activities: OrchestrationThread["activities"]) {
       // The worktree setup record is upserted under one id for the thread's
       // whole life and is the only durable copy of a running setup; an async
       // setup script can outlast a chatty first turn.
-      activity.kind === WORKTREE_SETUP_ACTIVITY_KIND,
+      activity.kind === WORKTREE_SETUP_ACTIVITY_KIND ||
+      activity.kind === FILE_RESTORE_DISABLED_ACTIVITY_KIND,
   );
 }
 

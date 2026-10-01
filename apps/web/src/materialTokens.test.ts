@@ -28,7 +28,9 @@ describe("opaque material tokens", () => {
     expect(tokenBlock).toMatch(/--material-opaque-stage:\s*color-mix\(/);
     expect(tokenBlock).toMatch(/--material-opaque-edge:\s*color-mix\(/);
 
-    for (const [surface, token] of Object.entries(OPAQUE_SURFACE_TOKENS)) {
+    for (const [surface, token] of Object.entries(OPAQUE_SURFACE_TOKENS).filter(
+      ([surface]) => surface !== "overlay",
+    )) {
       expect(css).toMatch(
         new RegExp(
           `html\\.material-stage-opaque\\s+\\.material-surface-${surface}\\s*\\{[^}]*background:\\s*var\\(${token}\\)`,
@@ -42,26 +44,24 @@ describe("opaque material tokens", () => {
     );
   });
 });
-describe("Windows overlay material fallback", () => {
-  it("replaces unsupported backdrop blur with a distinct elevated material", async () => {
+describe("shared overlay material", () => {
+  it("blurs in-window content independently of native window translucency", async () => {
     const css = await NodeFSP.readFile(new URL("./index.css", import.meta.url), "utf8");
-    const start = css.indexOf("html.material-stage-windows .material-surface-overlay {");
-    const end = css.indexOf("/* Native compositor blur", start);
-    expect(
-      start,
-      "Windows overlay fallback must follow the shared overlay material",
-    ).toBeGreaterThan(-1);
-    expect(end, "Windows overlay fallback must be bounded by the opaque fallback").toBeGreaterThan(
-      start,
+    const block = css.slice(
+      css.indexOf(".material-surface-overlay {"),
+      css.indexOf("/* Native compositor blur"),
     );
-    const block = css.slice(start, end);
-
-    expect(block).toMatch(/-webkit-backdrop-filter:\s*none;/);
-    expect(block).toMatch(/backdrop-filter:\s*none;/);
-    expect(block).toMatch(/background-image:\s*[^;]*linear-gradient/s);
-    expect(block).toMatch(/var\(--surface-grain\)/);
-    expect(block).toMatch(/border:\s*1px solid color-mix\(/);
-    expect(block).toMatch(/box-shadow:\s*[^;]+;/s);
+    expect(block).toMatch(/backdrop-filter:\s*blur\(var\(--glass-blur\)\)/);
+    expect(block).toMatch(/var\(--overlay-film-opacity, 0.05\)/);
+    const roles = css.slice(
+      css.indexOf("/* Material roles derive"),
+      css.indexOf("/* System accessibility"),
+    );
+    expect(roles.match(/--overlay-film-opacity:/g)).toHaveLength(1);
+    expect(roles).toMatch(/--overlay-film-opacity:\s*var\(--material-overlay-opacity, 0\.05\)/);
+    expect(css).not.toContain("--material-overlay-glass-opacity");
+    expect(css).not.toMatch(/html\.material-stage-windows \.material-surface-overlay/);
+    expect(css).not.toMatch(/html\.material-stage-opaque \.material-surface-overlay\s*\{/);
   });
 });
 

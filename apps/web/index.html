@@ -377,17 +377,7 @@
               : isDark
                 ? DARK_BACKGROUND
                 : LIGHT_BACKGROUND;
-          if (
-            window.location?.port === "5733" ||
-            window.location?.protocol === "tauri:" ||
-            "__TAURI_INTERNALS__" in window ||
-            "isTauri" in window
-          ) {
-            document.documentElement.classList.add("material-stage-native");
-            document.documentElement.style.backgroundColor = "transparent";
-          } else {
-            document.documentElement.style.backgroundColor = chromeColor;
-          }
+          document.documentElement.style.backgroundColor = chromeColor;
           if (hasSelection) {
             const splashColors = customSplash ?? builtInSplash ?? fallbackSplash;
             for (const [name, value] of Object.entries(splashColors)) {

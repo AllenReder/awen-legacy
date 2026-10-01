@@ -4,7 +4,6 @@ import { useCanGoBack, useLocation, useNavigate, useRouter } from "@tanstack/rea
 
 import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
 import { isMacPlatform } from "../../lib/utils";
-import { DOCK_LEFT_MAC, DOCK_LEFT_WIN, EXPANDED_ACTION_RIGHT_OFFSET } from "./sidebarGeometry";
 import {
   resolveEnvironmentIdentificationPillLabel,
   useEnvironmentStageLabel,
@@ -13,7 +12,7 @@ import { Badge } from "../ui/badge";
 import { SidebarFooter, SidebarHeader, useSidebar } from "../ui/sidebar";
 import { SidebarProviderUpdatePill } from "./SidebarProviderUpdatePill";
 import { SidebarTitlebarButton } from "./SidebarTitlebarControl";
-import { SidebarUpdateArchitectureWarning, SidebarUpdatePill } from "./SidebarUpdatePill";
+import { SidebarUpdateArchitectureWarning } from "./SidebarUpdatePill";
 
 export interface SidebarChromeHeaderProps {
   readonly mode?: "main" | "settings";
@@ -26,21 +25,18 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader() {
     environmentIdentificationMode === "pill"
       ? resolveEnvironmentIdentificationPillLabel(stageLabel)
       : null;
-  const isMac = typeof navigator !== "undefined" && isMacPlatform(navigator.platform);
 
   return (
     <SidebarHeader
-      className="drag-region flex h-[var(--workbench-titlebar-height,36px)] shrink-0 flex-row items-center bg-transparent p-0"
+      className="drag-region flex h-[var(--workspace-topbar-height)] shrink-0 flex-row items-center bg-transparent p-0"
       data-sidebar-header=""
       style={{
-        paddingLeft: isMac
-          ? "var(--sidebar-controls-left, 76px)"
-          : "var(--sidebar-controls-left-win, 12px)",
-        paddingRight: "var(--sidebar-controls-right, 12px)",
+        paddingLeft: "var(--sidebar-trigger-left)",
+        paddingRight: "calc(var(--sidebar-action-right-gap) - var(--sidebar-edge-width))",
       }}
     >
       <div
-        className="size-7 shrink-0 pointer-events-none"
+        className="size-[var(--workspace-titlebar-control-size)] shrink-0 pointer-events-none"
         data-slot="sidebar-header-toggle-placeholder"
         data-testid="sidebar-toggle-placeholder"
       />
@@ -56,7 +52,7 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader() {
       ) : null}
       <div className="flex-1 min-w-0 h-full pointer-events-none" />
       <div
-        className="size-7 shrink-0 pointer-events-none"
+        className="size-[var(--workspace-titlebar-control-size)] shrink-0 pointer-events-none"
         data-slot="sidebar-header-action-placeholder"
         data-testid="sidebar-action-placeholder"
       />
@@ -103,12 +99,13 @@ export function SidebarActionControl({
     void navigate({ to: "/" });
   }, [canGoBack, navigate]);
 
-  const dockLeft = `${isMac ? DOCK_LEFT_MAC : DOCK_LEFT_WIN}px`;
-  const expandedLeft = `calc(var(--sidebar-width) - ${EXPANDED_ACTION_RIGHT_OFFSET}px)`;
+  const dockLeft = "var(--sidebar-collapsed-action-left)";
+  const expandedLeft =
+    "calc(var(--sidebar-width) - var(--workspace-titlebar-control-size) - var(--sidebar-action-right-gap))";
 
   return (
     <div
-      className="pointer-events-none fixed top-0 z-50 flex h-[var(--workbench-titlebar-height,36px)] items-center [-webkit-app-region:no-drag]"
+      className="pointer-events-none fixed top-0 z-50 flex h-[var(--workspace-topbar-height)] items-center [-webkit-app-region:no-drag]"
       data-sidebar-action-control=""
       style={{
         left: `var(--sidebar-motion-action-left, ${open ? expandedLeft : dockLeft})`,
@@ -147,7 +144,6 @@ export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
     >
       <SidebarProviderUpdatePill />
       <SidebarUpdateArchitectureWarning />
-      <SidebarUpdatePill />
     </SidebarFooter>
   );
 });

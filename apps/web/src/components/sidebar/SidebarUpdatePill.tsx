@@ -5,21 +5,17 @@ import { flushSync } from "react-dom";
 import { isElectron } from "../../env";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import { cn } from "../../lib/utils";
-import { ensureLocalApi } from "../../localApi";
 import { useDesktopUpdateState } from "../../state/desktopUpdate";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import {
   canCheckForUpdate,
   getArm64IntelBuildWarningDescription,
-  getDesktopUpdateActionError,
   getDesktopUpdateButtonTooltip,
-  getDesktopUpdateInstallConfirmationMessage,
   isDesktopUpdateButtonDisabled,
   resolveDesktopUpdateButtonAction,
   shouldShowArm64IntelBuildWarning,
-  shouldToastDesktopUpdateActionResult,
 } from "../desktopUpdate.logic";
-import { showDesktopUpdateDownloadedToast } from "../desktopUpdate.toast";
+import { openDesktopUpdateReleaseNotes } from "../desktopUpdate.toast";
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { Popover, PopoverCreateHandle, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { SidebarMenuItem } from "../ui/sidebar";
@@ -63,26 +59,14 @@ export function openSidebarUpdateReleaseNotesPopoverOnForwardTab(
 
 function resolveSidebarUpdatePresentation({
   action,
-  isDownloading,
   showCheckIcon,
 }: {
   readonly action: ReturnType<typeof resolveDesktopUpdateButtonAction>;
-  readonly isDownloading: boolean;
   readonly showCheckIcon: boolean;
 }) {
-  const showUpdateDetails = action !== "none" || isDownloading;
-  const iconStatus = showCheckIcon
-    ? "checking"
-    : action === "install"
-      ? "downloaded"
-      : isDownloading
-        ? "downloading"
-        : action === "download"
-          ? "available"
-          : "idle";
-
+  const showUpdateDetails = action === "release";
   return {
-    iconStatus,
+    iconStatus: showCheckIcon ? "checking" : showUpdateDetails ? "available" : "idle",
     showUpdateDetails,
     showUpdateIconState: showUpdateDetails && !showCheckIcon,
   } as const;
@@ -132,7 +116,6 @@ function SidebarUpdateControl() {
   }, [prefersReducedMotion, state?.status]);
 
   const action = state ? resolveDesktopUpdateButtonAction(state) : "none";
-  const isDownloading = state?.status === "downloading";
   const showCheckIcon = shouldShowDesktopUpdateCheckIcon({
     isAnimationLatched: isCheckAnimationLatched,
     isChecking: state?.status === "checking",
@@ -140,7 +123,6 @@ function SidebarUpdateControl() {
   });
   const { iconStatus, showUpdateDetails, showUpdateIconState } = resolveSidebarUpdatePresentation({
     action,
-    isDownloading,
     showCheckIcon,
   });
   const tooltip = showUpdateDetails
@@ -180,82 +162,12 @@ function SidebarUpdateControl() {
 
     setIsActionPending(true);
 
-    if (action === "download") {
-      void bridge
-        .downloadUpdate()
-        .then((result) => {
-          if (result.completed) {
-            showDesktopUpdateDownloadedToast(bridge, result.state);
-          }
-          if (!shouldToastDesktopUpdateActionResult(result)) return;
-          const actionError = getDesktopUpdateActionError(result);
-          if (!actionError) return;
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: "Could not download update",
-              description: actionError,
-            }),
-          );
-        })
-        .catch((error) => {
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: "Could not start update download",
-              description: error instanceof Error ? error.message : "An unexpected error occurred.",
-            }),
-          );
-        })
-        .finally(() => setIsActionPending(false));
-      return;
-    }
-
-    if (action === "install") {
-      let confirmed = false;
+    if (action === "release" && state.releaseUrl) {
       try {
-        confirmed = await ensureLocalApi().dialogs.confirm(
-          getDesktopUpdateInstallConfirmationMessage(state),
-        );
-      } catch (error) {
+        await openDesktopUpdateReleaseNotes(bridge, state.releaseUrl);
+      } finally {
         setIsActionPending(false);
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Could not confirm update",
-            description: error instanceof Error ? error.message : "Update confirmation failed.",
-          }),
-        );
-        return;
       }
-      if (!confirmed) {
-        setIsActionPending(false);
-        return;
-      }
-      void bridge
-        .installUpdate()
-        .then((result) => {
-          if (!shouldToastDesktopUpdateActionResult(result)) return;
-          const actionError = getDesktopUpdateActionError(result);
-          if (!actionError) return;
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: "Could not install update",
-              description: actionError,
-            }),
-          );
-        })
-        .catch((error) => {
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: "Could not install update",
-              description: error instanceof Error ? error.message : "An unexpected error occurred.",
-            }),
-          );
-        })
-        .finally(() => setIsActionPending(false));
       return;
     }
 
@@ -271,8 +183,7 @@ function SidebarUpdateControl() {
           stackedThreadToast({
             type: "error",
             title: "Could not check for updates",
-            description:
-              result.state.message ?? "Automatic updates are not available in this build.",
+            description: result.state.message ?? "Version checks are not available in this build.",
           }),
         );
       })
@@ -339,7 +250,6 @@ function SidebarUpdateControl() {
     >
       <DesktopUpdateStatusIcon
         key={showCheckIcon ? checkAnimationKey : iconStatus}
-        downloadPercent={state?.downloadPercent ?? null}
         isCheckAnimating={showCheckIcon && !prefersReducedMotion}
         onCheckAnimationIteration={handleCheckAnimationIteration}
         status={iconStatus}

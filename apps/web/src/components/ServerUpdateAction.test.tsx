@@ -133,35 +133,6 @@ describe("ServerUpdateAction", () => {
     expect(markup).not.toContain("<button");
   });
 
-  it("updates remote desktop apps through the shared update flow", async () => {
-    testState.updateServer.mockResolvedValue(
-      AsyncResult.success({ targetVersion: "0.0.34", method: "desktop-app" as const }),
-    );
-
-    const action = ServerUpdateAction({
-      environmentId: "env-test" as EnvironmentId,
-      serverLabel: "Test server",
-      selfUpdate: "desktop-managed",
-      desktopAppUpdate: true,
-      targetVersion: "0.0.31",
-    }) as ActionElement;
-
-    // No confirm-dialog host is mounted in this test, which the component
-    // treats as consent: the click itself was the request.
-    action.props.onClick?.();
-    await flushPromises();
-
-    expect(testState.updateServer).toHaveBeenCalledWith({
-      environmentId: "env-test",
-      input: { targetVersion: "0.0.31" },
-    });
-    expect(testState.toast).toHaveBeenCalledWith({
-      type: "success",
-      title: "Test server updated",
-      description: "Desktop app relaunched on 0.0.34.",
-    });
-  });
-
   it("leaves thread continuation off by default", async () => {
     testState.updateServer.mockResolvedValue(
       AsyncResult.success({ targetVersion: "0.0.31", method: "boot-service" as const }),
@@ -323,33 +294,6 @@ describe("ServerUpdatesAction", () => {
     expect(testState.toast).toHaveBeenCalledTimes(2);
   });
 
-  it("asks once for desktop machines and cancels the entire batch", async () => {
-    registerConfirmDialogHost();
-    const button = await mount(
-      targets.map((target, index) =>
-        index < 2 ? { ...target, selfUpdate: "desktop-managed", desktopAppUpdate: true } : target,
-      ),
-    );
-    await act(async () => {
-      button.props.onClick();
-    });
-    const confirmation = readConfirmDialogState();
-    expect(confirmation).toEqual(
-      expect.objectContaining({
-        status: "confirming",
-        message: expect.stringContaining("Laptop, Office"),
-      }),
-    );
-    expect(testState.updateServer).not.toHaveBeenCalled();
-    await act(async () => {
-      respondToConfirmDialog(false);
-    });
-    expect(testState.updateServer).not.toHaveBeenCalled();
-    expect(button.props.disabled).toBe(false);
-  });
-});
-
-describe("ServerUpdateProgress", () => {
   it("shows one calm status row for the restart wait", () => {
     const markup = renderToStaticMarkup(
       <ServerUpdateProgress

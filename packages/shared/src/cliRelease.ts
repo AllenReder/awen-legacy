@@ -1,6 +1,6 @@
 /** Shared naming and release lookup for the published Linux x64 daemon runtime. */
 
-const RELEASE_REPOSITORY = "AllenReder/awen";
+export const RELEASE_REPOSITORY = "AllenReder/awen";
 export const CLI_RELEASE_CHECKSUMS_FILE = "SHA256SUMS";
 export const CLI_RELEASE_BASE_URL_ENV = "AWEN_SERVER_RELEASE_BASE_URL";
 
@@ -32,6 +32,10 @@ const RELEASE_TAG_VERSION = new RegExp(
   `^v(${SEMVER_CORE}\\.${SEMVER_CORE}\\.${SEMVER_CORE}(?:-${SEMVER_PRERELEASE_IDENTIFIER}(?:\\.${SEMVER_PRERELEASE_IDENTIFIER})*)?)$`,
   "u",
 );
+
+export function parseReleaseTagVersion(tag: string): string | undefined {
+  return RELEASE_TAG_VERSION.exec(tag)?.[1];
+}
 
 export function cliReleaseDownloadBaseUrl(
   version: string,

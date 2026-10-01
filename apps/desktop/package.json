@@ -2,16 +2,124 @@
   "name": "@awen/desktop",
   "version": "0.1.0-alpha.3",
   "private": true,
+  "description": "Awen coding workbench",
+  "author": "AllenReder",
   "type": "module",
+  "main": "dist-electron/boot.cjs",
   "scripts": {
-    "dev": "node scripts/run-tauri.mjs dev",
-    "dev:app": "node scripts/run-tauri.mjs dev",
-    "build:app": "node scripts/run-tauri-dev-app.mjs",
-    "build": "node scripts/run-tauri.mjs build",
-    "tauri": "tauri",
-    "check": "node scripts/run-tauri.mjs info"
+    "ensure:electron": "node scripts/ensure-electron-runtime.mjs",
+    "start": "node scripts/start-electron.mjs",
+    "build:bundle": "node scripts/build-trackpad.mjs && node scripts/build-preview-annotation-css.mjs && vp pack",
+    "package": "electron-builder",
+    "typecheck": "tsc --noEmit",
+    "test": "vp test run",
+    "smoke-test": "node scripts/smoke-test.mjs",
+    "check:appearance": "node scripts/check-renderer-appearance.mjs",
+    "check:chrome": "node scripts/check-renderer-appearance.mjs --chrome-only"
+  },
+  "dependencies": {
+    "@awen/client-runtime": "workspace:*",
+    "@awen/contracts": "workspace:*",
+    "@awen/shared": "workspace:*",
+    "@awen/ssh": "workspace:*",
+    "@awen/tailscale": "workspace:*",
+    "@crowecawcaw/xa11y": "0.13.0",
+    "@effect/platform-node": "catalog:",
+    "@napi-rs/keyring": "^1.3.0",
+    "dbus-next": "0.10.2",
+    "effect": "catalog:",
+    "electron-store": "^8.2.0",
+    "ffi-rs": "1.3.2",
+    "playwright-core": "1.60.0",
+    "react-grab": "^0.1.32"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2"
-  }
+    "@effect/vitest": "catalog:",
+    "@types/node": "catalog:",
+    "acorn": "8.16.0",
+    "cross-env": "^10.1.0",
+    "electron": "44.1.0",
+    "electron-builder": "26.15.6",
+    "tailwindcss": "catalog:",
+    "vite-plus": "catalog:"
+  },
+  "build": {
+    "appId": "com.allenreder.awen",
+    "productName": "Awen",
+    "directories": {
+      "output": "dist-package"
+    },
+    "files": [
+      "dist-electron/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "category": "public.app-category.developer-tools",
+      "bundleVersion": "3",
+      "artifactName": "Awen-${version}-macos-${arch}.${ext}",
+      "icon": "../../assets/prod/black-macos-1024.png",
+      "extraResources": [
+        {
+          "from": "../../native/trackpad/build/${arch}/awen-trackpad.node",
+          "to": "trackpad/awen-trackpad.node"
+        }
+      ]
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "artifactName": "Awen-${version}-windows-${arch}.${ext}",
+      "extraResources": [
+        {
+          "from": "wsl-runtime.tar.gz",
+          "to": "wsl-runtime.tar.gz"
+        },
+        {
+          "from": "wsl-runtime.tar.gz.sha256",
+          "to": "wsl-runtime.tar.gz.sha256"
+        }
+      ],
+      "icon": "../../assets/prod/black-windows.ico"
+    },
+    "extraResources": [
+      {
+        "from": "runtime",
+        "to": "runtime",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "runtime/node_modules",
+        "to": "runtime/node_modules",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "artifactName": "Awen-${version}-${os}-${arch}.${ext}",
+    "linux": {
+      "extraResources": [
+        {
+          "from": "../../native/browser-secret/build/${arch}/",
+          "to": "browser-secret",
+          "filter": [
+            "awen-browser-secret"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "runAfterFinish": false,
+      "differentialPackage": false
+    },
+    "dmg": {
+      "writeUpdateInfo": false
+    }
+  },
+  "productName": "Awen"
 }

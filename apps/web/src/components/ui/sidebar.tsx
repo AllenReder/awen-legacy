@@ -21,11 +21,6 @@ import { useResizeDrag } from "~/hooks/useResizeDrag";
 import { useIsMobile } from "~/hooks/useMediaQuery";
 import { getLocalStorageItem, setLocalStorageItem } from "~/hooks/useLocalStorage";
 import { resolveSidebarState, type ResponsiveSidebarState } from "./sidebarState";
-import {
-  EXPANDED_ACTION_RIGHT_OFFSET,
-  resolveSidebarMinimumWidth,
-} from "../sidebar/sidebarGeometry";
-import { isCurrentPlatformMac } from "~/lib/utils";
 import * as Schema from "effect/Schema";
 
 const SIDEBAR_COOKIE_NAME = "sidebar_state";
@@ -33,9 +28,7 @@ const SIDEBAR_COOKIE_MAX_AGE = 60 * 60 * 24 * 7;
 const SIDEBAR_WIDTH = "16rem";
 const SIDEBAR_WIDTH_MOBILE = "calc(100vw - var(--spacing(3)))";
 const SIDEBAR_WIDTH_ICON = "3rem";
-const SIDEBAR_RESIZE_DEFAULT_MIN_WIDTH = resolveSidebarMinimumWidth({
-  isMac: isCurrentPlatformMac(),
-});
+const SIDEBAR_RESIZE_DEFAULT_MIN_WIDTH = 128;
 
 type SidebarContextProps = {
   state: ResponsiveSidebarState;
@@ -51,6 +44,7 @@ type SidebarResizableOptions = {
   maxWidth?: number;
   minWidth?: number;
   onResize?: (width: number) => void;
+  onResizeFrame?: (width: number) => void;
   shouldAcceptWidth?: (context: {
     currentWidth: number;
     nextWidth: number;
@@ -66,6 +60,7 @@ type SidebarResolvedResizableOptions = {
   maxWidth: number;
   minWidth: number;
   onResize?: (width: number) => void;
+  onResizeFrame?: (width: number) => void;
   shouldAcceptWidth?: (context: {
     currentWidth: number;
     nextWidth: number;
@@ -172,8 +167,6 @@ function SidebarProvider({
           {
             "--sidebar-width": SIDEBAR_WIDTH,
             "--sidebar-width-icon": SIDEBAR_WIDTH_ICON,
-            "--workspace-titlebar-content-left":
-              "calc(var(--workspace-controls-left) + var(--workspace-titlebar-control-size) + var(--workspace-titlebar-control-gap))",
             ...style,
           } as React.CSSProperties
         }
@@ -211,6 +204,7 @@ function Sidebar({
       minWidth: options.minWidth ?? SIDEBAR_RESIZE_DEFAULT_MIN_WIDTH,
       storageKey: options.storageKey ?? null,
       ...(options.onResize ? { onResize: options.onResize } : {}),
+      ...(options.onResizeFrame ? { onResizeFrame: options.onResizeFrame } : {}),
       ...(options.shouldAcceptWidth ? { shouldAcceptWidth: options.shouldAcceptWidth } : {}),
     };
   }, [collapsible, isMobile, resizable]);
@@ -401,15 +395,13 @@ function SidebarRail({
     const transitionTargets = [
       sidebarRoot.querySelector<HTMLElement>("[data-slot='sidebar-gap']"),
       sidebarContainer,
-      typeof document !== "undefined"
-        ? document.querySelector<HTMLElement>("[data-sidebar-action-control]")
-        : null,
     ].filter((element): element is HTMLElement => element !== null);
     transitionTargets.forEach((element) => {
       element.style.setProperty("transition-duration", "0ms");
     });
     wrapper.style.setProperty("--sidebar-width", `${width}px`);
     wrapper.style.setProperty("--sidebar-exposed-width", `${width}px`);
+    resolvedResizable.onResizeFrame?.(width);
 
     return {
       width,
@@ -430,10 +422,7 @@ function SidebarRail({
         if (accepted) {
           wrapper.style.setProperty("--sidebar-width", `${nextWidth}px`);
           wrapper.style.setProperty("--sidebar-exposed-width", `${nextWidth}px`);
-          wrapper.style.setProperty(
-            "--sidebar-motion-action-left",
-            `${nextWidth - EXPANDED_ACTION_RIGHT_OFFSET}px`,
-          );
+          options.onResizeFrame?.(nextWidth);
           width = nextWidth;
         }
         return width;

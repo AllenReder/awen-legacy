@@ -19,6 +19,8 @@ interface WorkflowStep {
 interface WorkflowJob {
   readonly name?: string;
   readonly uses?: string;
+  readonly if?: string;
+  readonly needs?: readonly string[];
   readonly env?: Record<string, string>;
   readonly steps?: readonly WorkflowStep[];
   readonly "timeout-minutes"?: number;
@@ -59,7 +61,7 @@ const workflows = readWorkflows();
 
 describe("workflow credentials", () => {
   // An empty `APPLE_*` variable at job level is what broke the alpha.3 release:
-  // Tauri saw the variable, tried to notarize an ad-hoc build, and failed.
+  // The signing tool saw the variable, tried to notarize an ad-hoc build, and failed.
   it("never puts an Apple variable at workflow or job level", () => {
     for (const workflow of workflows) {
       const workflowEnv = Object.keys(workflow.document.env ?? {});
@@ -134,12 +136,11 @@ describe("workflow structure", () => {
   it("builds the installers in one workflow that both callers share", () => {
     const installers = workflows.find((workflow) => workflow.name === INSTALLER_WORKFLOW);
     expect(installers, `${INSTALLER_WORKFLOW} is missing`).toBeDefined();
-    expect(installers?.text).toContain("node scripts/stage-desktop-runtime.ts --target");
+    expect(installers?.text).toContain("node scripts/stage-desktop-runtime.ts --platform");
 
     for (const workflow of workflows) {
       if (workflow.name === INSTALLER_WORKFLOW) continue;
       expect(workflow.text.includes("stage-desktop-runtime.ts"), workflow.name).toBe(false);
-      expect(workflow.text.includes("tauri.macos.conf.json"), workflow.name).toBe(false);
     }
 
     for (const caller of ["ci.yml", "release.yml"]) {
@@ -148,5 +149,62 @@ describe("workflow structure", () => {
       const calls = jobsOf(workflow).map(([, definition]) => definition.uses);
       expect(calls, caller).toContain(`./.github/workflows/${INSTALLER_WORKFLOW}`);
     }
+  });
+  it("requires native macOS runners and a final verified artifact before publishing", () => {
+    const installers = workflows.find((workflow) => workflow.name === INSTALLER_WORKFLOW)!;
+    expect(installers.text).toContain("runner: macos-15-intel");
+    expect(installers.text).toContain("runner: macos-15");
+    expect(installers.text).toContain("runs-on: windows-2025");
+    expect(installers.text).toContain("assets.mjs assemble");
+    const release = workflows.find((workflow) => workflow.name === "release.yml")!;
+    expect(release.text).toContain("name: release-assets");
+    expect(release.text).toContain("assets.mjs verify");
+    expect(release.text).toContain("--draft=false");
+    expect(release.text.indexOf("gh release upload")).toBeLessThan(
+      release.text.indexOf("--draft=false"),
+    );
+    expect(release.text).not.toContain("pnpm install");
+  });
+  it("installs Linux native dependencies before desktop tests", () => {
+    const ci = workflows.find((workflow) => workflow.name === "ci.yml")!;
+    const shell = ci.document.jobs?.["desktop-shell"]?.steps ?? [];
+    expect(
+      shell.findIndex((step) => step.name === "Install Linux desktop dependencies"),
+    ).toBeLessThan(shell.findIndex((step) => step.name === "Test the desktop shell"));
+  });
+
+  // An ordinary pull request must not pay for the four-target installer matrix,
+  // but `main`, tags and packaging changes must still build every artifact.
+  it("runs the installer matrix only for packaging inputs, and never skips it elsewhere", () => {
+    const ci = workflows.find((workflow) => workflow.name === "ci.yml")!;
+    expect(
+      stepsOf(ci).some(({ step }) => (step.run ?? "").includes("scripts/packaging-inputs.ts")),
+      "the detector must classify changes with scripts/packaging-inputs.ts",
+    ).toBe(true);
+
+    const installers = ci.document.jobs?.["installers"];
+    expect(installers?.needs).toEqual(["changes"]);
+    expect(installers?.if ?? "").toContain("github.event_name != 'pull_request'");
+    expect(installers?.if ?? "").toContain("needs.changes.outputs.packaging == 'true'");
+
+    const release = workflows.find((workflow) => workflow.name === "release.yml")!;
+    expect(
+      release.document.jobs?.["build"]?.if,
+      "tags always build the installers",
+    ).toBeUndefined();
+  });
+
+  // The gate is the required check, so the one tolerated skip has to be the one
+  // the detector asked for; anything else - including a vanished job - fails.
+  it("lets the gate pass only the deliberate installer skip", () => {
+    const ci = workflows.find((workflow) => workflow.name === "ci.yml")!;
+    const gate = (ci.document.jobs?.["gate"]?.steps ?? []).find(
+      (step) => step.name === "Require every upstream job to succeed",
+    );
+    const script = gate?.run ?? "";
+    expect(script).toContain('case "$INSTALLERS" in');
+    expect(script).toContain("skipped)");
+    expect(script).toContain("The installer matrix was skipped even though it was required.");
+    expect(script).toContain("exit 1");
   });
 });

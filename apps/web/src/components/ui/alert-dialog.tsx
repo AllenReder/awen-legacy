@@ -36,7 +36,7 @@ function AlertDialogViewport({ className, ...props }: AlertDialogPrimitive.Viewp
   return (
     <AlertDialogPrimitive.Viewport
       className={cn(
-        "fixed inset-0 z-50 grid grid-rows-[1fr_auto_1fr] justify-items-center p-4",
+        "fixed inset-0 z-[60] grid grid-rows-[1fr_auto_1fr] justify-items-center p-4",
         className,
       )}
       data-slot="alert-dialog-viewport"
@@ -115,7 +115,10 @@ function AlertDialogFooter({
 function AlertDialogTitle({ className, ...props }: AlertDialogPrimitive.Title.Props) {
   return (
     <AlertDialogPrimitive.Title
-      className={cn("font-heading font-semibold text-xl leading-none", className)}
+      className={cn(
+        "font-heading font-semibold text-xl leading-none min-w-0 wrap-anywhere",
+        className,
+      )}
       data-slot="alert-dialog-title"
       {...props}
     />
@@ -125,7 +128,7 @@ function AlertDialogTitle({ className, ...props }: AlertDialogPrimitive.Title.Pr
 function AlertDialogDescription({ className, ...props }: AlertDialogPrimitive.Description.Props) {
   return (
     <AlertDialogPrimitive.Description
-      className={cn("text-muted-foreground text-sm", className)}
+      className={cn("min-w-0 wrap-anywhere text-muted-foreground text-sm", className)}
       data-slot="alert-dialog-description"
       {...props}
     />

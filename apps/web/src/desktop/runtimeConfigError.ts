@@ -1,6 +1,6 @@
 /**
  * The desktop shell's runtime-config read outcome, kept in a tiny module so the
- * error view can read it without importing the whole Tauri bridge.
+ * error view can read it without importing the desktop bridge.
  *
  * A launcher failure is otherwise invisible: the bridge keeps bootstraps empty,
  * the client falls back to the window origin, and the user sees only a generic

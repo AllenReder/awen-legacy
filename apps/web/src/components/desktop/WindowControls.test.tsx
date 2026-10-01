@@ -153,7 +153,7 @@ describe("WindowControls", () => {
       const toggleSpy = vi
         .spyOn(defaultWindowOperations, "toggleMaximize")
         .mockResolvedValue(undefined);
-      vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+      vi.stubGlobal("window", { desktopBridge: {} });
       vi.stubGlobal("navigator", { platform: "MacIntel" });
 
       const target = { closest: () => null } as unknown as HTMLElement;
@@ -195,7 +195,7 @@ describe("WindowControls", () => {
       const toggleSpy = vi
         .spyOn(defaultWindowOperations, "toggleMaximize")
         .mockResolvedValue(undefined);
-      vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+      vi.stubGlobal("window", { desktopBridge: {} });
       vi.stubGlobal("navigator", { platform: "Win32" });
 
       const target = { closest: () => null } as unknown as HTMLElement;
@@ -209,7 +209,7 @@ describe("WindowControls", () => {
       const toggleSpy = vi
         .spyOn(defaultWindowOperations, "toggleMaximize")
         .mockResolvedValue(undefined);
-      vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+      vi.stubGlobal("window", { desktopBridge: {} });
       vi.stubGlobal("navigator", { platform: "Linux x86_64" });
 
       const target = { closest: () => null } as unknown as HTMLElement;
@@ -223,7 +223,7 @@ describe("WindowControls", () => {
       const toggleSpy = vi
         .spyOn(defaultWindowOperations, "toggleMaximize")
         .mockResolvedValue(undefined);
-      vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+      vi.stubGlobal("window", { desktopBridge: {} });
       vi.stubGlobal("navigator", { platform: "Win32" });
 
       const target = {

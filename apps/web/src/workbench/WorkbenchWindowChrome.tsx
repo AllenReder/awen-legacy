@@ -3,12 +3,11 @@ import { Columns3Icon, PanelsTopLeftIcon, PlusIcon, XIcon } from "lucide-react";
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type CSSProperties,
-  type KeyboardEvent as ReactKeyboardEvent,
-  type PointerEvent as ReactPointerEvent,
 } from "react";
 
 import { cn } from "../lib/utils";
@@ -78,26 +77,16 @@ export function WorkbenchWindowChrome({ snapshot, projects }: WorkbenchWindowChr
   let tabWidth = 176;
 
   if (isAnyTabDragged && dragState && draggedSourceIndex >= 0) {
-    const stripEl = stripRef.current;
-    if (stripEl) {
-      const stripRect = stripEl.getBoundingClientRect();
-      isSlidOut =
-        dragState.pointer.y > stripRect.bottom + 12 || dragState.pointer.y < stripRect.top - 12;
-      const firstTabEl = stripEl.querySelector<HTMLElement>("[data-tab-id]");
-      if (firstTabEl) {
-        tabWidth = firstTabEl.getBoundingClientRect().width || 176;
-      }
-      deltaX = dragState.pointer.x - dragState.startPointer.x;
-      if (!isSlidOut) {
-        const scrollLeft = stripEl.scrollLeft;
-        const currentCenter =
-          dragState.startRect.left + deltaX + tabWidth / 2 - stripRect.left + scrollLeft;
-        targetIndex = Math.max(
-          0,
-          Math.min(Math.floor(currentCenter / tabWidth), snapshot.tabs.length - 1),
-        );
-      }
-    }
+    tabWidth = dragState.startRect.width || 176;
+    deltaX = dragState.pointer.x - dragState.startPointer.x;
+    isSlidOut =
+      dragState.pointer.y > dragState.startRect.top + dragState.startRect.height + 12 ||
+      dragState.pointer.y < dragState.startRect.top - 12;
+    if (!isSlidOut)
+      targetIndex = Math.max(
+        0,
+        Math.min(draggedSourceIndex + Math.round(deltaX / tabWidth), snapshot.tabs.length - 1),
+      );
   }
 
   const tabsKey = tabIdsKey(snapshot.tabs);
@@ -124,25 +113,33 @@ export function WorkbenchWindowChrome({ snapshot, projects }: WorkbenchWindowChr
     offset: number;
   } | null>(null);
 
-  if (isAnyTabDragged && draggedTabId && draggedSourceIndex >= 0) {
-    lastDragInfoRef.current = {
-      tabId: draggedTabId,
-      fromIndex: draggedSourceIndex,
-      toIndex: targetIndex,
-      deltaX,
-      tabWidth,
-    };
-  } else if (lastDragInfoRef.current) {
-    const prev = lastDragInfoRef.current;
-    lastDragInfoRef.current = null;
-    const isCancelled = dragState?.phase === "canceling" || dragState?.phase === "rejected";
-    const initialOffset = isCancelled
-      ? prev.deltaX
-      : (prev.fromIndex - prev.toIndex) * prev.tabWidth + prev.deltaX;
-    if (Math.abs(initialOffset) > 2) {
-      setSettlingTab({ tabId: prev.tabId, offset: initialOffset });
+  useLayoutEffect(() => {
+    if (isAnyTabDragged && draggedTabId && draggedSourceIndex >= 0) {
+      lastDragInfoRef.current = {
+        tabId: draggedTabId,
+        fromIndex: draggedSourceIndex,
+        toIndex: targetIndex,
+        deltaX,
+        tabWidth,
+      };
+    } else if (lastDragInfoRef.current) {
+      const prev = lastDragInfoRef.current;
+      lastDragInfoRef.current = null;
+      const cancelled = dragState?.phase === "canceling" || dragState?.phase === "rejected";
+      const offset = cancelled
+        ? prev.deltaX
+        : (prev.fromIndex - prev.toIndex) * prev.tabWidth + prev.deltaX;
+      if (Math.abs(offset) > 2) setSettlingTab({ tabId: prev.tabId, offset });
     }
-  }
+  }, [
+    isAnyTabDragged,
+    draggedTabId,
+    draggedSourceIndex,
+    targetIndex,
+    deltaX,
+    tabWidth,
+    dragState?.phase,
+  ]);
 
   useEffect(() => {
     if (!settlingTab) return;
@@ -183,19 +180,17 @@ export function WorkbenchWindowChrome({ snapshot, projects }: WorkbenchWindowChr
   return (
     <MaterialSurface
       kind="topbar"
-      className="drag-region flex h-[var(--workbench-titlebar-height,36px)] w-full shrink-0 items-center border-b border-[var(--material-edge)] z-30"
-      data-tauri-drag-region="deep"
+      className="wco:pr-[var(--workspace-native-controls-inset)] drag-region flex h-[var(--workspace-topbar-height)] w-full shrink-0 items-center border-b border-[var(--material-edge)] z-30"
       data-workbench-window-chrome=""
       onDoubleClick={handleTopbarDoubleClick}
     >
       <TopbarInset />
 
-      <div className="flex h-full min-w-0 flex-1 items-center gap-2 pr-3" data-tauri-drag-region>
+      <div className="flex h-full min-w-0 flex-1 items-center gap-2 pr-3">
         <div
           ref={stripRef}
           className="relative flex h-full min-w-0 flex-1 items-stretch overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
           data-workbench-tab-strip-drop=""
-          data-tauri-drag-region
           role="tablist"
           aria-label="Workbench tabs"
         >
@@ -231,7 +226,6 @@ export function WorkbenchWindowChrome({ snapshot, projects }: WorkbenchWindowChr
                 deltaX={deltaX}
                 isSlidOut={isSlidOut}
                 tabWidth={tabWidth}
-                tabsCount={snapshot.tabs.length}
                 remainingTabsCount={remainingTabsCount}
                 isAnyTabClosing={closingTabIds.size > 0}
                 settlingTab={settlingTab}
@@ -244,7 +238,9 @@ export function WorkbenchWindowChrome({ snapshot, projects }: WorkbenchWindowChr
             aria-hidden="true"
             data-tab-indicator=""
             className="workbench-tab-indicator"
-          />
+          >
+            <span className="absolute inset-y-0 left-0 rounded-full bg-primary" />
+          </span>
         </div>
 
         <div
@@ -309,7 +305,6 @@ interface WorkbenchTabItemProps {
   readonly deltaX: number;
   readonly isSlidOut: boolean;
   readonly tabWidth: number;
-  readonly tabsCount: number;
   readonly remainingTabsCount: number;
   readonly isAnyTabClosing: boolean;
   readonly settlingTab: { readonly tabId: string; readonly offset: number } | null;
@@ -339,7 +334,6 @@ function WorkbenchTabItem({
   deltaX,
   isSlidOut,
   tabWidth,
-  tabsCount,
   remainingTabsCount,
   isAnyTabClosing,
   settlingTab,

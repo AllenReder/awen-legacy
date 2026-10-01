@@ -206,6 +206,23 @@ function measureRemoval(entryPath: string): ReleaseTreePruning {
 }
 
 /**
+ * Removes one collected entry.
+ *
+ * `NodeFS.rmSync` leaves a dangling symlink on disk on Node 25: it follows the
+ * link, finds nothing at the target, and returns without unlinking the entry.
+ * Pruning routinely makes links dangle by removing the store directory they
+ * point at first, so links are unlinked directly instead of routed through
+ * `rmSync`.
+ */
+function removeReleaseOnlyEntry(entryPath: string): void {
+  if (NodeFS.lstatSync(entryPath).isSymbolicLink()) {
+    NodeFS.unlinkSync(entryPath);
+    return;
+  }
+  NodeFS.rmSync(entryPath, { recursive: true, force: true });
+}
+
+/**
  * Refuses a staged tree that still carries source maps, debug symbols, or
  * another platform's prebuilt binaries and native packages. `pruneReleaseTree`
  * runs this over the tree as it stands on disk, so an entry the rules cannot
@@ -230,7 +247,7 @@ export function pruneReleaseTree(root: string, target: ReleaseTarget): ReleaseTr
 
   for (const entryPath of collectReleaseOnlyEntries(root, target)) {
     const measured = measureRemoval(entryPath);
-    NodeFS.rmSync(entryPath, { recursive: true, force: true });
+    removeReleaseOnlyEntry(entryPath);
     removed = { files: removed.files + measured.files, bytes: removed.bytes + measured.bytes };
   }
 

@@ -1,9 +1,10 @@
+import { makeDesktopContentSecurityPolicy } from "../apps/desktop/src/electron/DesktopContentSecurityPolicy.ts";
 import * as NodeAssert from "node:assert/strict";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
-import { chromium, webkit } from "playwright";
+import { chromium } from "playwright";
 import { build } from "vite-plus";
 
 // Exercise the shipped terminal renderer under the checked-in desktop CSP.
@@ -20,14 +21,7 @@ import { build } from "vite-plus";
 //   3. The packaged CSP still permits a bundled WebAssembly payload while
 //      blocking JavaScript eval.
 const root = NodeURL.fileURLToPath(new URL("../", import.meta.url));
-const config = JSON.parse(
-  await NodeFSP.readFile(NodePath.join(root, "apps/desktop/src-tauri/tauri.conf.json"), "utf8"),
-);
-const devConfig = JSON.parse(
-  await NodeFSP.readFile(NodePath.join(root, "apps/desktop/src-tauri/tauri.dev.conf.json"), "utf8"),
-);
-const devSecurity = { ...config.app.security, ...devConfig.app?.security };
-const engine = process.argv.includes("--webkit") ? webkit : chromium;
+const engine = chromium;
 const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "awen-desktop-terminal-"));
 // The palette the page paints with, and the replies that must come back.
 const TERMINAL_BACKGROUND = "#fcfcfc";
@@ -52,8 +46,8 @@ try {
   });
   browser = await engine.launch({ headless: true });
   for (const [label, policy] of [
-    ["packaged", devSecurity.csp],
-    ["development", devSecurity.devCsp ?? devSecurity.csp],
+    ["packaged", makeDesktopContentSecurityPolicy({ scheme: "awen" })],
+    ["development", makeDesktopContentSecurityPolicy({ scheme: "awen-dev" })],
   ]) {
     const page = await browser.newPage();
     const errors = [];

@@ -1,5 +1,4 @@
-import { convertFileSrc } from "@tauri-apps/api/core";
-import { isTauri } from "../../env";
+import { openDesktopUpdateReleaseNotes } from "../desktopUpdate.toast";
 import { Spinner } from "~/components/ui/spinner";
 import { NotificationSettings } from "./NotificationSettings";
 import { ArchiveIcon, ArchiveX, ChevronRightIcon, SettingsIcon } from "lucide-react";
@@ -31,8 +30,8 @@ import {
   MIN_TOPBAR_OPACITY,
   MAX_TOPBAR_OPACITY,
   MAX_SIDEBAR_OPACITY,
-  MIN_SIDEBAR_BLUR,
-  MAX_SIDEBAR_BLUR,
+  MIN_CONTENT_BACKDROP_BLUR,
+  MAX_CONTENT_BACKDROP_BLUR,
   MIN_WORKBENCH_OPACITY,
   MAX_WORKBENCH_OPACITY,
   MIN_CHAT_BACKGROUND_OPACITY,
@@ -67,7 +66,6 @@ import { APP_VERSION } from "../../branding";
 import {
   canCheckForUpdate,
   getDesktopUpdateButtonTooltip,
-  getDesktopUpdateInstallConfirmationMessage,
   isDesktopUpdateButtonDisabled,
   resolveDesktopUpdateButtonAction,
 } from "../../components/desktopUpdate.logic";
@@ -293,60 +291,21 @@ function AboutVersionSection() {
 
     const action = updateState ? resolveDesktopUpdateButtonAction(updateState) : "none";
 
-    if (action === "download") {
-      void bridge.downloadUpdate().catch((error: unknown) => {
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Could not download update",
-            description: error instanceof Error ? error.message : "Download failed.",
-          }),
-        );
-      });
-      return;
-    }
-
-    if (action === "install") {
-      if (isUpdateActionPending) return;
-      setIsUpdateActionPending(true);
-      let confirmed = false;
+    if (isUpdateActionPending) return;
+    setIsUpdateActionPending(true);
+    if (action === "release" && updateState?.releaseUrl) {
       try {
-        confirmed = await ensureLocalApi().dialogs.confirm(
-          getDesktopUpdateInstallConfirmationMessage(
-            updateState ?? { availableVersion: null, downloadedVersion: null },
-          ),
-        );
-      } catch (error) {
+        await openDesktopUpdateReleaseNotes(bridge, updateState.releaseUrl);
+      } finally {
         setIsUpdateActionPending(false);
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Could not confirm update",
-            description: error instanceof Error ? error.message : "Update confirmation failed.",
-          }),
-        );
-        return;
       }
-      if (!confirmed) {
-        setIsUpdateActionPending(false);
-        return;
-      }
-      void bridge
-        .installUpdate()
-        .catch((error: unknown) => {
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: "Could not install update",
-              description: error instanceof Error ? error.message : "Install failed.",
-            }),
-          );
-        })
-        .finally(() => setIsUpdateActionPending(false));
       return;
     }
 
-    if (typeof bridge.checkForUpdate !== "function") return;
+    if (typeof bridge.checkForUpdate !== "function") {
+      setIsUpdateActionPending(false);
+      return;
+    }
     void bridge
       .checkForUpdate()
       .then((result) => {
@@ -356,7 +315,7 @@ function AboutVersionSection() {
               type: "error",
               title: "Could not check for updates",
               description:
-                result.state.message ?? "Automatic updates are not available in this build.",
+                result.state.message ?? "Version checks are not available in this build.",
             }),
           );
         }
@@ -369,7 +328,8 @@ function AboutVersionSection() {
             description: error instanceof Error ? error.message : "Update check failed.",
           }),
         );
-      });
+      })
+      .finally(() => setIsUpdateActionPending(false));
   }, [isUpdateActionPending, updateState]);
 
   const action = updateState ? resolveDesktopUpdateButtonAction(updateState) : "none";
@@ -379,17 +339,16 @@ function AboutVersionSection() {
       ? !canCheckForUpdate(updateState)
       : isDesktopUpdateButtonDisabled(updateState);
 
-  const actionLabel: Record<string, string> = { download: "Download", install: "Install" };
+  const actionLabel: Record<string, string> = { release: "Open Release" };
   const statusLabel: Record<string, string> = {
     checking: "Checking…",
-    downloading: "Downloading…",
     "up-to-date": "Up to Date",
   };
   const buttonLabel =
     actionLabel[action] ?? statusLabel[updateState?.status ?? ""] ?? "Check for Updates";
   const description =
-    action === "download" || action === "install"
-      ? "Update available."
+    action === "release"
+      ? "New version available. Download and install it from the Release page."
       : "Current version of the application.";
 
   return (
@@ -460,8 +419,8 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.sidebarOpacity !== DEFAULT_UNIFIED_SETTINGS.sidebarOpacity
         ? ["Sidebar opacity"]
         : []),
-      ...(settings.sidebarBlur !== DEFAULT_UNIFIED_SETTINGS.sidebarBlur
-        ? ["Window blur radius"]
+      ...(settings.contentBackdropBlur !== DEFAULT_UNIFIED_SETTINGS.contentBackdropBlur
+        ? ["Content backdrop blur"]
         : []),
       ...(settings.workbenchGlass !== DEFAULT_UNIFIED_SETTINGS.workbenchGlass
         ? ["Workbench glass"]
@@ -609,7 +568,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.glassOpacity,
       settings.topbarOpacity,
       settings.sidebarOpacity,
-      settings.sidebarBlur,
+      settings.contentBackdropBlur,
       settings.workbenchGlass,
       settings.workbenchOpacity,
       settings.backgroundMaskLightOpacity,
@@ -717,7 +676,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       glassOpacity: DEFAULT_UNIFIED_SETTINGS.glassOpacity,
       topbarOpacity: DEFAULT_UNIFIED_SETTINGS.topbarOpacity,
       sidebarOpacity: DEFAULT_UNIFIED_SETTINGS.sidebarOpacity,
-      sidebarBlur: DEFAULT_UNIFIED_SETTINGS.sidebarBlur,
+      contentBackdropBlur: DEFAULT_UNIFIED_SETTINGS.contentBackdropBlur,
       workbenchGlass: DEFAULT_UNIFIED_SETTINGS.workbenchGlass,
       workbenchOpacity: DEFAULT_UNIFIED_SETTINGS.workbenchOpacity,
       backgroundMaskLightOpacity: DEFAULT_UNIFIED_SETTINGS.backgroundMaskLightOpacity,
@@ -1141,11 +1100,12 @@ export function AppearanceSettingsPanel() {
     "--settings-slider-progress": `${topbarOpacityRatio * 100}%`,
     "--settings-slider-fill-offset": `${0.5 - topbarOpacityRatio}rem`,
   } as CSSProperties;
-  const sidebarBlurRatio =
-    (settings.sidebarBlur - MIN_SIDEBAR_BLUR) / (MAX_SIDEBAR_BLUR - MIN_SIDEBAR_BLUR);
-  const sidebarBlurSliderStyle = {
-    "--settings-slider-progress": `${sidebarBlurRatio * 100}%`,
-    "--settings-slider-fill-offset": `${0.5 - sidebarBlurRatio}rem`,
+  const contentBackdropBlurRatio =
+    (settings.contentBackdropBlur - MIN_CONTENT_BACKDROP_BLUR) /
+    (MAX_CONTENT_BACKDROP_BLUR - MIN_CONTENT_BACKDROP_BLUR);
+  const contentBackdropBlurSliderStyle = {
+    "--settings-slider-progress": `${contentBackdropBlurRatio * 100}%`,
+    "--settings-slider-fill-offset": `${0.5 - contentBackdropBlurRatio}rem`,
   } as CSSProperties;
   const workbenchOpacityRatio =
     (settings.workbenchOpacity - MIN_WORKBENCH_OPACITY) /
@@ -1259,6 +1219,17 @@ export function AppearanceSettingsPanel() {
 
       <SettingsSection id="appearance-window-glass" title="Window & Glass">
         <SettingsRow
+          title="Window Glass"
+          description="Use the system window material behind the application."
+          hidden={!nativeGlassSupported}
+          control={
+            <Switch
+              checked={settings.windowGlassEnabled}
+              onCheckedChange={(windowGlassEnabled) => updateSettings({ windowGlassEnabled })}
+            />
+          }
+        />
+        <SettingsRow
           hidden={nativeGlassSupported}
           title="Native window effects"
           description="Window transparency and desktop background blur are unavailable on this platform. Awen uses its opaque Material hierarchy instead."
@@ -1314,15 +1285,16 @@ export function AppearanceSettingsPanel() {
           }
         />
         <SettingsRow
-          {...searchableSetting("setting-sidebar-blur")}
-          hidden={!nativeGlassSupported}
-          description="Adjust the intensity of the native desktop background blur."
+          {...searchableSetting("setting-content-backdrop-blur")}
+          description="Blur application content behind overlays and the composer. Set to 0 to disable."
           resetAction={
-            settings.sidebarBlur !== DEFAULT_UNIFIED_SETTINGS.sidebarBlur ? (
+            settings.contentBackdropBlur !== DEFAULT_UNIFIED_SETTINGS.contentBackdropBlur ? (
               <SettingResetButton
-                label="window blur radius"
+                label="content backdrop blur"
                 onClick={() =>
-                  updateSettings({ sidebarBlur: DEFAULT_UNIFIED_SETTINGS.sidebarBlur })
+                  updateSettings({
+                    contentBackdropBlur: DEFAULT_UNIFIED_SETTINGS.contentBackdropBlur,
+                  })
                 }
               />
             ) : null
@@ -1331,30 +1303,30 @@ export function AppearanceSettingsPanel() {
             <div className="flex w-full items-center gap-3 sm:w-52">
               <output
                 className="min-w-12 rounded-md bg-muted px-2 py-1 text-center font-mono text-xs font-medium tabular-nums text-foreground"
-                htmlFor="sidebar-blur"
+                htmlFor="content-backdrop-blur"
               >
-                {settings.sidebarBlur}px
+                {settings.contentBackdropBlur}px
               </output>
               <input
-                aria-label="Window blur radius"
+                aria-label="Content backdrop blur"
                 className="settings-slider min-w-0 flex-1"
-                id="sidebar-blur"
-                max={MAX_SIDEBAR_BLUR}
-                min={MIN_SIDEBAR_BLUR}
+                id="content-backdrop-blur"
+                max={MAX_CONTENT_BACKDROP_BLUR}
+                min={MIN_CONTENT_BACKDROP_BLUR}
                 onChange={(event) => {
-                  const sidebarBlur = Number(event.currentTarget.value);
+                  const contentBackdropBlur = Number(event.currentTarget.value);
                   if (
-                    Number.isInteger(sidebarBlur) &&
-                    sidebarBlur >= MIN_SIDEBAR_BLUR &&
-                    sidebarBlur <= MAX_SIDEBAR_BLUR
+                    Number.isInteger(contentBackdropBlur) &&
+                    contentBackdropBlur >= MIN_CONTENT_BACKDROP_BLUR &&
+                    contentBackdropBlur <= MAX_CONTENT_BACKDROP_BLUR
                   ) {
-                    updateSettings({ sidebarBlur });
+                    updateSettings({ contentBackdropBlur });
                   }
                 }}
                 step={1}
-                style={sidebarBlurSliderStyle}
+                style={contentBackdropBlurSliderStyle}
                 type="range"
-                value={settings.sidebarBlur}
+                value={settings.contentBackdropBlur}
               />
             </div>
           }
@@ -1531,8 +1503,7 @@ export function AppearanceSettingsPanel() {
         />
         <SettingsRow
           {...searchableSetting("setting-overlay-opacity")}
-          hidden={!nativeGlassSupported}
-          description="Density of the frosted material behind menus and dialogs."
+          description="Background tint opacity of menus, dialogs, and the composer. Applies equally in light and dark modes; 100% makes the tint solid."
           resetAction={
             settings.glassOpacity !== DEFAULT_UNIFIED_SETTINGS.glassOpacity ? (
               <SettingResetButton
@@ -1598,11 +1569,7 @@ export function AppearanceSettingsPanel() {
               {settings.chatBackgroundPath ? (
                 <div className="flex items-center gap-2">
                   <img
-                    src={
-                      isTauri && typeof window !== "undefined"
-                        ? convertFileSrc(settings.chatBackgroundPath)
-                        : settings.chatBackgroundPath
-                    }
+                    src={settings.chatBackgroundPath}
                     alt="Wallpaper preview"
                     className="size-9 rounded-md object-cover border border-border shrink-0 shadow-xs"
                   />

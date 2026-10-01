@@ -1,5 +1,7 @@
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
+import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
+import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
@@ -34,6 +36,8 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
+import * as Stream from "effect/Stream";
+import * as Duration from "effect/Duration";
 
 import { OrchestrationCommandInvariantError } from "../orchestration/Errors.ts";
 import * as OrchestrationEngine from "../orchestration/Services/OrchestrationEngine.ts";
@@ -162,6 +166,7 @@ function providerSession(overrides: Partial<ProviderSession> = {}): ProviderSess
 
 interface Harness {
   readonly git?: Partial<GitVcsDriver.GitVcsDriver["Service"]>;
+  readonly gitWorkflow?: Partial<GitWorkflowService.GitWorkflowService["Service"]>;
   readonly otherThreads?: ReadonlyArray<OrchestrationThreadShell>;
   readonly thread: () => OrchestrationThreadShell;
   readonly agentSession: () => AwenAgentSessionShell;
@@ -240,11 +245,35 @@ const makeLayer = (harness: Harness, databasePath?: string) => {
       ),
   } as never);
 
-  return AwenSessionService.layer.pipe(
-    Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)(harness.git ?? {})),
+  const workflowLayer = Layer.mock(GitWorkflowService.GitWorkflowService)({
+    invalidateStatus: () => Effect.void,
+    invalidateLocalStatus: () => Effect.void,
+    localStatus: () =>
+      Effect.succeed({
+        isRepo: true,
+        hasPrimaryRemote: false,
+        isDefaultRef: true,
+        refName: "main",
+        hasWorkingTreeChanges: false,
+        workingTree: { files: [], insertions: 0, deletions: 0 },
+      }),
+    remoteStatus: () => Effect.succeed(null),
+    ...harness.gitWorkflow,
+  });
+  const statusLayer = VcsStatusBroadcaster.layer.pipe(
+    Layer.provide(workflowLayer),
     Layer.provide(
-      Layer.mock(GitWorkflowService.GitWorkflowService)({ invalidateStatus: () => Effect.void }),
+      Layer.mock(BackgroundPolicy.BackgroundPolicy)({
+        shouldRunScopeWork: () => Effect.succeed(false),
+      }),
     ),
+    Layer.provide(NodeServices.layer),
+  );
+
+  return AwenSessionService.layer.pipe(
+    Layer.provideMerge(statusLayer),
+    Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)(harness.git ?? {})),
+    Layer.provide(workflowLayer),
     Layer.provide(projectionLayer),
     Layer.provide(providerLayer),
     Layer.provide(engineLayer),
@@ -897,6 +926,80 @@ describe("AwenSessionService.selectRef", () => {
     refName: "feature",
     create: false,
   };
+
+  for (const selection of ["checkout", "create", "current"] as const) {
+    it.effect(`publishes the selected branch to status subscribers (${selection})`, () => {
+      let refName = "main";
+      const checkout = () =>
+        Effect.sync(() => {
+          refName = "feature";
+          return { refName };
+        });
+      const harness = baseHarness({
+        git: {
+          listRefs: () =>
+            refs(null).pipe(
+              Effect.map((result) => ({
+                ...result,
+                refs: result.refs.map((ref) => ({ ...ref, current: selection === "current" })),
+              })),
+            ),
+          switchRef: checkout,
+          createRef: checkout,
+        },
+        gitWorkflow: {
+          localStatus: () =>
+            Effect.sync(() => ({
+              isRepo: true,
+              hasPrimaryRemote: false,
+              isDefaultRef: refName === "main",
+              refName,
+              hasWorkingTreeChanges: false,
+              workingTree: { files: [], insertions: 0, deletions: 0 },
+            })),
+        },
+      });
+      return Effect.gen(function* () {
+        const service = yield* AwenSessionService.AwenSessionService;
+        const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+        // Warm both parts so subscribing cannot trigger an incidental refresh.
+        yield* broadcaster.getStatus({ cwd: SOURCE_ROOT });
+        const initial = yield* Deferred.make<string | null>();
+        const updated = yield* Deferred.make<string | null>();
+        const stream = broadcaster.streamStatus(
+          { cwd: SOURCE_ROOT },
+          {
+            automaticRemoteRefreshInterval: Effect.succeed(Duration.zero),
+          },
+        );
+        yield* stream.pipe(
+          Stream.runForEach((event) => {
+            if (event._tag === "snapshot") return Deferred.succeed(initial, event.local.refName);
+            if (event._tag === "localUpdated")
+              return Deferred.succeed(updated, event.local.refName);
+            return Effect.void;
+          }),
+          Effect.forkScoped,
+        );
+        assert.strictEqual(yield* Deferred.await(initial), "main");
+
+        // An external checkout can leave the same stale snapshot even when the
+        // requested ref is already current by the time the server handles it.
+        if (selection === "current") refName = "feature";
+        yield* service.selectRef({ ...input, create: selection === "create" });
+
+        assert.strictEqual((yield* broadcaster.getStatus({ cwd: SOURCE_ROOT })).refName, "feature");
+        assert.strictEqual(yield* Deferred.await(updated), "feature");
+        const snapshot = yield* Stream.runHead(stream);
+        assert.isTrue(Option.isSome(snapshot));
+        if (Option.isSome(snapshot) && snapshot.value._tag === "snapshot") {
+          assert.strictEqual(snapshot.value.local.refName, "feature");
+        } else {
+          assert.fail("Expected a fresh status snapshot");
+        }
+      }).pipe(Effect.scoped, Effect.provide(makeLayer(harness)));
+    });
+  }
 
   it.effect(
     "moves to the Workspace occupying the selected ref without checking out the source",

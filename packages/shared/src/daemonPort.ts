@@ -3,8 +3,8 @@
  *
  * The bind side and the address side run as separate processes:
  * `apps/server/src/localDaemon.ts` binds the port, while the desktop dev wrapper
- * `apps/desktop/scripts/run-tauri.mjs` tells the web dev server which port to
- * proxy to and which URL the Tauri window loads. When each carried its own copy
+ * `scripts/dev-runner.ts` tells the web dev server which port to
+ * proxy to and which URL the Electron window loads. When each carried its own copy
  * of these rules the two disagreed — the wrapper resolved only two of the four
  * keys, so a developer's `AWEN_DAEMON_PORT` was shadowed by the wrapper's
  * default, the daemon bound elsewhere, and every proxied request failed against

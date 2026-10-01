@@ -63,6 +63,7 @@ export default mergeConfig(
   defineConfig({
     run: {
       tasks: {
+        "dev:desktop": { command: "vp pack --watch", cache: false },
         build: {
           command: "node scripts/cli.ts build",
           dependsOn: ["@awen/web#build"],

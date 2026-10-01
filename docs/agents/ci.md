@@ -1,59 +1,38 @@
 # Continuous integration
 
-Two workflows run the pipeline:
+PRs, pushes to `main` and manual runs use `.github/workflows/ci.yml`. Tagged releases and manual dry runs use `.github/workflows/release.yml`. Both call `build-installers.yml`, so the installers a release publishes come from the definition `main` and packaging-changing pull requests already ran.
 
-- `.github/workflows/ci.yml` — pull requests and pushes to `main`.
-- `.github/workflows/release.yml` — `v*` tags, plus a manual dry run.
+A pull request runs the four-target installer matrix only when it changes a packaging input: the desktop app, its native modules, the packaging scripts (`scripts/`), the dependency graph (`package.json`, `pnpm-lock.yaml`, `pnpm-workspace.yaml`) or the workflows (`.github/workflows/`). `scripts/packaging-inputs.ts` owns that list. Everything else is covered by `quality`, `tests` and the Linux `desktop-shell` smoke; the full matrix still runs on every push to `main`, every tag, and `gh workflow run ci.yml --ref <branch>` on demand.
 
-Both call `.github/workflows/build-installers.yml`, so the installers a release
-publishes are the installers a pull request already built. Keep it that way: the
-only workflow that may stage the desktop runtime, build a DMG, or build an NSIS
-installer is `build-installers.yml`.
+## Required checks
 
-## What CI proves
+- `quality`: consistent versions, formatting, typecheck, lint and web/server build.
+- `tests`: server and web in two shards each; remaining workspace tests exclude desktop.
+- `desktop-shell`: Linux build, preload verification, desktop tests and Xvfb startup smoke. Install `pkg-config`, `libsecret-1-dev`, GTK, NSS and audio/display libraries before tests or native compilation.
+- `installers`: Linux x64 daemon, Windows x64 NSIS installer, macOS arm64 and x64 DMGs. Each platform verifies packaged runtime startup and installed Electron behavior. macOS uses native `macos-15` and `macos-15-intel` runners; Windows uses `windows-2025`. Runs on `main`, tags, manual runs and packaging-changing pull requests.
+- `assemble`: exact final inventory plus `SHA256SUMS`, uploaded as `release-assets` after every installer verification succeeds.
+- `CI gate`: fails on any failure or cancellation. The one skip it tolerates is the installer matrix on a pull request the change detector cleared, and the gate re-checks that against the detector before passing.
 
-- `quality` — version consistency, formatting (`pnpm fmt:check`), typecheck,
-  lint, and the web/server build.
-- `tests` — `apps/server` and `apps/web` sharded two ways, plus every other
-  workspace package through `pnpm test:packages`.
-- `desktop-shell` — the Tauri crate compiles on Linux and `cargo fmt --check`
-  passes.
-- `installers` — the Linux daemon package (built and smoke-tested), the Windows
-  installer, and both macOS DMGs, each uploaded as an artifact for three days.
-- `gate` — the single `CI gate` status check that branch protection should
-  require.
+No Linux desktop installer is published. Linux GUI smoke validates Electron development support.
 
-`scripts/ci-workflows.test.ts` enforces the structural rules above: no Apple
-variable at job level, Apple secrets read only by the signing step, credentials
-exported only after the ad-hoc path exits, a timeout on every job that runs
-steps, every action pinned to a commit SHA with its version in a comment, and no
-second copy of the installer builds.
+## Signing
 
-## macOS signing
+The signing step reads six secrets as one group: `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `KEYCHAIN_PASSWORD`, `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID`. None means ad-hoc signing with explicit `mac.identity=-`, identity autodiscovery and hardened runtime disabled, and PR signing enabled. Developer ID builds keep hardened runtime. All means Developer ID signing, notarization and stapling. Any partial configuration fails. Apple credentials are confined to the signing step and exported only for complete Developer ID configuration.
 
-The signing step checks six secrets as one group. With none of them set — which
-is what every pull request and fork build sees — the DMGs are ad-hoc signed.
-With all of them set, the workflow imports the Developer ID certificate, signs,
-notarizes, and staples. Never move those variables to a job-level `env:` block:
-Tauri treats an empty `APPLE_ID`/`APPLE_PASSWORD`/`APPLE_TEAM_ID` as "notarize
-this", which is how the `0.1.0-alpha.3` release failed.
-
-## Local equivalents
+## Local reproduction
 
 ```bash
-pnpm test              # every workspace package, the way a developer runs it
-pnpm test:server       # the sharded groups CI runs, without the shard flag
-pnpm test:web
+pnpm version:check
+pnpm fmt:check
+pnpm typecheck
+pnpm lint
 pnpm test:packages
-node scripts/stage-desktop-runtime.ts --target x86_64-apple-darwin
+pnpm test:server
+pnpm test:web
+pnpm --filter @awen/desktop test
+node scripts/stage-desktop-runtime.ts --platform darwin --arch arm64
 ```
 
-`stage-desktop-runtime.ts --target` downloads the official Node build for the
-Rust target triple, checks it against the published `SHASUMS256.txt`, and stages
-it as the desktop runtime, which is what lets an Apple Silicon runner build the
-x86_64 DMG. Without `--target` the script copies the local Node binary.
+Runtime staging accepts `--platform darwin|win32|linux` and `--arch arm64|x64`. Explicit targets download the pinned official Node build and verify its published SHA256; without arguments it copies the host Node binary. Native addons are built on matching host runners. Downloads cached through `AWEN_NODE_RUNTIME_CACHE` are reverified before use.
 
-The macOS and Windows installer jobs cache that download in
-`${{ runner.temp }}/awen-node-runtime` and pass the directory through
-`AWEN_NODE_RUNTIME_CACHE`. A restored archive is verified again before use, so a
-stale cache entry only costs one download, never a wrong runtime.
+Platform collection and installation checks are in `scripts/release/`. Their `VERSION`, `ARCH`, `MACHO_ARCH` and `SIGNING_MODE` inputs match the reusable workflow. `assets.mjs assemble|verify <directory> <version>` rejects extra, missing, empty, linked or modified release assets.

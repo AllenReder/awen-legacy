@@ -161,12 +161,11 @@ function SettingsContentLayout() {
     >
       <MaterialSurface
         kind="topbar"
-        className="drag-region flex h-[var(--workbench-titlebar-height,36px)] shrink-0 items-center border-b border-[var(--material-edge)]"
-        data-tauri-drag-region="deep"
+        className="drag-region flex h-[var(--workspace-topbar-height)] shrink-0 items-center border-b border-[var(--material-edge)]"
         onDoubleClick={handleTopbarDoubleClick}
       >
         <TopbarInset />
-        <div className="flex min-w-0 flex-1 items-center gap-3 px-3" data-tauri-drag-region>
+        <div className="flex min-w-0 flex-1 items-center gap-3 px-3">
           <div className="[-webkit-app-region:no-drag]">
             <SettingsBreadcrumb
               pathname={location.pathname}

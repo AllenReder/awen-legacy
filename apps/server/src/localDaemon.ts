@@ -100,6 +100,9 @@ export interface LocalDaemonLaunchOptions {
   readonly reservePort?: () => Promise<number>;
   readonly serverInvocation?: LocalDaemonServerInvocation;
   readonly currentDirectory?: string;
+  readonly expectedServerVersion?: string;
+  readonly bindHost?: string;
+  readonly environment?: NodeJS.ProcessEnv;
 }
 
 export interface LocalDaemonServerInvocation {
@@ -263,40 +266,50 @@ export async function withLocalDaemonLaunchLock<A>(
   const ownerId = NodeCrypto.randomUUID();
   const deadline = Date.now() + LOCK_TIMEOUT_MS;
 
-  for (;;) {
+  // Publish a complete owner record atomically. Opening the shared path with
+  // "wx" first leaves an empty, unrecoverable lock if the launcher is killed
+  // before writeFile. A crash before link leaves only a private candidate;
+  // a crash after link leaves a valid PID record that dead-owner recovery handles.
+  const candidatePath = `${paths.launchLockPath}.${ownerId}`;
+  try {
+    const handle = await NodeFSP.open(candidatePath, "wx", 0o600);
     try {
-      const handle = await NodeFSP.open(paths.launchLockPath, "wx", 0o600);
-      try {
-        await handle.writeFile(`${JSON.stringify({ ownerId, pid: process.pid })}\n`, "utf8");
-        await handle.sync();
-      } finally {
-        await handle.close();
-      }
-      break;
-    } catch (cause) {
-      if (!(cause instanceof Error && "code" in cause && cause.code === "EEXIST")) {
-        throw cause;
-      }
-
-      const existing = await readLockRecord(paths.launchLockPath);
-      if (existing === undefined && Date.now() >= deadline) {
-        throw new LocalDaemonError(
-          "launch-lock-timeout",
-          "The local daemon launch lock is invalid and did not clear; refusing to start another daemon.",
-        );
-      }
-      if (existing && !isProcessAlive(existing.pid)) {
-        await NodeFSP.rm(paths.launchLockPath, { force: true });
-        continue;
-      }
-      if (Date.now() >= deadline) {
-        throw new LocalDaemonError(
-          "launch-lock-timeout",
-          "Another local daemon operation did not finish before the launch lock expired.",
-        );
-      }
-      await delay(LOCK_WAIT_MS);
+      await handle.writeFile(`${JSON.stringify({ ownerId, pid: process.pid })}\n`, "utf8");
+      await handle.sync();
+    } finally {
+      await handle.close();
     }
+    for (;;) {
+      try {
+        await NodeFSP.link(candidatePath, paths.launchLockPath);
+        break;
+      } catch (cause) {
+        if (!(cause instanceof Error && "code" in cause && cause.code === "EEXIST")) {
+          throw cause;
+        }
+
+        const existing = await readLockRecord(paths.launchLockPath);
+        if (existing === undefined && Date.now() >= deadline) {
+          throw new LocalDaemonError(
+            "launch-lock-timeout",
+            "The local daemon launch lock is invalid and did not clear; refusing to start another daemon.",
+          );
+        }
+        if (existing && !isProcessAlive(existing.pid)) {
+          await NodeFSP.rm(paths.launchLockPath, { force: true });
+          continue;
+        }
+        if (Date.now() >= deadline) {
+          throw new LocalDaemonError(
+            "launch-lock-timeout",
+            "Another local daemon operation did not finish before the launch lock expired.",
+          );
+        }
+        await delay(LOCK_WAIT_MS);
+      }
+    }
+  } finally {
+    await NodeFSP.rm(candidatePath, { force: true });
   }
 
   try {
@@ -653,9 +666,10 @@ async function spawnManagedServer(input: {
   const invocation = input.options.serverInvocation ?? defaultServerInvocation();
   const environment: NodeJS.ProcessEnv = {
     ...process.env,
+    ...input.options.environment,
     AWEN_HOME: input.baseDir,
     AWEN_MODE: "desktop",
-    AWEN_HOST: "127.0.0.1",
+    AWEN_HOST: input.options.bindHost ?? "127.0.0.1",
     AWEN_PORT: String(input.port),
     AWEN_NO_BROWSER: "1",
     AWEN_DAEMON_ID: input.daemonId,
@@ -672,7 +686,7 @@ async function spawnManagedServer(input: {
       "--mode",
       "desktop",
       "--host",
-      "127.0.0.1",
+      input.options.bindHost ?? "127.0.0.1",
       "--port",
       String(input.port),
       "--base-dir",
@@ -862,17 +876,31 @@ export async function startLocalDaemon(
     const requested = requestedDaemonPort();
 
     if (existing.status === "ready") {
-      if (requested._tag !== "set") {
-        return descriptorFromState(existing.state);
+      let versionMatches = true;
+      if (options.expectedServerVersion !== undefined) {
+        const descriptor = await requestJson(
+          new URL("/.well-known/awen/environment", existing.state.origin).href,
+          { method: "GET", headers: { accept: "application/json" } },
+          options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
+        );
+        if (
+          descriptor.status !== 200 ||
+          !isRecord(descriptor.body) ||
+          typeof descriptor.body.serverVersion !== "string"
+        ) {
+          throw new LocalDaemonError(
+            "daemon-version-unavailable",
+            "Cannot verify the running daemon version.",
+          );
+        }
+        versionMatches = descriptor.body.serverVersion === options.expectedServerVersion;
       }
-      const existingPort = portOfOrigin(existing.state.origin);
-      if (existingPort === requested.port) {
-        return descriptorFromState(existing.state);
-      }
-      await assertRequestedPortAvailable(requested);
-      // Already inside the launch lock: re-entering it from this process can
-      // never succeed, because the lock record names this very pid, so a
-      // nested `stopLocalDaemon` would spin until `launch-lock-timeout`.
+      const portMatches =
+        requested._tag !== "set" || portOfOrigin(existing.state.origin) === requested.port;
+      if (versionMatches && portMatches) return descriptorFromState(existing.state);
+      // Version replacement is atomic under the launch lock and only signals a
+      // daemon whose identity and bootstrap credential were verified above.
+      if (!portMatches) await assertRequestedPortAvailable(requested);
       await stopLocalDaemonLocked({ baseDir: options.baseDir, confirm: true });
     } else if (existing.status !== "absent") {
       await reconcileUnattachedRecord({ paths, existing });

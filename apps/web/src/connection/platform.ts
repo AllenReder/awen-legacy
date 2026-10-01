@@ -42,7 +42,11 @@ import { FetchHttpClient } from "effect/unstable/http";
 
 import { APP_VERSION } from "../branding";
 import { readDesktopPrimaryBearerToken } from "../environments/primary/desktopAuth";
-import { DesktopSshRequestError, SshPasswordPromptCancelledError } from "../desktop/sshErrors";
+import {
+  decodeDesktopSshError,
+  DesktopSshRequestError,
+  SshPasswordPromptCancelledError,
+} from "../desktop/sshErrors";
 import { primaryEnvironmentHttpLayer } from "../environments/primary/httpLayer";
 import {
   readPrimaryEnvironmentTarget,
@@ -124,6 +128,7 @@ function clientMetadata() {
 }
 
 export function mapDesktopSshPreparationError(cause: unknown) {
+  cause = decodeDesktopSshError(cause);
   const message = cause instanceof Error ? cause.message : String(cause);
   if (cause instanceof SshPasswordPromptCancelledError) {
     return new ConnectionBlockedError({

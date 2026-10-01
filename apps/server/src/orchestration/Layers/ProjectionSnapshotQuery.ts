@@ -1,5 +1,6 @@
 import {
   AgentSessionImportSource,
+  FILE_RESTORE_DISABLED_ACTIVITY_KIND,
   ApprovalRequestId,
   ChatAttachment,
   OrchestrationMessageContext,
@@ -1869,6 +1870,11 @@ pending_approval_requests AS (
           FROM user_input_lifecycle
           WHERE request_order = 1
             AND kind = 'user-input.requested'
+          UNION ALL
+          SELECT activity_id
+          FROM projection_thread_activities
+          WHERE thread_id = ${threadId}
+            AND kind = ${FILE_RESTORE_DISABLED_ACTIVITY_KIND}
         )
   `;
 

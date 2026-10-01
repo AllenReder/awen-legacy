@@ -54,15 +54,7 @@ import {
 
 const OTLP_TRACES_PROXY_PATH = "/api/observability/v1/traces";
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "::1", "localhost"]);
-const DESKTOP_RENDERER_ORIGINS = [
-  "awen://app",
-  "awen-dev://app",
-  // Tauri 2 serves bundled assets from tauri.localhost. Keep the legacy
-  // scheme too because platform-specific WebViews may report it instead.
-  "http://tauri.localhost",
-  "https://tauri.localhost",
-  "tauri://localhost",
-];
+const DESKTOP_RENDERER_ORIGINS = ["awen://app", "awen-dev://app"];
 const SVG_CONTENT_SECURITY_POLICY = "default-src 'none'; style-src 'unsafe-inline'; sandbox";
 // HTML previews are agent output, not the app. The sandbox gives the document an
 // opaque origin: scripts run, but same-origin cookies, storage, and API calls are

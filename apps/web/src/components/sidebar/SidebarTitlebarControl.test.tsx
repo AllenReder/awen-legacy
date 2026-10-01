@@ -39,7 +39,7 @@ describe("SidebarTitlebarButton", () => {
     });
 
     const button = renderer.root.findByProps({ "data-testid": "test-button" });
-    expect(button.props.className).toContain("size-7");
+    expect(button.props.className).toContain("size-[var(--workspace-titlebar-control-size)]");
     expect(button.props.className).toContain("[-webkit-app-region:no-drag]");
     expect(button.props.className).toContain("active:scale-[0.98]");
     expect(button.props["aria-label"]).toBe("Settings");

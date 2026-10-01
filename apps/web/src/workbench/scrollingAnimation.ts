@@ -20,6 +20,8 @@ export interface ScrollRevealInput {
    * focused Pane. Absent everywhere else, leaving ordinary reveal in charge.
    */
   readonly entryDir?: -1 | 1;
+  /** Continuous navigation may already have panned beyond the entry edge. */
+  readonly entryOffset?: number;
 }
 
 export interface ScrollRevealTarget {
@@ -120,7 +122,10 @@ export function computeScrollingRevealTarget(input: ScrollRevealInput): ScrollRe
   // left shows its leftmost Columns first.
   const targetTop = 0;
   if (entryDir !== undefined) {
-    const entryLeft = entryDir === 1 ? 0 : maxScrollLeft;
+    const entryLeft = Math.max(
+      0,
+      Math.min(maxScrollLeft, input.entryOffset ?? (entryDir === 1 ? 0 : maxScrollLeft)),
+    );
     return {
       targetLeft: entryLeft,
       targetTop,
@@ -291,6 +296,7 @@ export interface TabEntry {
   readonly dir: -1 | 1;
   readonly focusedPaneId: string;
   readonly settledAt: number;
+  readonly offset?: number;
 }
 
 /**

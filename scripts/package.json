@@ -7,7 +7,8 @@
     "test": "vp test run",
     "test:e2e:workbench": "node workbench-e2e.mjs",
     "test:e2e:branch": "node workbench-e2e.mjs --branch-only",
-    "smoke:desktop-terminal": "node desktop-terminal-smoke.mjs"
+    "smoke:desktop-terminal": "node desktop-terminal-smoke.mjs",
+    "test:e2e:chrome": "node workbench-e2e.mjs --chrome-only"
   },
   "dependencies": {
     "@awen/client-runtime": "workspace:*",

@@ -4,7 +4,10 @@ Awen adopts native OS-level desktop translucency (macOS WindowServer blur and Wi
 
 ## Status
 
-Accepted.
+Accepted; ADR-0030 supersedes the Tauri compositor implementation, including the
+private macOS pixel-radius API. Native Window Glass now uses system material
+presets. Theme, Artwork, and user-controlled transparency requirements remain
+applicable, with the Material Surface refinements in ADR-0010.
 
 ## Context
 

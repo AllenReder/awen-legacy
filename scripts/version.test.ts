@@ -13,10 +13,6 @@ const VERSIONED_FILES = [
   "apps/web/package.json",
   "apps/desktop/package.json",
   "packages/contracts/package.json",
-  "apps/desktop/src-tauri/tauri.conf.json",
-  "apps/desktop/src-tauri/tauri.macos.conf.json",
-  "apps/desktop/src-tauri/Cargo.toml",
-  "apps/desktop/src-tauri/Cargo.lock",
 ];
 
 function withVersionFixture(run: (rootDir: string) => void): void {
@@ -40,55 +36,17 @@ describe("product version", () => {
 
   it("updates every product manifest from one version", () => {
     withVersionFixture((rootDir) => {
-      const macosConfigPath = NodePath.join(
-        rootDir,
-        "apps/desktop/src-tauri/tauri.macos.conf.json",
-      );
-      const initialMacosConfig = JSON.parse(NodeFS.readFileSync(macosConfigPath, "utf8")) as {
-        bundle: { macOS: { bundleVersion: string } };
-      };
-      const nextBundleVersion = String(Number(initialMacosConfig.bundle.macOS.bundleVersion) + 1);
+      const desktopPath = NodePath.join(rootDir, "apps/desktop/package.json");
+      const initial = JSON.parse(NodeFS.readFileSync(desktopPath, "utf8"));
+      const nextBuild = String(Number(initial.build.mac.bundleVersion) + 1);
       setVersion("1.2.3-rc.1", rootDir);
-
       expect(checkVersion(rootDir)).toEqual([]);
-      expect(
-        JSON.parse(NodeFS.readFileSync(NodePath.join(rootDir, "package.json"), "utf8")).version,
-      ).toBe("1.2.3-rc.1");
-      expect(
-        NodeFS.readFileSync(NodePath.join(rootDir, "apps/desktop/src-tauri/Cargo.toml"), "utf8"),
-      ).toContain('version = "1.2.3-rc.1"');
-      expect(
-        NodeFS.readFileSync(
-          NodePath.join(rootDir, "apps/desktop/src-tauri/tauri.conf.json"),
-          "utf8",
-        ),
-      ).toContain('"version": "../../../package.json"');
-      const macosConfig = JSON.parse(NodeFS.readFileSync(macosConfigPath, "utf8")) as {
-        version: string;
-        bundle: { macOS: { bundleVersion: string } };
-      };
-      expect(macosConfig.version).toBe("1.2.3");
-      expect(macosConfig.bundle.macOS.bundleVersion).toBe(nextBundleVersion);
-
+      const desktop = JSON.parse(NodeFS.readFileSync(desktopPath, "utf8"));
+      expect(desktop.version).toBe("1.2.3-rc.1");
+      expect(desktop.build.mac.bundleVersion).toBe(nextBuild);
+      const original = NodeFS.readFileSync(desktopPath, "utf8");
       setVersion("1.2.3-rc.1", rootDir);
-      const repeatedMacosConfig = JSON.parse(NodeFS.readFileSync(macosConfigPath, "utf8")) as {
-        bundle: { macOS: { bundleVersion: string } };
-      };
-      expect(repeatedMacosConfig.bundle.macOS.bundleVersion).toBe(nextBundleVersion);
-    });
-  });
-
-  // `formatJson` expands compact arrays. Rewriting an unchanged manifest turned
-  // that into formatting churn that failed `vp fmt --check` in CI.
-  it("leaves a manifest whose value did not change byte-for-byte intact", () => {
-    withVersionFixture((rootDir) => {
-      const tauriConfigPath = NodePath.join(rootDir, "apps/desktop/src-tauri/tauri.conf.json");
-      const original = NodeFS.readFileSync(tauriConfigPath, "utf8");
-      expect(original).toContain('"scope": ["$RESOURCE/**"]');
-
-      setVersion("1.2.3-rc.1", rootDir);
-
-      expect(NodeFS.readFileSync(tauriConfigPath, "utf8")).toBe(original);
+      expect(NodeFS.readFileSync(desktopPath, "utf8")).toBe(original);
     });
   });
 

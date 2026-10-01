@@ -1,5 +1,8 @@
 "use client";
 
+import { GlassBackdrop } from "./GlassBackdrop";
+import { OVERLAY_CONTENT_MOTION_CLASS } from "./overlayStyles";
+
 import { Spinner } from "~/components/ui/spinner";
 
 import { Toast } from "@base-ui/react/toast";
@@ -560,7 +563,7 @@ function Toasts({ position }: { position: ToastPosition }) {
     <Toast.Portal data-slot="toast-portal">
       <Toast.Viewport
         className={cn(
-          "fixed z-100 mx-auto flex w-[calc(100%-var(--toast-inset)*2)] max-w-90 [--toast-header-offset:var(--workspace-topbar-height)] [--toast-inset:--spacing(4)] sm:[--toast-inset:--spacing(8)]",
+          "fixed z-[150] mx-auto flex w-[calc(100%-var(--toast-inset)*2)] max-w-90 [--toast-header-offset:var(--workspace-topbar-height)] [--toast-inset:--spacing(4)] sm:[--toast-inset:--spacing(8)]",
           // Vertical positioning
           "data-[position*=top]:top-[calc(var(--toast-inset)+var(--toast-header-offset))]",
           "data-[position*=bottom]:bottom-(--toast-inset)",
@@ -588,7 +591,7 @@ function Toasts({ position }: { position: ToastPosition }) {
           return (
             <Toast.Root
               className={cn(
-                "material-surface-overlay absolute z-[calc(9999-var(--toast-index))] w-full overflow-visible select-none rounded-lg text-popover-foreground shadow-xl shadow-black/25 [transition:transform_.5s_cubic-bezier(.22,1,.36,1),opacity_.5s,height_.15s]",
+                "isolate absolute z-[calc(9999-var(--toast-index))] w-full overflow-visible select-none rounded-lg border text-popover-foreground shadow-(--overlay-shadow) [transition:transform_.5s_cubic-bezier(.22,1,.36,1),opacity_.5s,height_.15s]",
                 // Base positioning using data-position
                 "data-[position*=right]:right-0 data-[position*=right]:left-auto",
                 "data-[position*=left]:right-auto data-[position*=left]:left-0",
@@ -661,6 +664,7 @@ function Toasts({ position }: { position: ToastPosition }) {
                 dismissAfterVisibleMs={toast.data?.dismissAfterVisibleMs}
                 toastId={toast.id}
               />
+              <GlassBackdrop />
               <div className={toastCornerDismissClass}>
                 <button
                   aria-label="Dismiss notification"
@@ -678,7 +682,7 @@ function Toasts({ position }: { position: ToastPosition }) {
                 className={cn(
                   // `overflow-x: clip` avoids the CSS quirk where pairing `hidden` + `y: visible`
                   // forces `y` to `auto`. Expandable detail panels can extend below without being cut off.
-                  "pointer-events-auto min-h-0 overflow-y-visible pl-3.5 text-sm transition-opacity [transition-duration:calc(250ms*var(--motion-duration-scale,1))] [overflow-x:clip] data-expanded:opacity-100",
+                  "relative z-[1] pointer-events-auto min-h-0 overflow-y-visible pl-3.5 text-sm transition-opacity [transition-duration:calc(250ms*var(--motion-duration-scale,1))] [overflow-x:clip] data-expanded:opacity-100",
                   stackedActionLayout
                     ? "flex flex-col gap-2 py-2.5 pr-3.5"
                     : cn("py-3", "flex items-center justify-between gap-1.5", inlineContentEndPad),
@@ -732,7 +736,7 @@ function AnchoredToasts() {
 
             return (
               <Toast.Positioner
-                className="z-100 max-w-[min(--spacing(64),var(--available-width))]"
+                className="z-[150] max-w-[min(--spacing(64),var(--available-width))]"
                 data-slot="toast-positioner"
                 key={toast.id}
                 sideOffset={positionerProps.sideOffset ?? 4}
@@ -740,14 +744,17 @@ function AnchoredToasts() {
               >
                 <Toast.Root
                   className={cn(
-                    "material-surface-overlay relative overflow-visible text-balance text-popover-foreground text-xs shadow-xl shadow-black/25 transition-[scale,opacity] data-ending-style:scale-98 data-starting-style:scale-98 data-ending-style:opacity-0 data-starting-style:opacity-0",
+                    "overlay-frame relative isolate overflow-visible border text-balance text-popover-foreground text-xs",
                     tooltipStyle ? "rounded-md" : "rounded-lg",
                   )}
                   data-slot="toast-popup"
                   toast={toast}
                 >
+                  <GlassBackdrop />
                   {tooltipStyle ? (
-                    <Toast.Content className="pointer-events-auto px-2 py-1">
+                    <Toast.Content
+                      className={cn(OVERLAY_CONTENT_MOTION_CLASS, "pointer-events-auto px-2 py-1")}
+                    >
                       <Toast.Title data-slot="toast-title" />
                     </Toast.Content>
                   ) : (
@@ -771,6 +778,7 @@ function AnchoredToasts() {
                       </div>
                       <Toast.Content
                         className={cn(
+                          OVERLAY_CONTENT_MOTION_CLASS,
                           "pointer-events-auto min-h-0 overflow-y-visible pl-3.5 text-sm [overflow-x:clip]",
                           stackedActionLayout
                             ? "flex flex-col gap-2 py-2.5 pr-3.5"

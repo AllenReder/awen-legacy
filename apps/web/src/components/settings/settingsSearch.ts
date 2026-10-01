@@ -152,11 +152,10 @@ export const SETTINGS_SEARCH_ITEMS = [
     nativeGlassOnly: true,
   },
   {
-    id: "setting-sidebar-blur",
-    title: "Window blur radius",
+    id: "setting-content-backdrop-blur",
+    title: "Content backdrop blur",
     to: "/settings/appearance",
-    searchTerms: ["blur frosted glass window background radius vibrancy acrylic"],
-    nativeGlassOnly: true,
+    searchTerms: ["blur frosted glass overlay composer intensity radius"],
   },
   {
     id: "setting-sidebar-opacity",
@@ -176,8 +175,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "setting-overlay-opacity",
     title: "Overlay opacity",
     to: "/settings/appearance",
-    searchTerms: ["menus dialogs frosted opacity transparency"],
-    nativeGlassOnly: true,
+    searchTerms: ["menus dialogs composer frosted opacity transparency density"],
   },
   {
     id: "setting-workbench-glass",

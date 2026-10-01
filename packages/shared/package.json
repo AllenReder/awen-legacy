@@ -47,6 +47,14 @@
       "types": "./src/sourceControl.ts",
       "import": "./src/sourceControl.ts"
     },
+    "./editor": {
+      "types": "./src/editor.ts",
+      "import": "./src/editor.ts"
+    },
+    "./otelEnvironment": {
+      "types": "./src/otelEnvironment.ts",
+      "import": "./src/otelEnvironment.ts"
+    },
     "./logging": {
       "types": "./src/logging.ts",
       "import": "./src/logging.ts"
@@ -306,6 +314,10 @@
     "./daemonPort": {
       "types": "./src/daemonPort.ts",
       "import": "./src/daemonPort.ts"
+    },
+    "./windowChromeGeometry": {
+      "types": "./src/windowChromeGeometry.ts",
+      "import": "./src/windowChromeGeometry.ts"
     }
   },
   "scripts": {

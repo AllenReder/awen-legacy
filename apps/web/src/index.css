@@ -113,23 +113,18 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(awen-mob
   --command-shell-inset: 0.5rem;
   --command-content-inset: 1rem;
   --floating-content-inset: 0.75rem;
-  --glass-blur: 12px;
+  --glass-blur: 8px;
   --glass-opacity: 80%;
   --glass-saturation: 1.14;
-  --desktop-window-right-resize-inset: 0px;
-  --workspace-topbar-height: 52px;
+  --workspace-topbar-height: var(--chrome-titlebar-base-height);
   --workspace-controls-top: 0px;
-  --workspace-controls-left: calc(env(safe-area-inset-left) + 0.75rem);
+  --workspace-controls-left: calc(env(safe-area-inset-left) + var(--sidebar-trigger-left));
   --workspace-controls-right: calc(env(safe-area-inset-right) + 0.75rem);
   --workspace-native-controls-inset: 0px;
-  --workspace-titlebar-control-size: 1.75rem;
-  --workspace-titlebar-control-gap: 0.75rem;
-  --sidebar-base-spacing: 12px;
-  --sidebar-controls-left: 76px;
-  --sidebar-controls-left-win: 12px;
-  --sidebar-controls-right: 12px;
-  --workbench-titlebar-height: 36px;
-  --workbench-titlebar-center: calc(var(--workbench-titlebar-height) / 2);
+  --workspace-titlebar-content-left: calc(
+    var(--workspace-controls-left) + var(--workspace-titlebar-control-size) +
+      var(--workspace-titlebar-control-gap)
+  );
   --workspace-titlebar-scroll-fade-height: 1.5rem;
   --window-control-close-hover: #e81123;
   --window-control-close-active: #c4101f;
@@ -166,15 +161,15 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(awen-mob
     --appearance-contrast-target: white;
     --app-scrollbar-thumb: rgb(255 255 255 / 8%);
     --app-scrollbar-thumb-hover: rgb(255 255 255 / 12%);
-    --glass-blur: 16px;
+    --glass-blur: 8px;
     --glass-saturation: 1.08;
   }
 }
 
 .wco {
-  --workspace-topbar-height: env(titlebar-area-height, 52px);
+  --workspace-topbar-height: env(titlebar-area-height, var(--chrome-titlebar-base-height));
   --workspace-controls-top: env(titlebar-area-y, 0px);
-  --workspace-controls-left: calc(env(titlebar-area-x, 0px) + 0.75rem);
+  --workspace-controls-left: calc(env(titlebar-area-x, 0px) + var(--sidebar-trigger-left));
   --workspace-controls-right: calc(
     100vw - env(titlebar-area-width, 100vw) - env(titlebar-area-x, 0px) + 0.75rem
   );
@@ -356,7 +351,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(awen-mob
   @variant dark {
     --material-edge: color-mix(in srgb, var(--background) 28%, transparent);
     --material-background-mask-color: black;
-    --material-background-mask-opacity: var(--material-background-mask-dark-opacity, 0.35);
+    --material-background-mask-opacity: var(--material-background-mask-dark-opacity, 0.3);
   }
 }
 
@@ -366,9 +361,19 @@ html.material-stage-native #root {
   background: transparent;
 }
 
-/* One viewport-wide tint, beneath all Material Surfaces and portal content. */
+/* Render the viewport tint as an explicit DOM layer behind materials and
+   portals, without depending on body background propagation to the canvas. */
 html.material-stage-native body {
-  background-color: color-mix(
+  isolation: isolate;
+}
+
+html.material-stage-native body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: color-mix(
     in srgb,
     var(--material-background-mask-color) calc(var(--material-background-mask-opacity, 0) * 100%),
     transparent
@@ -384,12 +389,12 @@ html.material-stage-opaque #root {
 .material-surface-sidebar {
   background: color-mix(
     in srgb,
-    var(--sidebar) calc(var(--material-sidebar-opacity, 0.5) * 100%),
+    var(--sidebar) calc(var(--material-sidebar-opacity, 0.1) * 100%),
     transparent
   );
   background-color: color-mix(
     in srgb,
-    var(--sidebar) calc(var(--material-sidebar-opacity, 0.5) * 100%),
+    var(--sidebar) calc(var(--material-sidebar-opacity, 0.1) * 100%),
     transparent
   );
 }
@@ -397,12 +402,12 @@ html.material-stage-opaque #root {
 .material-surface-topbar {
   background: color-mix(
     in srgb,
-    var(--app-chrome-background) calc(var(--material-topbar-opacity, 0.5) * 100%),
+    var(--app-chrome-background) calc(var(--material-topbar-opacity, 0.1) * 100%),
     transparent
   );
   background-color: color-mix(
     in srgb,
-    var(--app-chrome-background) calc(var(--material-topbar-opacity, 0.5) * 100%),
+    var(--app-chrome-background) calc(var(--material-topbar-opacity, 0.1) * 100%),
     transparent
   );
 }
@@ -410,12 +415,12 @@ html.material-stage-opaque #root {
 .material-surface-workbench {
   background: color-mix(
     in srgb,
-    var(--canvas) calc(var(--material-workbench-opacity, 0.5) * 100%),
+    var(--canvas) calc(var(--material-workbench-opacity, 0.1) * 100%),
     transparent
   );
   background-color: color-mix(
     in srgb,
-    var(--canvas) calc(var(--material-workbench-opacity, 0.5) * 100%),
+    var(--canvas) calc(var(--material-workbench-opacity, 0.1) * 100%),
     transparent
   );
 }
@@ -423,55 +428,16 @@ html.material-stage-opaque #root {
 .material-surface-overlay {
   background: color-mix(
     in srgb,
-    var(--material-overlay-tint) calc(var(--material-overlay-opacity, 0.9) * 100%),
+    var(--material-overlay-tint) calc(var(--overlay-film-opacity, 0.05) * 100%),
     transparent
   );
   background-color: color-mix(
     in srgb,
-    var(--material-overlay-tint) calc(var(--material-overlay-opacity, 0.9) * 100%),
+    var(--material-overlay-tint) calc(var(--overlay-film-opacity, 0.05) * 100%),
     transparent
   );
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
   backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
-}
-
-/* WebView2 cannot sample app content through a backdrop-filter while the DWM
-   window is transparent. Replace that no-op with a denser Fluent-style
-   material: a semi-transparent tint, subtle grain and sheen, an explicit edge,
-   and a deep shadow that keeps the overlay legible above the workbench.
-   macOS keeps the live backdrop filter, and browsers keep the opaque fallback
-   below. */
-html.material-stage-windows .material-surface-overlay {
-  --material-windows-overlay-opacity: calc(var(--material-overlay-opacity, 0.9) * 90%);
-  --material-windows-overlay-tint: color-mix(
-    in srgb,
-    var(--material-overlay-tint) 94%,
-    var(--foreground)
-  );
-  background-color: color-mix(
-    in srgb,
-    var(--material-windows-overlay-tint) var(--material-windows-overlay-opacity),
-    transparent
-  );
-  background-image:
-    linear-gradient(135deg, color-mix(in srgb, var(--foreground) 6%, transparent), transparent 46%),
-    var(--surface-grain);
-  background-repeat: no-repeat, repeat;
-  background-size: auto, var(--surface-grain-size);
-  border: 1px solid color-mix(in srgb, var(--foreground) 15%, transparent);
-  box-shadow:
-    inset 0 1px color-mix(in srgb, var(--foreground) 6%, transparent),
-    0 18px 48px -20px rgb(0 0 0 / 45%),
-    0 6px 16px -10px rgb(0 0 0 / 28%);
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
-
-  @variant dark {
-    box-shadow:
-      inset 0 1px color-mix(in srgb, var(--foreground) 9%, transparent),
-      0 22px 56px -20px rgb(0 0 0 / 85%),
-      0 8px 20px -12px rgb(0 0 0 / 65%);
-  }
 }
 
 /* Native compositor blur is unavailable on Linux and in the browser. Keep those
@@ -521,14 +487,6 @@ html.material-stage-opaque .material-surface-workbench {
   background-color: var(--material-opaque-workbench);
 }
 
-html.material-stage-opaque .material-surface-overlay {
-  background: var(--material-opaque-overlay);
-  background-color: var(--material-opaque-overlay);
-  border-color: var(--material-opaque-edge);
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
-}
-
 .workbench-artwork {
   position: absolute;
   inset: 0;
@@ -544,7 +502,7 @@ html.material-stage-opaque .material-surface-overlay {
 @utility surface-glass {
   background: color-mix(
     in srgb,
-    var(--background) calc(var(--material-overlay-opacity, 0.9) * 100%),
+    var(--background) calc(var(--material-overlay-opacity, 0.05) * 100%),
     transparent
   );
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
@@ -564,7 +522,7 @@ html.material-stage-opaque .material-surface-overlay {
     ),
     color-mix(
       in srgb,
-      var(--background) calc(var(--material-overlay-opacity, 0.9) * 100%),
+      var(--background) calc(var(--material-overlay-opacity, 0.05) * 100%),
       transparent
     ) !important;
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
@@ -594,7 +552,7 @@ html.material-stage-opaque .material-surface-overlay {
 @utility dialog-glass {
   background: color-mix(
     in srgb,
-    var(--background) calc(var(--material-overlay-opacity, 0.9) * 100%),
+    var(--background) calc(var(--material-overlay-opacity, 0.05) * 100%),
     transparent
   );
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
@@ -1804,11 +1762,6 @@ body {
   overflow-y: hidden;
   overscroll-behavior-y: none;
   padding-top: max(env(safe-area-inset-top), 0px);
-  padding-right: var(--desktop-window-right-resize-inset);
-}
-
-.electron-windows {
-  --desktop-window-right-resize-inset: 6px;
 }
 
 /* App-chrome grain. Baked into each surface's own background (behind
@@ -1892,12 +1845,6 @@ html[data-workbench-dragging] {
 html[data-workbench-dragging] * {
   user-select: none;
   -webkit-user-select: none;
-}
-
-/* The Workbench title strip sits alongside the full-height Sidebar. */
-html[data-workbench-window-chrome] {
-  --workbench-titlebar-height: 36px;
-  --workbench-titlebar-center: calc(var(--workbench-titlebar-height) / 2);
 }
 
 /* Scrollbar styling */
@@ -2699,8 +2646,109 @@ html[data-theme-id] [data-app-sidebar] {
   --sidebar-row-active: color-mix(in srgb, var(--ring) 12%, transparent);
   --sidebar-row-selected: color-mix(in srgb, var(--ring) 8%, transparent);
   --material-overlay-tint: var(--popover);
+  --overlay-film-opacity: var(--material-overlay-opacity, 0.05);
   @variant dark {
     --sidebar-row-hover: rgb(255 255 255 / 8%);
     --material-overlay-tint: color-mix(in srgb, var(--popover) 88%, var(--foreground));
+  }
+}
+
+/* System accessibility overrides both content filtering and translucent tint. */
+@media (prefers-reduced-transparency: reduce) {
+  .material-surface-overlay,
+  .surface-glass,
+  [data-slot="chat-composer"] {
+    background: var(--background) !important;
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+  :root {
+    --glass-blur: 0px !important;
+    --glass-opacity: 100% !important;
+  }
+}
+
+/* Stable frame geometry; glass and content share entry/exit without transforming
+   an ancestor of backdrop-filter (which would isolate its sampling). */
+:root {
+  --overlay-shadow: 0 16px 40px -18px rgb(0 0 0 / 55%);
+  --overlay-modal-shadow: 0 24px 64px -24px rgb(0 0 0 / 45%);
+  --overlay-duration: calc(170ms * var(--motion-duration-scale, 1));
+  --overlay-easing: cubic-bezier(0.16, 1, 0.3, 1);
+}
+:root.dark {
+  --overlay-shadow: 0 18px 44px -18px rgb(0 0 0 / 80%);
+  --overlay-modal-shadow: 0 24px 64px -24px rgb(0 0 0 / 65%);
+}
+.overlay-frame {
+  box-shadow: var(--overlay-shadow);
+  border-color: var(--contrast-border);
+  transition:
+    border-color var(--overlay-duration) var(--overlay-easing),
+    box-shadow var(--overlay-duration) var(--overlay-easing);
+}
+.overlay-frame:is([data-starting-style], [data-ending-style]),
+:is([data-starting-style], [data-ending-style]) .overlay-frame {
+  border-color: transparent;
+  box-shadow: 0 0 0 0 transparent;
+}
+.overlay-frame-modal {
+  box-shadow: var(--overlay-modal-shadow);
+}
+.overlay-content,
+.overlay-material {
+  transition:
+    scale var(--overlay-duration) var(--overlay-easing),
+    opacity var(--overlay-duration) var(--overlay-easing);
+}
+.overlay-content:is([data-starting-style], [data-ending-style]),
+.overlay-material:is([data-starting-style], [data-ending-style]),
+:is([data-starting-style], [data-ending-style]) .overlay-material,
+:is([data-starting-style], [data-ending-style]) .overlay-content {
+  scale: 0.94;
+  opacity: 0;
+}
+.overlay-material {
+  transform-origin: var(--transform-origin, center);
+}
+.overlay-frame-modal .overlay-material,
+.overlay-content-modal {
+  transform-origin: center;
+}
+/* Only adjacent menubar switching is instant. Escape and keyboard activation
+   retain the same material transition as pointer opening and dismissal. */
+[data-instant="group"] .overlay-material,
+[data-instant="group"] .overlay-frame,
+[data-instant="group"] .overlay-content,
+.overlay-content[data-instant="group"] {
+  transition: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .overlay-frame,
+  .overlay-content,
+  .overlay-material {
+    transition: none;
+    scale: none !important;
+  }
+}
+
+/* Base UI waits on the popup itself, while scale/opacity live in its children.
+   A nonvisual lifecycle animation keeps the material mounted through exit. */
+.overlay-frame[data-ending-style],
+.overlay-lifecycle[data-ending-style] {
+  animation: overlay-frame-lifetime var(--overlay-duration) linear;
+}
+@keyframes overlay-frame-lifetime {
+  from {
+    --overlay-lifetime: 0;
+  }
+  to {
+    --overlay-lifetime: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .overlay-frame[data-ending-style],
+  .overlay-lifecycle[data-ending-style] {
+    animation: none;
   }
 }

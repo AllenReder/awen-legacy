@@ -279,6 +279,28 @@ describe("primary topology cache", () => {
 });
 
 describe("desktop SSH failure mapping", () => {
+  it("preserves a failure code across Electron IPC serialization", () => {
+    expect(
+      mapDesktopSshPreparationError(
+        new Error(
+          "Error invoking remote method 'desktop:daemon-ssh': [awen-ssh-error:host-key-change:409] Host changed",
+        ),
+      ),
+    ).toMatchObject({
+      _tag: "ConnectionBlockedError",
+      reason: "unsupported",
+      failureCode: "host-key-change",
+      detail: "Host changed",
+    });
+    expect(
+      mapDesktopSshPreparationError(new Error("[awen-ssh-cancelled] Cancelled")),
+    ).toMatchObject({
+      _tag: "ConnectionBlockedError",
+      reason: "authentication",
+      failureCode: "ssh-authentication",
+      detail: "Cancelled",
+    });
+  });
   it.each([
     ["unreachable", "ConnectionTransientError", "network"],
     ["ssh-authentication", "ConnectionBlockedError", "authentication"],

@@ -142,7 +142,7 @@ function SelectPopup({
         sideOffset={sideOffset}
       >
         <SelectPrimitive.Popup
-          className="origin-(--transform-origin) rounded-lg text-foreground outline-none transition-opacity [transition-duration:calc(170ms*var(--motion-duration-scale,1))] data-ending-style:opacity-0 data-starting-style:opacity-0"
+          className="overlay-lifecycle origin-(--transform-origin) rounded-lg text-foreground outline-none"
           data-slot="select-popup"
           {...props}
         >
@@ -154,7 +154,7 @@ function SelectPopup({
           </SelectPrimitive.ScrollUpArrow>
           <div
             className={cn(
-              "relative isolate h-full overflow-hidden rounded-lg border shadow-[0_16px_40px_-18px_rgb(0_0_0/55%)] dark:shadow-[0_18px_44px_-18px_rgb(0_0_0/80%)]",
+              "overlay-frame relative isolate h-full overflow-hidden rounded-lg border",
               matchTriggerWidth && "min-w-(--anchor-width)",
               popupClassName,
             )}

@@ -3,6 +3,12 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
+vi.mock("../../env", () => ({
+  get isElectron() {
+    return typeof window !== "undefined" && window.desktopBridge !== undefined;
+  },
+}));
+
 vi.mock("../ui/tooltip", () => ({
   Tooltip: ({ children }: { readonly children?: ReactNode }) => children,
   TooltipTrigger: ({ render }: { readonly render?: ReactNode }) => render ?? null,
@@ -32,19 +38,19 @@ describe("DesktopAuthWindowChrome", () => {
     vi.restoreAllMocks();
   });
 
-  it("renders the pairing surface with window controls in Linux Tauri", () => {
-    vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+  it("reserves native controls on the Linux Electron pairing surface", () => {
+    vi.stubGlobal("window", { desktopBridge: {} });
     vi.stubGlobal("navigator", { platform: "Linux x86_64" });
 
     const html = renderToStaticMarkup(<PairingPendingSurface />);
 
     expect(html).toContain('data-slot="desktop-auth-window-chrome"');
     expect(html).toContain('data-slot="desktop-auth-window-chrome-drag-region"');
-    expect(html).toContain('data-tauri-drag-region="deep"');
-    expect(html).toContain('data-slot="window-controls"');
-    expect(html).toContain('aria-label="Minimize"');
-    expect(html).toContain('aria-label="Maximize"');
-    expect(html).toContain('aria-label="Close"');
+    expect(html).toContain("drag-region");
+    expect(html).not.toContain('data-slot="window-controls"');
+    expect(html).not.toContain('aria-label="Minimize"');
+    expect(html).not.toContain('aria-label="Maximize"');
+    expect(html).not.toContain('aria-label="Close"');
     expect(html).toContain("Pairing with this environment");
   });
 
@@ -61,7 +67,7 @@ describe("DesktopAuthWindowChrome", () => {
 
   it("toggles maximize when double-clicking the non-interactive titlebar", async () => {
     const operations = createOperations();
-    vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+    vi.stubGlobal("window", { desktopBridge: {} });
     vi.stubGlobal("navigator", { platform: "Linux x86_64" });
 
     await act(() => {

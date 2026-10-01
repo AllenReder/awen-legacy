@@ -46,7 +46,6 @@ import { previewBridge } from "~/components/preview/previewBridge";
 import { isPreviewSupportedInRuntime } from "~/previewStateStore";
 import { cn, randomUUID } from "~/lib/utils";
 import { useEnvironments, usePrimaryEnvironment } from "~/state/environments";
-import { isTauri } from "../../env";
 
 import { Badge } from "../ui/badge";
 import {
@@ -1133,9 +1132,7 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
 export function IntegrationsSettingsPanel() {
   // Client-local preview defaults are editable only where the preview exists.
   const previewDefaultsDisabled = !isPreviewSupportedInRuntime();
-  const previewDefaultsUnavailableMessage = isTauri
-    ? "Browser preview is not available in the Tauri desktop build yet. Agents started here do not receive Browser tools."
-    : "Only available in the Electron desktop app.";
+  const previewDefaultsUnavailableMessage = "Only available in the Electron desktop app.";
   const previewDefaults = (
     <>
       <BrowserProfilesSetting disabled={previewDefaultsDisabled} />

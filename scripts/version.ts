@@ -18,11 +18,6 @@ const PACKAGE_FILES = [
   "apps/desktop/package.json",
   "packages/contracts/package.json",
 ] as const;
-const TAURI_CONFIG = "apps/desktop/src-tauri/tauri.conf.json";
-const TAURI_MACOS_CONFIG = "apps/desktop/src-tauri/tauri.macos.conf.json";
-const TAURI_VERSION_SOURCE = "../../../package.json";
-const CARGO_MANIFEST = "apps/desktop/src-tauri/Cargo.toml";
-const CARGO_LOCK = "apps/desktop/src-tauri/Cargo.lock";
 
 function readJson(filePath: string): Record<string, unknown> {
   const value: unknown = JSON.parse(NodeFS.readFileSync(filePath, "utf8"));
@@ -59,20 +54,6 @@ function incrementMacOSBundleVersion(version: unknown): string {
   return String(buildNumber + 1);
 }
 
-function cargoVersion(contents: string, heading: string): string {
-  const section = contents.split(heading)[1]?.split(/\n\[/u)[0];
-  const version = /^version = "([^"]+)"$/mu.exec(section ?? "")?.[1];
-  if (!version) throw new Error(`Could not find ${heading} version.`);
-  return version;
-}
-
-function updateCargoVersion(contents: string, heading: string, version: string): string {
-  const current = cargoVersion(contents, heading);
-  const sectionStart = contents.indexOf(heading) + heading.length;
-  const versionStart = contents.indexOf(`version = "${current}"`, sectionStart);
-  return `${contents.slice(0, versionStart)}version = "${version}"${contents.slice(versionStart + `version = "${current}"`.length)}`;
-}
-
 export function checkVersion(rootDir = REPO_ROOT): string[] {
   const rootVersion = readJson(NodePath.join(rootDir, "package.json")).version;
   if (typeof rootVersion !== "string" || !EXACT_VERSION.test(rootVersion)) {
@@ -86,36 +67,10 @@ export function checkVersion(rootDir = REPO_ROOT): string[] {
       problems.push(`${relativePath}: expected ${rootVersion}, found ${String(version)}.`);
     }
   }
-  const tauriVersion = readJson(NodePath.join(rootDir, TAURI_CONFIG)).version;
-  if (tauriVersion !== TAURI_VERSION_SOURCE) {
-    problems.push(`${TAURI_CONFIG}: expected ${TAURI_VERSION_SOURCE}.`);
-  }
-  const macosConfig = readJson(NodePath.join(rootDir, TAURI_MACOS_CONFIG));
-  const expectedMacOSVersion = macOSNativeVersion(rootVersion);
-  if (macosConfig.version !== expectedMacOSVersion) {
-    problems.push(
-      `${TAURI_MACOS_CONFIG}: expected ${expectedMacOSVersion}, found ${String(macosConfig.version)}.`,
-    );
-  }
-  const macOSBundleVersion = (
-    (macosConfig.bundle as Record<string, unknown> | undefined)?.macOS as
-      | Record<string, unknown>
-      | undefined
-  )?.bundleVersion;
-  if (!isNumericBundleVersion(macOSBundleVersion)) {
-    problems.push(`${TAURI_MACOS_CONFIG}: bundle.macOS.bundleVersion must be numeric.`);
-  }
-  for (const [relativePath, heading] of [
-    [CARGO_MANIFEST, '[package]\nname = "awen-desktop"'],
-    [CARGO_LOCK, '[[package]]\nname = "awen-desktop"'],
-  ] as const) {
-    const version = cargoVersion(
-      NodeFS.readFileSync(NodePath.join(rootDir, relativePath), "utf8"),
-      heading,
-    );
-    if (version !== rootVersion) {
-      problems.push(`${relativePath}: expected ${rootVersion}, found ${version}.`);
-    }
+  const desktop = readJson(NodePath.join(rootDir, "apps/desktop/package.json"));
+  const mac = (desktop.build as { mac?: { bundleVersion?: unknown } } | undefined)?.mac;
+  if (!isNumericBundleVersion(mac?.bundleVersion)) {
+    problems.push("apps/desktop/package.json: build.mac.bundleVersion must be numeric.");
   }
   return problems;
 }
@@ -128,46 +83,25 @@ export function setVersion(version: string, rootDir = REPO_ROOT): void {
   const updates = new Map<string, string>();
   // `formatJson` expands compact arrays, so rewriting a manifest whose value did
   // not change silently reformats it: bumping the version used to expand the
-  // arrays in `tauri.conf.json` and fail `vp fmt --check` in CI. Only record a
+  // arrays in manifests and fail `vp fmt --check` in CI. Only record a
   // manifest when its parsed value actually differs from what is on disk.
   const recordManifest = (relativePath: string, value: Record<string, unknown>): void => {
     const next = formatJson(value);
     if (next === formatJson(readJson(NodePath.join(rootDir, relativePath)))) return;
     updates.set(relativePath, next);
   };
+  const currentProductVersion = readJson(NodePath.join(rootDir, "package.json")).version;
   for (const relativePath of PACKAGE_FILES) {
     const packageJson = readJson(NodePath.join(rootDir, relativePath));
     if (typeof packageJson.version !== "string") {
       throw new Error(`${relativePath} must already declare a version.`);
     }
     packageJson.version = version;
+    if (relativePath === "apps/desktop/package.json" && version !== currentProductVersion) {
+      const build = packageJson.build as { mac: { bundleVersion: string } };
+      build.mac.bundleVersion = incrementMacOSBundleVersion(build.mac.bundleVersion);
+    }
     recordManifest(relativePath, packageJson);
-  }
-  const tauriConfig = readJson(NodePath.join(rootDir, TAURI_CONFIG));
-  tauriConfig.version = TAURI_VERSION_SOURCE;
-  recordManifest(TAURI_CONFIG, tauriConfig);
-  const currentProductVersion = readJson(NodePath.join(rootDir, "package.json")).version;
-  const macosConfig = readJson(NodePath.join(rootDir, TAURI_MACOS_CONFIG));
-  macosConfig.version = macOSNativeVersion(version);
-  const macOSBundle = macosConfig.bundle as Record<string, unknown> | undefined;
-  const macOSConfigBundle = (macOSBundle?.macOS as Record<string, unknown> | undefined) ?? {};
-  if (version !== currentProductVersion) {
-    macOSConfigBundle.bundleVersion = incrementMacOSBundleVersion(macOSConfigBundle.bundleVersion);
-  }
-  macosConfig.bundle = { ...macOSBundle, macOS: macOSConfigBundle };
-  recordManifest(TAURI_MACOS_CONFIG, macosConfig);
-  for (const [relativePath, heading] of [
-    [CARGO_MANIFEST, '[package]\nname = "awen-desktop"'],
-    [CARGO_LOCK, '[[package]]\nname = "awen-desktop"'],
-  ] as const) {
-    updates.set(
-      relativePath,
-      updateCargoVersion(
-        NodeFS.readFileSync(NodePath.join(rootDir, relativePath), "utf8"),
-        heading,
-        version,
-      ),
-    );
   }
 
   for (const [relativePath, contents] of updates) {

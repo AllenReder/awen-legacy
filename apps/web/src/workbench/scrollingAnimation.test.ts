@@ -292,3 +292,17 @@ describe("animateScrollTo", () => {
     expect(onCancel).toHaveBeenCalled();
   });
 });
+
+it("keeps remaining continuous-route pan beyond the incoming Tab edge", () => {
+  const target = computeScrollingRevealTarget({
+    isSingleColumn: false,
+    rect: { left: 0, top: 0, width: 200, height: 500 },
+    paneGap: 8,
+    canvasWidth: 1400,
+    viewportWidth: 800,
+    currentScrollLeft: 150,
+    entryDir: 1,
+    entryOffset: 150,
+  });
+  expect(target).toEqual({ targetLeft: 150, targetTop: 0, needsScroll: false });
+});

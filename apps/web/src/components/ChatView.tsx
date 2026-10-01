@@ -1,4 +1,8 @@
-import { AgentSessionId } from "@awen/contracts";
+import {
+  AgentSessionId,
+  FILE_RESTORE_DISABLED_ACTIVITY_KIND,
+  FILE_RESTORE_DISABLED_SUMMARY,
+} from "@awen/contracts";
 import { sessionEnvironment } from "../state/projects";
 import { useExecutionPlanStore } from "../executionPlanStore";
 import { useSessionExecutionContext } from "../state/sessionContext";
@@ -510,7 +514,6 @@ import {
   resolveServerConfigVersionMismatch,
   resolveServerSelfUpdateCapability,
   serverUpdateGuidance,
-  supportsDesktopAppUpdate,
   supportsServerUpdateThreadContinuation,
 } from "../versionSkew";
 import { useAssetUrls } from "../assets/assetUrls";
@@ -2575,7 +2578,6 @@ export default function ChatView(props: ChatViewProps) {
       : "server";
   const serverUpdateEnvironmentId = activeThread?.environmentId ?? null;
   const versionMismatchSelfUpdate = resolveServerSelfUpdateCapability(serverConfig);
-  const versionMismatchDesktopAppUpdate = supportsDesktopAppUpdate(serverConfig);
   const versionMismatchThreadContinuation = supportsServerUpdateThreadContinuation(serverConfig);
   const serverUpdateState = useAtomValue(
     serverEnvironment.updateStateAtom(serverUpdateEnvironmentId),
@@ -2709,22 +2711,16 @@ export default function ChatView(props: ChatViewProps) {
             "Server update available"
           ),
         description:
-          !updateInProgress &&
-          !updateFailed &&
-          versionMismatchSelfUpdate !== null &&
-          (versionMismatchSelfUpdate !== "desktop-managed" || !versionMismatchDesktopAppUpdate)
+          !updateInProgress && !updateFailed && versionMismatchSelfUpdate !== null
             ? serverUpdateGuidance(versionMismatchSelfUpdate)
             : undefined,
         actions: updateInProgress ? (
           disconnectAction
-        ) : !versionMismatch ||
-          (versionMismatchSelfUpdate === "desktop-managed" &&
-            !versionMismatchDesktopAppUpdate) ? undefined : (
+        ) : !versionMismatch || versionMismatchSelfUpdate === "desktop-managed" ? undefined : (
           <ServerUpdateAction
             environmentId={serverUpdateEnvironmentId}
             serverLabel={versionMismatchServerLabel}
             selfUpdate={versionMismatchSelfUpdate}
-            desktopAppUpdate={versionMismatchDesktopAppUpdate}
             threadContinuation={versionMismatchThreadContinuation}
             targetVersion={versionMismatch.clientVersion}
             label={updateFailed ? "Retry" : "Update"}
@@ -2765,7 +2761,6 @@ export default function ChatView(props: ChatViewProps) {
     versionMismatchDismissKey,
     serverUpdateEnvironmentId,
     versionMismatchSelfUpdate,
-    versionMismatchDesktopAppUpdate,
     versionMismatchThreadContinuation,
     versionMismatchServerLabel,
   ]);
@@ -6770,6 +6765,10 @@ export default function ChatView(props: ChatViewProps) {
     };
   }, [activeThreadId, composerRef]);
 
+  const fileRestoreDisabled =
+    activeThread?.activities.some(
+      (activity) => activity.kind === FILE_RESTORE_DISABLED_ACTIVITY_KIND,
+    ) ?? false;
   const [pendingRevert, setPendingRevert] = useState<{
     turnCount: number;
     messageId: MessageId;
@@ -9824,12 +9823,14 @@ export default function ChatView(props: ChatViewProps) {
             <AlertDialogDescription>
               Rewind chat to before this message. Your prompt and attachments return to the
               composer.
+              {fileRestoreDisabled ? ` ${FILE_RESTORE_DISABLED_SUMMARY}` : ""}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
             <Button
               variant="destructive"
+              disabled={fileRestoreDisabled}
               onClick={() => {
                 if (!pendingRevert || pendingRevert.routeThreadKey !== routeThreadKey) return;
                 setPendingRevert(null);

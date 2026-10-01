@@ -1,5 +1,12 @@
 # Material Surface Glass Architecture
 
+ADR-0030 supersedes this decision's Tauri compositor, native pixel-radius
+control, and window-control implementation choices. Content Backdrop Blur is now
+an independently configurable application setting; native Window Glass uses
+system material presets. The Windows WebView2 Overlay workaround below requires
+fresh Electron validation. The material hierarchy and appearance requirements
+remain accepted.
+
 Accepted; supersedes the web visual-layer parts of ADR-0009 while retaining its
 native macOS and Windows glass foundation. Awen separates Theme's opaque
 semantic colors from a Material system: a native Glass Stage supplies the
@@ -55,11 +62,13 @@ the currently focused Session alone receives a soft accent background.
 Code blocks and ordinary inputs may use a subtle translucent local backing for
 readability. The Agent composer and its attached model, permission, and
 workspace controls instead share one continuous local frosted backdrop,
-following the earlier awen composer treatment. This backdrop blurs content
+using the same GlassBackdrop and Overlay material as floating menus and dialogs.
+This replaces the composer's separate 45% surface tint and pseudo-element blur,
+so color, opacity, accessibility overrides, and native-stage sampling corrections
+remain consistent with other floating surfaces. This backdrop blurs content
 behind the composer; native desktop blur alone cannot replace it. Attached
-parts must not stack independent blur layers. Floating menus and dialogs use
-their own denser frosted Overlay material to separate their content from the
-content underneath.
+parts must not stack independent blur layers. The shared sampling underlay follows
+the composer's clipped contour, including its inset context strip.
 Modal dialogs dim the surrounding application by 20% and retain a light blur.
 This surrounding backdrop is separate from the dialog's Overlay material;
 context menus do not introduce a full-window dimmer. Overlay opacity remains

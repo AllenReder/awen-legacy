@@ -7,7 +7,6 @@ import {
 import { CircleArrowUpIcon } from "lucide-react";
 import { type ComponentProps, useRef, useState } from "react";
 
-import { requestConfirmDialog } from "~/confirmDialog";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useEnvironmentSettings } from "~/hooks/useSettings";
 import { serverEnvironment } from "~/state/server";
@@ -39,7 +38,6 @@ export interface ServerUpdateTarget {
   readonly environmentId: EnvironmentId;
   readonly serverLabel: string;
   readonly selfUpdate: ServerSelfUpdateCapability | null;
-  readonly desktopAppUpdate?: boolean;
   readonly threadContinuation?: boolean;
   readonly targetVersion: string;
   readonly continueThreadsAfterServerUpdate?: boolean;
@@ -105,9 +103,7 @@ export function ServerUpdatesAction({
   const pending = useRef(false);
   const [isPending, setIsPending] = useState(false);
   const eligible = targets.filter(
-    (target) =>
-      target.selfUpdate !== null &&
-      (target.selfUpdate !== "desktop-managed" || target.desktopAppUpdate),
+    (target) => target.selfUpdate !== null && target.selfUpdate !== "desktop-managed",
   );
   const handleUpdate = async () => {
     if (pending.current) return;
@@ -117,14 +113,6 @@ export function ServerUpdatesAction({
       const available = eligible.filter(
         (target) => !pendingUpdateEnvironmentIds.has(target.environmentId),
       );
-      const desktopTargets = available.filter((target) => target.selfUpdate === "desktop-managed");
-      if (desktopTargets.length > 0) {
-        const confirmed =
-          (await requestConfirmDialog(
-            `Update the Awen desktop apps on ${desktopTargets.map((target) => target.serverLabel).join(", ")}? They will close and relaunch on those machines.`,
-          )) ?? true;
-        if (!confirmed) return;
-      }
       await Promise.all(
         available.map((target) => update(target, `${target.serverLabel} update failed`)),
       );
@@ -190,7 +178,6 @@ export function ServerUpdateAction({
   environmentId,
   serverLabel,
   selfUpdate,
-  desktopAppUpdate = false,
   threadContinuation = false,
   targetVersion,
   label = "Update",
@@ -199,7 +186,6 @@ export function ServerUpdateAction({
   className,
   appearance = "button",
 }: Omit<ServerUpdateTarget, "continueThreadsAfterServerUpdate"> & UpdateButtonProps) {
-  const isDesktopAppUpdate = selfUpdate === "desktop-managed";
   const continueThreadsAfterServerUpdate = useEnvironmentSettings(
     environmentId,
     (settings) => settings.continueThreadsAfterServerUpdate,
@@ -227,30 +213,17 @@ export function ServerUpdateAction({
     if (pendingUpdateEnvironmentIds.has(environmentId)) {
       return;
     }
-    if (isDesktopAppUpdate) {
-      // No themed host mounted (undefined) means proceed: the click itself
-      // was the request. This is the only confirmation in the flow; the
-      // remote machine installs without asking anyone there.
-      const confirmed =
-        (await requestConfirmDialog(
-          `Update the Awen desktop app that runs the ${serverLabel}? It will close and relaunch on that machine.`,
-        )) ?? true;
-      if (!confirmed) {
-        return;
-      }
-    }
     await update({
       environmentId,
       serverLabel,
       selfUpdate,
-      desktopAppUpdate,
       threadContinuation,
       targetVersion,
       continueThreadsAfterServerUpdate,
     });
   };
 
-  if (selfUpdate === "desktop-managed" && !desktopAppUpdate) {
+  if (selfUpdate === "desktop-managed") {
     return (
       <span className="text-muted-foreground text-xs">
         Update the desktop app on that machine to update this server.

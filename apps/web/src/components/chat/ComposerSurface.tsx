@@ -1,11 +1,13 @@
 import type { ComponentProps } from "react";
 
+import { GlassBackdrop } from "~/components/ui/GlassBackdrop";
 import { cn } from "~/lib/utils";
 
 /** One local frosted backdrop shared by the composer and its attached controls. */
 function Shell({
   contextStrip = false,
   className,
+  children,
   ...props
 }: ComponentProps<"div"> & { contextStrip?: boolean }) {
   return (
@@ -14,18 +16,24 @@ function Shell({
       data-with-context={contextStrip || undefined}
       className={cn(
         "@container/composer-surface group/composer-surface relative isolate mx-auto w-full max-w-3xl",
-        "[--chat-composer-drawer-inset:1.375rem] [--chat-composer-glass-surface:var(--surface-raised)] [--chat-composer-outline:var(--control-border)]",
-        "before:pointer-events-none before:absolute before:inset-0 before:z-0 before:rounded-[22px] before:bg-[color-mix(in_srgb,var(--chat-composer-glass-surface)_45%,transparent)] before:backdrop-blur-(--glass-blur) before:backdrop-saturate-(--glass-saturation)",
-        contextStrip && [
+        "rounded-[22px] [--chat-composer-drawer-inset:1.375rem] [--chat-composer-outline:var(--control-border)]",
+        contextStrip &&
           "[--chat-composer-context-extension:2.25rem] sm:[--chat-composer-context-extension:2rem]",
-          // Keep one continuous backdrop around the fixed-pixel corners and rem-sized strip inset.
-          "supports-[clip-path:shape(from_0_0,line_to_1px_1px)]:before:rounded-none",
-          "before:[clip-path:shape(from_0_22px,curve_to_22px_0_with_0_9.85px/9.85px_0,line_to_calc(100%-22px)_0,curve_to_100%_22px_with_calc(100%-9.85px)_0/100%_9.85px,line_to_100%_calc(100%-var(--chat-composer-context-extension)-var(--chat-composer-drawer-inset)),curve_to_calc(100%-var(--chat-composer-drawer-inset))_calc(100%-var(--chat-composer-context-extension))_with_100%_calc(100%-var(--chat-composer-context-extension)-var(--chat-composer-drawer-inset)*0.4477)/calc(100%-var(--chat-composer-drawer-inset)*0.4477)_calc(100%-var(--chat-composer-context-extension)),line_to_calc(100%-var(--chat-composer-drawer-inset))_calc(100%-16px),curve_to_calc(100%-var(--chat-composer-drawer-inset)-16px)_100%_with_calc(100%-var(--chat-composer-drawer-inset))_calc(100%-7.16px)/calc(100%-var(--chat-composer-drawer-inset)-7.16px)_100%,line_to_calc(var(--chat-composer-drawer-inset)+16px)_100%,curve_to_var(--chat-composer-drawer-inset)_calc(100%-16px)_with_calc(var(--chat-composer-drawer-inset)+7.16px)_100%/var(--chat-composer-drawer-inset)_calc(100%-7.16px),line_to_var(--chat-composer-drawer-inset)_calc(100%-var(--chat-composer-context-extension)),curve_to_0_calc(100%-var(--chat-composer-context-extension)-var(--chat-composer-drawer-inset))_with_calc(var(--chat-composer-drawer-inset)*0.4477)_calc(100%-var(--chat-composer-context-extension))/0_calc(100%-var(--chat-composer-context-extension)-var(--chat-composer-drawer-inset)*0.4477),line_to_0_22px,close)]",
-        ],
         className,
       )}
       {...props}
-    />
+    >
+      <GlassBackdrop
+        className={cn(
+          contextStrip && [
+            // Keep one continuous material around the composer and its inset controls.
+            "supports-[clip-path:shape(from_0_0,line_to_1px_1px)]:rounded-none",
+            "[clip-path:shape(from_0_22px,curve_to_22px_0_with_0_9.85px/9.85px_0,line_to_calc(100%-22px)_0,curve_to_100%_22px_with_calc(100%-9.85px)_0/100%_9.85px,line_to_100%_calc(100%-var(--chat-composer-context-extension)-var(--chat-composer-drawer-inset)),curve_to_calc(100%-var(--chat-composer-drawer-inset))_calc(100%-var(--chat-composer-context-extension))_with_100%_calc(100%-var(--chat-composer-context-extension)-var(--chat-composer-drawer-inset)*0.4477)/calc(100%-var(--chat-composer-drawer-inset)*0.4477)_calc(100%-var(--chat-composer-context-extension)),line_to_calc(100%-var(--chat-composer-drawer-inset))_calc(100%-16px),curve_to_calc(100%-var(--chat-composer-drawer-inset)-16px)_100%_with_calc(100%-var(--chat-composer-drawer-inset))_calc(100%-7.16px)/calc(100%-var(--chat-composer-drawer-inset)-7.16px)_100%,line_to_calc(var(--chat-composer-drawer-inset)+16px)_100%,curve_to_var(--chat-composer-drawer-inset)_calc(100%-16px)_with_calc(var(--chat-composer-drawer-inset)+7.16px)_100%/var(--chat-composer-drawer-inset)_calc(100%-7.16px),line_to_var(--chat-composer-drawer-inset)_calc(100%-var(--chat-composer-context-extension)),curve_to_0_calc(100%-var(--chat-composer-context-extension)-var(--chat-composer-drawer-inset))_with_calc(var(--chat-composer-drawer-inset)*0.4477)_calc(100%-var(--chat-composer-context-extension))/0_calc(100%-var(--chat-composer-context-extension)-var(--chat-composer-drawer-inset)*0.4477),line_to_0_22px,close)]",
+          ],
+        )}
+      />
+      {children}
+    </div>
   );
 }
 

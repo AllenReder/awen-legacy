@@ -110,6 +110,14 @@ const MODE_ARGS = {
   ],
   "dev:server": ["run", "--filter=@awen/server", "dev"],
   "dev:web": ["run", "--filter=@awen/web", "dev"],
+  "dev:desktop": [
+    "run",
+    "--filter=@awen/desktop",
+    "--filter=@awen/web",
+    "--filter=@awen/server",
+    "--parallel",
+    "dev:desktop",
+  ],
 } as const satisfies Record<string, ReadonlyArray<string>>;
 
 type DevMode = keyof typeof MODE_ARGS;
@@ -177,8 +185,8 @@ export class DevRunnerPortExhaustedError extends Schema.TaggedError<DevRunnerPor
 /**
  * Raised instead of silently moving to a neighbouring port.
  *
- * Pinned ports are what the Tauri dev window and the Vite proxy address: the
- * `devUrl` in `tauri.conf.json` is a literal web URL and the proxy target is a
+ * The Electron dev window and the Vite proxy use pinned ports. The desktop
+ * development origin is a literal web URL and the proxy target is a
  * literal backend port. Walking to the next free number therefore does not
  * "just work" — the window keeps loading the old URL and quietly attaches to
  * whatever already listens there, which reads as a broken backend rather than a
@@ -187,14 +195,14 @@ export class DevRunnerPortExhaustedError extends Schema.TaggedError<DevRunnerPor
 export class DevRunnerPortUnavailableError extends Schema.TaggedError<DevRunnerPortUnavailableError>()(
   "DevRunnerPortUnavailableError",
   {
-    mode: Schema.Literals(["dev", "dev:server", "dev:web"]),
+    mode: Schema.Literals(["dev", "dev:server", "dev:web", "dev:desktop"]),
     role: Schema.Literals(["server", "web"]),
     port: Schema.Number,
     pinSource: Schema.String,
   },
 ) {
   override get message(): string {
-    return `Port ${this.port} (${this.role}) is already in use while ${this.mode} runs with pinned ports (${this.pinSource}). The Tauri dev window loads a fixed web URL and the web dev server proxies to a fixed backend port, so a different number would not be reachable — another dev session is the usual cause. Free the port (\`lsof -nP -iTCP:${this.port} -sTCP:LISTEN\`) or run without the pin (\`pnpm dev:web\`) to let the runner pick free ports.`;
+    return `Port ${this.port} (${this.role}) is already in use while ${this.mode} runs with pinned ports (${this.pinSource}). The desktop dev window loads a fixed web URL and the web dev server proxies to a fixed backend port, so a different number would not be reachable — another dev session is the usual cause. Free the port (\`lsof -nP -iTCP:${this.port} -sTCP:LISTEN\`) or run without the pin (\`pnpm dev:web\`) to let the runner pick free ports.`;
   }
 }
 
@@ -202,7 +210,7 @@ export class DevRunnerProcessError extends Schema.TaggedError<DevRunnerProcessEr
   "DevRunnerProcessError",
   {
     operation: Schema.Literals(["spawn", "wait-for-exit"]),
-    mode: Schema.Literals(["dev", "dev:server", "dev:web"]),
+    mode: Schema.Literals(["dev", "dev:server", "dev:web", "dev:desktop"]),
     executable: Schema.Literal("vp"),
     argumentCount: Schema.Number,
     shell: Schema.Boolean,
@@ -217,7 +225,7 @@ export class DevRunnerProcessError extends Schema.TaggedError<DevRunnerProcessEr
 export class DevRunnerProcessExitError extends Schema.TaggedError<DevRunnerProcessExitError>()(
   "DevRunnerProcessExitError",
   {
-    mode: Schema.Literals(["dev", "dev:server", "dev:web"]),
+    mode: Schema.Literals(["dev", "dev:server", "dev:web", "dev:desktop"]),
     executable: Schema.Literal("vp"),
     argumentCount: Schema.Number,
     shell: Schema.Boolean,
@@ -277,7 +285,7 @@ const OffsetConfig = Config.all({
   portOffset: optionalIntegerConfig("AWEN_PORT_OFFSET"),
   devInstance: optionalStringConfig("AWEN_DEV_INSTANCE"),
   // Set by the desktop dev wrapper: its window URL and the backend port it
-  // proxies to are literals in the Tauri config, so the runner must not move
+  // proxies to are pinned development inputs, so the runner must not move
   // off them. Absent for `pnpm dev`/`dev:web`, which stay free to walk ports.
   strictPorts: optionalBooleanConfig("AWEN_STRICT_DEV_PORTS"),
 });
@@ -381,6 +389,8 @@ export function createDevRunnerEnv({
     delete output.AWEN_SERVICE_LAUNCHER_CONTEXT;
     delete output.AWEN_BOOT_SERVICE_UNIT;
 
+    const isDesktopMode = mode === "dev:desktop";
+
     output.AWEN_PORT = String(serverPort);
     // Browser dev is single-origin: everything (including /ws) is proxied
     // through Vite, so the client must resolve its backend from
@@ -390,26 +400,37 @@ export function createDevRunnerEnv({
     // localhost here is what breaks any non-localhost origin (tailnet, LAN,
     // phone): the remote browser dials its own machine.
     delete output.HOST;
-    if (mode === "dev" || mode === "dev:web") {
-      // Deleting is not enough on its own: vite.config.ts calls loadRepoEnv,
-      // which merges `.env`/`.env.local` under this env, so a developer
-      // with either URL in their `.env` would get it back and silently lose
-      // single-origin mode. This states the intent positively so Vite can
-      // ignore those values rather than infer from their absence.
-      delete output.VITE_HTTP_URL;
-      delete output.VITE_WS_URL;
-      output.AWEN_SINGLE_ORIGIN_DEV = "1";
+    if (!isDesktopMode) {
+      if (mode === "dev" || mode === "dev:web") {
+        // Deleting is not enough on its own: vite.config.ts calls loadRepoEnv,
+        // which merges `.env`/`.env.local` under this env, so a developer
+        // with either URL in their `.env` would get it back and silently lose
+        // single-origin mode. This states the intent positively so Vite can
+        // ignore those values rather than infer from their absence.
+        delete output.VITE_HTTP_URL;
+        delete output.VITE_WS_URL;
+        output.AWEN_SINGLE_ORIGIN_DEV = "1";
+      } else {
+        output.VITE_HTTP_URL = `http://localhost:${serverPort}`;
+        output.VITE_WS_URL = `ws://localhost:${serverPort}`;
+        delete output.AWEN_SINGLE_ORIGIN_DEV;
+      }
     } else {
       output.VITE_HTTP_URL = `http://localhost:${serverPort}`;
       output.VITE_WS_URL = `ws://localhost:${serverPort}`;
       delete output.AWEN_SINGLE_ORIGIN_DEV;
+      delete output.AWEN_MODE;
+      delete output.AWEN_NO_BROWSER;
+      delete output.AWEN_HOST;
     }
 
-    if (host !== undefined) {
+    if (!isDesktopMode && host !== undefined) {
       output.AWEN_HOST = host;
     }
 
-    output.AWEN_NO_BROWSER = browser === true ? "0" : "1";
+    if (!isDesktopMode) {
+      output.AWEN_NO_BROWSER = browser === true ? "0" : "1";
+    }
 
     if (autoBootstrapProjectFromCwd !== undefined) {
       output.AWEN_AUTO_BOOTSTRAP_PROJECT_FROM_CWD = autoBootstrapProjectFromCwd ? "1" : "0";

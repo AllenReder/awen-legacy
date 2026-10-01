@@ -84,7 +84,7 @@ export const SidebarAutoSettleAfterDays = Schema.Number.check(
 );
 export type SidebarAutoSettleAfterDays = typeof SidebarAutoSettleAfterDays.Type;
 const DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS: SidebarAutoSettleAfterDays = 3;
-export const MIN_GLASS_OPACITY = 40;
+export const MIN_GLASS_OPACITY = 5;
 export const MAX_GLASS_OPACITY = 100;
 export const GlassOpacity = Schema.Int.check(
   Schema.isBetween({
@@ -93,7 +93,7 @@ export const GlassOpacity = Schema.Int.check(
   }),
 );
 export type GlassOpacity = typeof GlassOpacity.Type;
-const DEFAULT_GLASS_OPACITY: GlassOpacity = 90;
+const DEFAULT_GLASS_OPACITY: GlassOpacity = 5;
 
 export const MIN_SIDEBAR_OPACITY = 10;
 export const MAX_SIDEBAR_OPACITY = 100;
@@ -104,7 +104,7 @@ export const SidebarOpacity = Schema.Int.check(
   }),
 );
 export type SidebarOpacity = typeof SidebarOpacity.Type;
-export const DEFAULT_SIDEBAR_OPACITY: SidebarOpacity = 50;
+export const DEFAULT_SIDEBAR_OPACITY: SidebarOpacity = 10;
 
 export const MIN_TOPBAR_OPACITY = 10;
 export const MAX_TOPBAR_OPACITY = 100;
@@ -112,24 +112,24 @@ export const TopbarOpacity = Schema.Int.check(
   Schema.isBetween({ minimum: MIN_TOPBAR_OPACITY, maximum: MAX_TOPBAR_OPACITY }),
 );
 export type TopbarOpacity = typeof TopbarOpacity.Type;
-export const DEFAULT_TOPBAR_OPACITY: TopbarOpacity = 50;
+export const DEFAULT_TOPBAR_OPACITY: TopbarOpacity = 10;
 
 export const BackgroundMaskOpacity = Schema.Int.check(
   Schema.isBetween({ minimum: 0, maximum: 100 }),
 );
 export const DEFAULT_BACKGROUND_MASK_LIGHT_OPACITY = 10;
-export const DEFAULT_BACKGROUND_MASK_DARK_OPACITY = 35;
+export const DEFAULT_BACKGROUND_MASK_DARK_OPACITY = 30;
 
-export const MIN_SIDEBAR_BLUR = 1;
-export const MAX_SIDEBAR_BLUR = 64;
-export const SidebarBlur = Schema.Int.check(
+export const MIN_CONTENT_BACKDROP_BLUR = 0;
+export const MAX_CONTENT_BACKDROP_BLUR = 32;
+export const ContentBackdropBlur = Schema.Int.check(
   Schema.isBetween({
-    minimum: MIN_SIDEBAR_BLUR,
-    maximum: MAX_SIDEBAR_BLUR,
+    minimum: MIN_CONTENT_BACKDROP_BLUR,
+    maximum: MAX_CONTENT_BACKDROP_BLUR,
   }),
 );
-export type SidebarBlur = typeof SidebarBlur.Type;
-export const DEFAULT_SIDEBAR_BLUR: SidebarBlur = 24;
+export type ContentBackdropBlur = typeof ContentBackdropBlur.Type;
+export const DEFAULT_CONTENT_BACKDROP_BLUR: ContentBackdropBlur = 8;
 
 export const WorkbenchGlass = Schema.Boolean;
 export type WorkbenchGlass = typeof WorkbenchGlass.Type;
@@ -144,7 +144,7 @@ export const WorkbenchOpacity = Schema.Int.check(
   }),
 );
 export type WorkbenchOpacity = typeof WorkbenchOpacity.Type;
-export const DEFAULT_WORKBENCH_OPACITY: WorkbenchOpacity = 50;
+export const DEFAULT_WORKBENCH_OPACITY: WorkbenchOpacity = 10;
 
 export const ChatBackgroundPath = Schema.NullOr(TrimmedNonEmptyString);
 export type ChatBackgroundPath = typeof ChatBackgroundPath.Type;
@@ -408,6 +408,12 @@ export const ClientSettingsSchema = Schema.Struct({
   browserRecordingFrameRate: BrowserRecordingFrameRate.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_BROWSER_RECORDING_FRAME_RATE)),
   ),
+  browserRecordingShowKeyPresses: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(true)),
+  ),
+  browserRecordingShowMousePresses: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(true)),
+  ),
   /**
    * Where links clicked in a thread (chat markdown, terminal output) open.
    * Only the desktop app has an in-app browser, so other clients ignore "app".
@@ -468,7 +474,10 @@ export const ClientSettingsSchema = Schema.Struct({
   backgroundMaskDarkOpacity: BackgroundMaskOpacity.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_BACKGROUND_MASK_DARK_OPACITY)),
   ),
-  sidebarBlur: SidebarBlur.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_BLUR))),
+  windowGlassEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  contentBackdropBlur: ContentBackdropBlur.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_CONTENT_BACKDROP_BLUR)),
+  ),
   workbenchGlass: WorkbenchGlass.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_WORKBENCH_GLASS)),
   ),
@@ -998,6 +1007,7 @@ export type UsageLimitSourceConfig = typeof UsageLimitSourceConfig.Type;
 export const ObservabilitySettings = Schema.Struct({
   otlpTracesUrl: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   otlpMetricsUrl: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  otlpLogsUrl: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
 });
 export type ObservabilitySettings = typeof ObservabilitySettings.Type;
 
@@ -1501,6 +1511,7 @@ export const ServerSettingsPatch = Schema.Struct({
     Schema.Struct({
       otlpTracesUrl: Schema.optionalKey(TrimmedString),
       otlpMetricsUrl: Schema.optionalKey(TrimmedString),
+      otlpLogsUrl: Schema.optionalKey(TrimmedString),
     }),
   ),
   providers: Schema.optionalKey(
@@ -1563,7 +1574,8 @@ export const ClientSettingsPatch = Schema.Struct({
   topbarOpacity: Schema.optionalKey(TopbarOpacity),
   backgroundMaskLightOpacity: Schema.optionalKey(BackgroundMaskOpacity),
   backgroundMaskDarkOpacity: Schema.optionalKey(BackgroundMaskOpacity),
-  sidebarBlur: Schema.optionalKey(SidebarBlur),
+  windowGlassEnabled: Schema.optionalKey(Schema.Boolean),
+  contentBackdropBlur: Schema.optionalKey(ContentBackdropBlur),
   workbenchGlass: Schema.optionalKey(WorkbenchGlass),
   workbenchOpacity: Schema.optionalKey(WorkbenchOpacity),
   chatBackgroundPath: Schema.optionalKey(ChatBackgroundPath),

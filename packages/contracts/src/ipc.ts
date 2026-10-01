@@ -122,6 +122,7 @@ export interface ContextMenuItem<T extends string = string> {
   label: string;
   destructive?: boolean;
   disabled?: boolean;
+  checked?: boolean;
   /** Renders as a non-interactive section header label. Web fallback only — stripped on desktop native menus. */
   header?: boolean;
   /** Icon keyword resolved by the web fallback. Stripped on desktop native menus. */
@@ -136,6 +137,7 @@ export interface ContextMenuItem<T extends string = string> {
 // Fallback interface declaration for Node/non-DOM environments
 declare global {
   interface PointerEvent {}
+  interface File {}
 }
 
 export type QuitShortcutHintEvent =
@@ -147,6 +149,7 @@ export interface ContextMenuItemSchemaType {
   readonly label: string;
   readonly destructive?: boolean;
   readonly disabled?: boolean;
+  readonly checked?: boolean;
   readonly header?: boolean;
   readonly icon?: string;
   readonly separatorBefore?: boolean;
@@ -158,6 +161,7 @@ export const ContextMenuItemSchema: Schema.Codec<ContextMenuItemSchemaType> = Sc
   label: Schema.String,
   destructive: Schema.optionalKey(Schema.Boolean),
   disabled: Schema.optionalKey(Schema.Boolean),
+  checked: Schema.optionalKey(Schema.Boolean),
   header: Schema.optionalKey(Schema.Boolean),
   icon: Schema.optionalKey(Schema.String),
   separatorBefore: Schema.optionalKey(Schema.Boolean),
@@ -174,8 +178,6 @@ export type DesktopUpdateStatus =
   | "checking"
   | "up-to-date"
   | "available"
-  | "downloading"
-  | "downloaded"
   | "error";
 
 export type DesktopRuntimeArch = "arm64" | "x64" | "other";
@@ -189,8 +191,6 @@ export const DesktopUpdateStatusSchema = Schema.Literals([
   "checking",
   "up-to-date",
   "available",
-  "downloading",
-  "downloaded",
   "error",
 ]);
 export const DesktopRuntimeArchSchema = Schema.Literals(["arm64", "x64", "other"]);
@@ -376,13 +376,12 @@ export interface DesktopUpdateState {
   appArch: DesktopRuntimeArch;
   runningUnderArm64Translation: boolean;
   availableVersion: string | null;
-  downloadedVersion: string | null;
+  releaseUrl: string | null;
   releaseNotes: ReadonlyArray<DesktopUpdateReleaseNote>;
   omittedReleaseCount: number;
-  downloadPercent: number | null;
   checkedAt: string | null;
   message: string | null;
-  errorContext: "check" | "download" | "install" | null;
+  errorContext: "check" | null;
   canRetry: boolean;
 }
 
@@ -407,26 +406,13 @@ export const DesktopUpdateStateSchema = Schema.Struct({
   appArch: DesktopRuntimeArchSchema,
   runningUnderArm64Translation: Schema.Boolean,
   availableVersion: Schema.NullOr(Schema.String),
-  downloadedVersion: Schema.NullOr(Schema.String),
+  releaseUrl: Schema.NullOr(Schema.String),
   releaseNotes: Schema.Array(DesktopUpdateReleaseNoteSchema),
   omittedReleaseCount: Schema.Number,
-  downloadPercent: Schema.NullOr(Schema.Number),
   checkedAt: Schema.NullOr(Schema.String),
   message: Schema.NullOr(Schema.String),
-  errorContext: Schema.NullOr(Schema.Literals(["check", "download", "install"])),
+  errorContext: Schema.NullOr(Schema.Literal("check")),
   canRetry: Schema.Boolean,
-});
-
-export interface DesktopUpdateActionResult {
-  accepted: boolean;
-  completed: boolean;
-  state: DesktopUpdateState;
-}
-
-export const DesktopUpdateActionResultSchema = Schema.Struct({
-  accepted: Schema.Boolean,
-  completed: Schema.Boolean,
-  state: DesktopUpdateStateSchema,
 });
 
 export interface DesktopUpdateCheckResult {
@@ -853,6 +839,30 @@ export interface DesktopPreviewPointerEvent {
   y: number;
   sequence: number;
   createdAt: string;
+}
+
+/** Recording decorations are forwarded separately from the captured page pixels. */
+export const DesktopPreviewRecordingInputSchema = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("pointer"),
+    phase: Schema.Literals(["move", "down", "up", "click"]),
+    x: Schema.Finite,
+    y: Schema.Finite,
+    width: Schema.Finite.check(Schema.isGreaterThan(0)),
+    height: Schema.Finite.check(Schema.isGreaterThan(0)),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("key"),
+    label: Schema.NullOr(Schema.String.check(Schema.isMaxLength(100))),
+    held: Schema.Boolean,
+    width: Schema.Finite.check(Schema.isGreaterThan(0)),
+  }),
+  Schema.Struct({ type: Schema.Literal("clear") }),
+]);
+export type DesktopPreviewRecordingInput = typeof DesktopPreviewRecordingInputSchema.Type;
+export interface DesktopPreviewRecordingInputEvent {
+  readonly tabId: string;
+  readonly input: DesktopPreviewRecordingInput;
 }
 
 /**
@@ -1290,12 +1300,35 @@ export const DesktopPreviewAutomationWaitForInputSchema = Schema.Struct({
 export const SystemSettingsPaneSchema = Schema.Literals(["full-disk-access"]);
 export type SystemSettingsPane = typeof SystemSettingsPaneSchema.Type;
 
+export interface DesktopTrackpadInput {
+  readonly gestureId: number;
+  readonly sequence: number;
+  readonly phase: "begin" | "update" | "end" | "momentum" | "finish" | "cancel";
+  readonly deltaX: number;
+  readonly deltaY: number;
+  readonly time: number;
+  readonly x: number;
+  readonly y: number;
+}
+
+export const WindowChromeMetricsSchema = Schema.Struct({
+  zoomFactor: Schema.Finite.check(Schema.isGreaterThan(0)),
+  fullscreen: Schema.Boolean,
+});
+export type WindowChromeMetrics = typeof WindowChromeMetricsSchema.Type;
+
 export interface DesktopBridge {
   getAppBranding: () => DesktopAppBranding | null;
   /** The desktop client's OS platform, read from Electron's preload process. */
   getClientPlatform?: () => string;
+  onTrackpadInput?: (listener: (input: DesktopTrackpadInput) => void) => () => void;
+  getPathForFile?: (file: File) => string;
   setNotificationBadge?: (badge: { count: number; image: string | null }) => Promise<void>;
   onNotificationBadgeClear?: (listener: () => void) => () => void;
+  onTrackpadScrollEnd?: (listener: () => void) => () => void;
+  onTrackpadScrollPhase?: (
+    listener: (phase: "began" | "changed" | "ended" | "momentum" | "cancelled") => void,
+  ) => () => void;
   /**
    * The OS locale as a BCP-47 tag, which the renderer cannot read for itself:
    * the packaged app ships only the `en-US` Chromium locale pak, so
@@ -1394,8 +1427,8 @@ export interface DesktopBridge {
     }>;
     readonly initialPath?: string;
   }) => Promise<string | null>;
+  getWindowGlassSupported?: () => boolean;
   setWindowGlassEnabled?: (enabled: boolean) => Promise<void>;
-  setWindowBackgroundBlur?: (radius: number) => Promise<void>;
   showContextMenu: <T extends string>(
     items: readonly ContextMenuItem<T>[],
     position?: { x: number; y: number },
@@ -1422,12 +1455,13 @@ export interface DesktopBridge {
    * them.
    */
   onQuitShortcut?: (listener: (event: QuitShortcutHintEvent) => void) => () => void;
+  getWindowChromeMetrics: () => WindowChromeMetrics;
+  onWindowChromeMetricsChange: (listener: (metrics: WindowChromeMetrics) => void) => () => void;
   getWindowFullscreenState: () => boolean;
   onWindowFullscreenStateChange: (listener: (fullscreen: boolean) => void) => () => void;
   getUpdateState: () => Promise<DesktopUpdateState>;
+  setUpdateChannel?: (channel: DesktopUpdateChannel) => Promise<DesktopUpdateState>;
   checkForUpdate: () => Promise<DesktopUpdateCheckResult>;
-  downloadUpdate: () => Promise<DesktopUpdateActionResult>;
-  installUpdate: () => Promise<DesktopUpdateActionResult>;
   onUpdateState: (listener: (state: DesktopUpdateState) => void) => () => void;
   /** Present when the desktop shell accepts `awen app` activation requests. */
   appActivation?: {
@@ -1519,6 +1553,7 @@ export interface DesktopPreviewBridge {
       data: Uint8Array,
     ) => Promise<DesktopPreviewRecordingArtifact>;
     onFrame: (listener: (frame: DesktopPreviewRecordingFrame) => void) => () => void;
+    onInput?: (listener: (event: DesktopPreviewRecordingInputEvent) => void) => () => void;
   };
   automation: {
     status: (tabId: string) => Promise<DesktopPreviewAutomationStatus>;
