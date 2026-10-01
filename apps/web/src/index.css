@@ -2656,6 +2656,7 @@ html[data-theme-id] [data-app-sidebar] {
 /* System accessibility overrides both content filtering and translucent tint. */
 @media (prefers-reduced-transparency: reduce) {
   .material-surface-overlay,
+  [data-composer-banner-surface]::before,
   .surface-glass,
   [data-slot="chat-composer"] {
     background: var(--background) !important;

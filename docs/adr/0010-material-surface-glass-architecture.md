@@ -60,15 +60,21 @@ hovering a Project, Workspace, or Session gently brightens the row; an
 unfocused Session already displayed in the current Tab has a small marker;
 the currently focused Session alone receives a soft accent background.
 Code blocks and ordinary inputs may use a subtle translucent local backing for
-readability. The Agent composer and its attached model, permission, and
-workspace controls instead share one continuous local frosted backdrop,
-using the same GlassBackdrop and Overlay material as floating menus and dialogs.
-This replaces the composer's separate 45% surface tint and pseudo-element blur,
-so color, opacity, accessibility overrides, and native-stage sampling corrections
+readability. The Agent composer, its inset context strip, and an attached banner
+all use the same GlassBackdrop and Overlay material as floating menus and
+dialogs. While no banner is attached, one shell-wide backdrop carries the material
+and its sampling underlay follows the composer's clipped contour, including the
+inset context strip. An attached banner is narrower than the composer, so that
+shell-wide backdrop would smear its material into the insets beside the banner;
+while a banner is attached the composer and the context strip each carry their own
+GlassBackdrop and the banner carries one too. All three share the same material
+and native-stage sampling correction, and their shapes and stacking keep any pixel
+from being blurred twice: the banner's seam mask hands its bottom row to the
+composer, and the composer paints over the context strip's overlapping edge. This
+replaces the composer's separate 45% surface tint and pseudo-element blur, so
+color, opacity, accessibility overrides, and native-stage sampling corrections
 remain consistent with other floating surfaces. This backdrop blurs content
-behind the composer; native desktop blur alone cannot replace it. Attached
-parts must not stack independent blur layers. The shared sampling underlay follows
-the composer's clipped contour, including its inset context strip.
+behind the composer; native desktop blur alone cannot replace it.
 Modal dialogs dim the surrounding application by 20% and retain a light blur.
 This surrounding backdrop is separate from the dialog's Overlay material;
 context menus do not introduce a full-window dimmer. Overlay opacity remains
