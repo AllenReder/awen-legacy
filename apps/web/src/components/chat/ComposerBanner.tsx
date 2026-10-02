@@ -3,6 +3,7 @@ import { useRender } from "@base-ui/react/use-render";
 import { ChevronDownIcon, XIcon } from "lucide-react";
 import type { ComponentProps } from "react";
 
+import { GlassBackdrop } from "~/components/ui/GlassBackdrop";
 import { cn } from "~/lib/utils";
 import { Button, buttonVariants } from "../ui/button";
 import { ScrollArea } from "../ui/scroll-area";
@@ -37,6 +38,7 @@ function Surface({
   placement = "attached",
   variant = "default",
   className,
+  children,
   ...props
 }: ComponentProps<"div"> & {
   placement?: "attached" | "floating";
@@ -62,11 +64,26 @@ function Surface({
         "before:mask-[linear-gradient(to_top,transparent_0_calc(var(--chat-composer-attachment-overlap)-1px),black_calc(var(--chat-composer-attachment-overlap)-1px))] before:shadow-[0_12px_28px_-18px_rgb(0_0_0/40%)]",
         "not-supports-[((backdrop-filter:blur(1px))_or_(-webkit-backdrop-filter:blur(1px)))]:before:bg-(--chat-composer-attached-surface)",
         placement === "attached" &&
+          // Inside the composer shell the banner's glass comes from its own
+          // GlassBackdrop (same material and native sampling as the composer), so
+          // the `before` keeps only the border and the seam mask.
           "in-data-[slot=composer-shell]:before:bg-none in-data-[slot=composer-shell]:before:bg-transparent in-data-[slot=composer-shell]:before:backdrop-filter-none in-data-[slot=composer-shell]:before:shadow-none",
         className,
       )}
       {...props}
-    />
+    >
+      {/* The shell-wide backdrop hides once a banner attaches, so the attached
+          banner keeps the composer's glass material (and native sampling) as its
+          own layer. Floating notices keep their own `before` glass. */}
+      <GlassBackdrop
+        className={cn(
+          "hidden -z-2",
+          placement === "attached" &&
+            "in-data-[slot=composer-shell]:block rounded-none rounded-t-[16px] mask-[linear-gradient(to_top,transparent_0_calc(var(--chat-composer-attachment-overlap)-1px),black_calc(var(--chat-composer-attachment-overlap)-1px))]",
+        )}
+      />
+      {children}
+    </div>
   );
 }
 
@@ -91,16 +108,21 @@ function Peek({
       className={cn(
         surfaceColors,
         neutralOutline,
-        "absolute inset-x-0 bottom-0 z-0 mx-auto h-3 w-[96%] cursor-pointer rounded-t-2xl border border-b-0 shadow-[0_6px_18px_rgb(0_0_0/6%)]",
-        "bg-[color-mix(in_srgb,var(--chat-composer-attached-surface)_var(--glass-opacity),transparent)] backdrop-blur-(--glass-blur) backdrop-saturate-(--glass-saturation)",
-        "not-supports-[((backdrop-filter:blur(1px))_or_(-webkit-backdrop-filter:blur(1px)))]:bg-(--chat-composer-attached-surface)",
-        "in-data-[slot=composer-shell]:bg-transparent in-data-[slot=composer-shell]:backdrop-filter-none in-data-[slot=composer-shell]:shadow-none",
+        "absolute inset-x-0 bottom-0 z-0 mx-auto h-3 w-[96%] cursor-pointer rounded-t-2xl border-0 bg-transparent shadow-none",
         "transition-opacity [transition-duration:calc(150ms*var(--motion-duration-scale,1))] ease-out focus-visible:outline-2 focus-visible:outline-ring",
-        peekBorder[variant],
         className,
       )}
       {...props}
-    />
+    >
+      <GlassBackdrop className="-z-1 rounded-none rounded-t-2xl" />
+      <span
+        aria-hidden
+        className={cn(
+          "pointer-events-none absolute inset-0 rounded-t-2xl border border-b-0",
+          peekBorder[variant],
+        )}
+      />
+    </button>
   );
 }
 

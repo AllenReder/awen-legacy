@@ -25,6 +25,9 @@ function Shell({
     >
       <GlassBackdrop
         className={cn(
+          // An attached banner carries its own glass; hide the shell-wide backdrop so
+          // the material does not spill into the insets beside the narrower banner.
+          "group-has-data-[composer-banner-surface=attached]/composer-surface:hidden",
           contextStrip && [
             // Keep one continuous material around the composer and its inset controls.
             "supports-[clip-path:shape(from_0_0,line_to_1px_1px)]:rounded-none",
@@ -60,7 +63,7 @@ function Host({ className, ...props }: ComponentProps<"div">) {
   );
 }
 
-function Main({ className, ...props }: ComponentProps<"div">) {
+function Main({ className, children, ...props }: ComponentProps<"div">) {
   return (
     <div
       data-chat-composer-main-surface="true"
@@ -74,11 +77,16 @@ function Main({ className, ...props }: ComponentProps<"div">) {
         className,
       )}
       {...props}
-    />
+    >
+      {/* The shell-wide backdrop hides once a banner attaches, so the composer
+          carries the material itself for the attached state. */}
+      <GlassBackdrop className="hidden -z-1 group-has-data-[composer-banner-surface=attached]/composer-surface:block" />
+      {children}
+    </div>
   );
 }
 
-function ContextStrip({ className, ...props }: ComponentProps<"div">) {
+function ContextStrip({ className, children, ...props }: ComponentProps<"div">) {
   return (
     <div
       data-slot="composer-context-strip"
@@ -88,7 +96,12 @@ function ContextStrip({ className, ...props }: ComponentProps<"div">) {
         className,
       )}
       {...props}
-    />
+    >
+      {/* The shell-wide backdrop hides once a banner attaches, so the strip keeps
+          its own glass below the composer. */}
+      <GlassBackdrop className="hidden -z-2 rounded-none rounded-b-[16px] mask-[linear-gradient(to_bottom,transparent_0_1rem,black_1rem)] group-has-data-[composer-banner-surface=attached]/composer-surface:block" />
+      {children}
+    </div>
   );
 }
 
