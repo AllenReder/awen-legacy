@@ -1,13 +1,7 @@
 ## Reference projects
 
-See the open-source projects in `_refs/` for reference. They are read-only,
+See the open-source projects in `_refs/` (in worktree of main branch) for reference. They are read-only,
 gitignored, and not part of the build.
-
-The current `main` branch is the clean-slate Awen v1 implementation line.
-Prefer adopting and adapting mature implementations from reference projects
-over reimplementing equivalent infrastructure from scratch. Do not restore
-pre-v1 implementation patterns unless a ticket or current architecture
-decision explicitly requires them.
 
 ## Commits
 
