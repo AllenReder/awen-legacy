@@ -398,6 +398,7 @@ export class SessionStore extends Context.Service<
       SessionCredentialInternalError
     >;
     readonly streamChanges: Stream.Stream<SessionCredentialChange>;
+    readonly isConnected: (sessionId: AuthSessionId) => Effect.Effect<boolean>;
     readonly revoke: (
       sessionId: AuthSessionId,
     ) => Effect.Effect<boolean, SessionCredentialInternalError>;
@@ -1032,6 +1033,8 @@ export const make = Effect.gen(function* () {
     issueWebSocketToken,
     verifyWebSocketToken,
     listActive,
+    isConnected: (sessionId) =>
+      Ref.get(connectedSessionsRef).pipe(Effect.map((sessions) => sessions.has(sessionId))),
     get streamChanges() {
       return Stream.fromPubSub(changesPubSub);
     },

@@ -85,7 +85,12 @@ import {
   type WorktreeSetupSnapshot,
 } from "@awen/contracts";
 import { resolveServerBackgroundActivitySettings } from "@awen/shared/backgroundActivitySettings";
-import { HttpRouter, HttpServerRequest, HttpServerRespondable } from "effect/unstable/http";
+import {
+  HttpRouter,
+  HttpServerRequest,
+  HttpServerRespondable,
+  HttpServerResponse,
+} from "effect/unstable/http";
 import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
 
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
@@ -526,20 +531,66 @@ const makeWsRpcLayer = (
   previewAutomationBroker: PreviewAutomationBroker.PreviewAutomationBroker["Service"],
   workspaceService: AwenWorkspaceService.AwenWorkspaceService["Service"],
   sessionService: AwenSessionService.AwenSessionService["Service"],
+  sessions: SessionStore.SessionStore["Service"],
 ) => {
+  const authorizationError = (requiredScope: AuthEnvironmentScope) =>
+    new EnvironmentAuthorizationError({
+      message: `The authenticated token is missing required scope: ${requiredScope}.`,
+      requiredScope,
+    });
+  const clientCredentialIsExpired = (now: DateTime.DateTime) =>
+    currentSession.expiresAt !== undefined &&
+    currentSession.expiresAt.epochMilliseconds <= now.epochMilliseconds;
+  const authorizationFailure = (
+    requiredScope: AuthEnvironmentScope,
+    now: DateTime.DateTime,
+    connected: boolean,
+  ): EnvironmentAuthorizationError | undefined => {
+    if (!connected) {
+      return new EnvironmentAuthorizationError({
+        message: "The authenticated client is no longer active.",
+        requiredScope,
+      });
+    }
+    if (clientCredentialIsExpired(now)) {
+      return new EnvironmentAuthorizationError({
+        message: "The authenticated client credential has expired.",
+        requiredScope,
+      });
+    }
+    return currentSession.scopes.includes(requiredScope)
+      ? undefined
+      : authorizationError(requiredScope);
+  };
+  const requireAuthorization = (
+    requiredScope: AuthEnvironmentScope,
+  ): Effect.Effect<void, EnvironmentAuthorizationError> =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const connected = yield* sessions.isConnected(currentSession.sessionId);
+      const failure = authorizationFailure(requiredScope, now, connected);
+      if (failure !== undefined) return yield* failure;
+    });
+  const authorizeEffect = <A, E, R>(
+    requiredScope: AuthEnvironmentScope,
+    effect: Effect.Effect<A, E, R>,
+  ): Effect.Effect<A, E | EnvironmentAuthorizationError, R> =>
+    requireAuthorization(requiredScope).pipe(Effect.andThen(effect));
+  const authorizeStream = <A, E, R>(
+    requiredScope: AuthEnvironmentScope,
+    stream: Stream.Stream<A, E, R>,
+  ): Stream.Stream<A, E | EnvironmentAuthorizationError, R> =>
+    Stream.unwrap(
+      requireAuthorization(requiredScope).pipe(
+        Effect.as(stream.pipe(Stream.tap(() => requireAuthorization(requiredScope)))),
+      ),
+    );
   const observeAwenManagementRpcEffect = <A, E, R>(
     method: string,
     effect: Effect.Effect<A, E, R>,
   ) => {
     const requiredScope = requiredScopeForRpcMethod(method);
-    const authorizedEffect = currentSession.scopes.includes(requiredScope)
-      ? (effect as Effect.Effect<A, E | EnvironmentAuthorizationError, R>)
-      : (Effect.fail(
-          new EnvironmentAuthorizationError({
-            message: `The authenticated token is missing required scope: ${requiredScope}.`,
-            requiredScope,
-          }),
-        ) as Effect.Effect<A, E | EnvironmentAuthorizationError, R>);
+    const authorizedEffect = authorizeEffect(requiredScope, effect);
     return instrumentRpcEffect(method, authorizedEffect, { "rpc.aggregate": "workspace" });
   };
 
@@ -768,31 +819,11 @@ const makeWsRpcLayer = (
         const withPullRequestViewer = pullRequests.withRoutingCredential;
         const pullRequestSync = yield* PullRequestSyncReactor.PullRequestSyncReactor;
         const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
-        const sessions = yield* SessionStore.SessionStore;
         const processDiagnostics = yield* ProcessDiagnostics.ProcessDiagnostics;
         const hostResources = yield* HostResources.HostResources;
         const processResourceMonitor = yield* ProcessResourceMonitor.ProcessResourceMonitor;
         const resourceTelemetry = yield* ResourceTelemetry.ResourceTelemetry;
         const usage = yield* UsageService.UsageService;
-        const authorizationError = (requiredScope: AuthEnvironmentScope) =>
-          new EnvironmentAuthorizationError({
-            message: `The authenticated token is missing required scope: ${requiredScope}.`,
-            requiredScope,
-          });
-        const authorizeEffect = <A, E, R>(
-          requiredScope: AuthEnvironmentScope,
-          effect: Effect.Effect<A, E, R>,
-        ): Effect.Effect<A, E | EnvironmentAuthorizationError, R> =>
-          currentSession.scopes.includes(requiredScope)
-            ? effect
-            : Effect.fail(authorizationError(requiredScope));
-        const authorizeStream = <A, E, R>(
-          requiredScope: AuthEnvironmentScope,
-          stream: Stream.Stream<A, E, R>,
-        ): Stream.Stream<A, E | EnvironmentAuthorizationError, R> =>
-          currentSession.scopes.includes(requiredScope)
-            ? stream
-            : Stream.fail(authorizationError(requiredScope));
         const observeRpcEffect = <A, E, R>(
           method: string,
           effect: Effect.Effect<A, E, R>,
@@ -3980,6 +4011,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
               previewAutomationBroker,
               awenWorkspaceService,
               awenSessionService,
+              sessions,
             ).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
               Layer.provide(Layer.succeed(SqlClient.SqlClient, sql)),
@@ -4013,9 +4045,34 @@ export const websocketRpcRouteLayer = Layer.unwrap(
             ),
           ),
         );
+        // WebSocket protocol `end` is a no-op, so interrupting the upgrade
+        // effect is what finalizes the socket and closes the transport.
         return yield* Effect.acquireUseRelease(
           sessions.markConnected(session.sessionId),
-          () => rpcWebSocketHttpEffect,
+          () =>
+            Effect.scoped(
+              Effect.gen(function* () {
+                const stillActive = yield* sessions.listActive().pipe(
+                  Effect.map((activeSessions) =>
+                    activeSessions.some((active) => active.sessionId === session.sessionId),
+                  ),
+                  Effect.catchCause(() => Effect.succeed(false)),
+                );
+                if (!stillActive) {
+                  return HttpServerResponse.empty();
+                }
+
+                const authClientRemoved = sessions.streamChanges.pipe(
+                  Stream.filter(
+                    (change) =>
+                      change.type === "clientRemoved" && change.sessionId === session.sessionId,
+                  ),
+                  Stream.runHead,
+                  Effect.as(HttpServerResponse.empty()),
+                );
+                return yield* Effect.raceFirst(rpcWebSocketHttpEffect, authClientRemoved);
+              }),
+            ),
           () => sessions.markDisconnected(session.sessionId),
         );
       }).pipe(

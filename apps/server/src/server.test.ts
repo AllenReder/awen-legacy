@@ -54,10 +54,12 @@ import { assert, it } from "@effect/vitest";
 import { assertFailure, assertInclude, assertTrue } from "@effect/vitest/utils";
 import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
+import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -1205,8 +1207,11 @@ const buildAppUnderTest = (options?: {
       Layer.provide(layerConfig),
     );
 
-    yield* Layer.build(appLayer);
-    return config;
+    const appContext = yield* Layer.build(appLayer);
+    return {
+      config,
+      environmentAuth: Context.get(appContext, EnvironmentAuth.EnvironmentAuth),
+    };
   });
 
 const parseSessionCookieFromWsUrl = (
@@ -1223,7 +1228,11 @@ const parseSessionCookieFromWsUrl = (
   };
 };
 
-const wsRpcProtocolLayer = (wsUrl: string, onMessage?: (message: string) => void) => {
+const wsRpcProtocolLayer = (
+  wsUrl: string,
+  onMessage?: (message: string) => void,
+  onClose?: () => void,
+) => {
   const { cookie, url } = parseSessionCookieFromWsUrl(wsUrl);
   const webSocketConstructorLayer = Layer.succeed(
     Socket.WebSocketConstructor,
@@ -1234,6 +1243,7 @@ const wsRpcProtocolLayer = (wsUrl: string, onMessage?: (message: string) => void
         cookie ? { headers: { cookie } } : undefined,
       );
       if (onMessage) socket.on("message", (data) => onMessage(data.toString()));
+      if (onClose) socket.on("close", onClose);
       return socket as unknown as globalThis.WebSocket;
     },
   );
@@ -1252,7 +1262,12 @@ const withWsRpcClient = <A, E, R>(
   wsUrl: string,
   f: (client: WsRpcClient) => Effect.Effect<A, E, R>,
   onMessage?: (message: string) => void,
-) => makeWsRpcClient.pipe(Effect.flatMap(f), Effect.provide(wsRpcProtocolLayer(wsUrl, onMessage)));
+  onClose?: () => void,
+) =>
+  makeWsRpcClient.pipe(
+    Effect.flatMap(f),
+    Effect.provide(wsRpcProtocolLayer(wsUrl, onMessage, onClose)),
+  );
 
 const withFirstWsAckHeld = (
   wsUrl: string,
@@ -3080,6 +3095,101 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("closes and rejects the websocket for a revoked paired auth client", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest({
+        config: {
+          host: "0.0.0.0",
+        },
+      });
+
+      const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
+      const pairingResponse = yield* HttpClient.post("/api/auth/pairing-token", {
+        headers: {
+          cookie: ownerCookie,
+        },
+        body: yield* HttpBody.json({}),
+      });
+      const pairingBody = (yield* pairingResponse.json) as {
+        readonly credential: string;
+      };
+      const pairedSessionCookie = yield* getAuthenticatedSessionCookieHeader(
+        pairingBody.credential,
+      );
+
+      const clientsResponse = yield* HttpClient.get("/api/auth/clients", {
+        headers: {
+          cookie: ownerCookie,
+        },
+      });
+      const clients = (yield* clientsResponse.json) as ReadonlyArray<{
+        readonly sessionId: string;
+        readonly current: boolean;
+      }>;
+      const pairedSessionId = clients.find((entry) => !entry.current)?.sessionId;
+      assert.isDefined(pairedSessionId);
+
+      const wsUrl = appendSessionCookieToWsUrl(
+        yield* getWsServerUrl("/ws", { authenticated: false }),
+        pairedSessionCookie,
+      );
+      const closed = yield* Deferred.make<void>();
+
+      yield* withWsRpcClient(
+        wsUrl,
+        (client) =>
+          Effect.gen(function* () {
+            yield* client[WS_METHODS.serverProbe]({});
+
+            const revokeResponse = yield* HttpClient.post("/api/auth/clients/revoke", {
+              headers: {
+                cookie: ownerCookie,
+                "content-type": "application/json",
+              },
+              body: HttpBody.text(
+                jsonRequestBody({ sessionId: pairedSessionId }),
+                "application/json",
+              ),
+            });
+            assert.equal(revokeResponse.status, 200);
+
+            yield* Deferred.await(closed).pipe(Effect.timeout("2 seconds"), TestClock.withLive);
+            const probeAfterRevocation = yield* client[WS_METHODS.serverProbe]({}).pipe(
+              Effect.exit,
+            );
+            assert.isTrue(Exit.isFailure(probeAfterRevocation));
+          }),
+        undefined,
+        () => Deferred.doneUnsafe(closed, Exit.void),
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("rejects RPCs on an authenticated client after its credential expires", () =>
+    Effect.gen(function* () {
+      const { environmentAuth } = yield* buildAppUnderTest();
+      const issued = yield* environmentAuth.issueSession({ ttl: Duration.seconds(2) });
+      const ticketResponse = yield* HttpClient.post("/api/auth/websocket-ticket", {
+        headers: {
+          authorization: `Bearer ${issued.token}`,
+        },
+      });
+      assert.equal(ticketResponse.status, 200);
+      const { ticket } = (yield* ticketResponse.json) as { readonly ticket: string };
+      const wsUrl = `${yield* getWsServerUrl("/ws", { authenticated: false })}?wsTicket=${encodeURIComponent(ticket)}`;
+
+      yield* withWsRpcClient(wsUrl, (client) =>
+        Effect.gen(function* () {
+          yield* client[WS_METHODS.serverProbe]({});
+          yield* TestClock.adjust(Duration.seconds(3));
+          const error = yield* client[WS_METHODS.serverProbe]({}).pipe(Effect.flip);
+          assert.equal(error._tag, "EnvironmentAuthorizationError");
+          assert.include(error.message, "expired");
+        }),
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("allows reusing the desktop bootstrap credential", () =>
     Effect.gen(function* () {
       // The desktop-bootstrap grant is delivered over trusted IPC at
@@ -3880,7 +3990,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
   it.effect("uploads image bytes through a signed URL issued by websocket rpc", () =>
     Effect.gen(function* () {
-      const config = yield* buildAppUnderTest();
+      const { config } = yield* buildAppUnderTest();
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const wsUrl = yield* getWsServerUrl("/ws");
@@ -3980,7 +4090,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
   it.effect("rejects an over-limit chunked upload through the route without hanging", () =>
     Effect.gen(function* () {
-      const config = yield* buildAppUnderTest();
+      const { config } = yield* buildAppUnderTest();
       const fileSystem = yield* FileSystem.FileSystem;
       const wsUrl = yield* getWsServerUrl("/ws");
 
@@ -10506,7 +10616,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           Effect.die(new Error("worktree exploded")),
       );
 
-      const config = yield* buildAppUnderTest({
+      const { config } = yield* buildAppUnderTest({
         layers: {
           vcsDriver: {
             isInsideWorkTree: () => Effect.succeed(true),
