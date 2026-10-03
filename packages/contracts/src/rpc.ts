@@ -194,6 +194,7 @@ import {
   TerminalResizeInput,
   TerminalRestartInput,
   TerminalSessionSnapshot,
+  TerminalStreamOverflowError,
   TerminalSummary,
   TerminalWriteInput,
 } from "./terminal.ts";
@@ -1122,7 +1123,9 @@ const WsTerminalOpenRpc = Rpc.make(WS_METHODS.terminalOpen, {
 const WsTerminalAttachRpc = Rpc.make(WS_METHODS.terminalAttach, {
   payload: TerminalAttachInput,
   success: TerminalAttachStreamEvent,
-  error: Schema.Union([TerminalError, EnvironmentAuthorizationError]),
+  // The stream-only overflow error stays out of `TerminalError`: unary
+  // terminal calls can never raise it.
+  error: Schema.Union([TerminalError, TerminalStreamOverflowError, EnvironmentAuthorizationError]),
   stream: true,
 });
 
@@ -1292,7 +1295,9 @@ const WsOrchestrationSubscribeThreadRpc = Rpc.make(ORCHESTRATION_WS_METHODS.subs
 const WsSubscribeTerminalEventsRpc = Rpc.make(WS_METHODS.subscribeTerminalEvents, {
   payload: Schema.Struct({}),
   success: TerminalEvent,
-  error: EnvironmentAuthorizationError,
+  // The subscription may drop a client that stops reading; see
+  // TerminalStreamOverflowError.
+  error: Schema.Union([EnvironmentAuthorizationError, TerminalStreamOverflowError]),
   stream: true,
 });
 

@@ -3021,6 +3021,66 @@ it.layer(
     }),
   );
 
+  it.effect("resynchronizes a client that overflows the attach handshake backlog", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter, getEvents } = yield* createManager(5);
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0];
+      expect(process).toBeDefined();
+      if (!process) return;
+
+      const releaseFirstSnapshot = yield* Deferred.make<void>();
+      const snapshots = yield* Ref.make<ReadonlyArray<string>>([]);
+      const attachFiber = yield* manager
+        .attachStream(openInput(), (event) =>
+          event.type === "snapshot"
+            ? Ref.update(snapshots, (current) => [...current, event.snapshot.history]).pipe(
+                Effect.andThen(
+                  // The client is slow to take its first snapshot while output
+                  // keeps flowing into the handshake buffer.
+                  Ref.get(snapshots).pipe(
+                    Effect.flatMap((current) =>
+                      current.length === 1 ? Deferred.await(releaseFirstSnapshot) : Effect.void,
+                    ),
+                  ),
+                ),
+              )
+            : Effect.void,
+        )
+        .pipe(Effect.forkScoped);
+
+      // Wait until the attach handshake is parked on its first snapshot.
+      yield* waitFor(
+        Effect.map(Ref.get(snapshots), (current) => current.length === 1),
+        "2000 millis",
+      );
+
+      // Far more output than the handshake buffer can hold.
+      const chunkCount = 2048;
+      for (let index = 0; index < chunkCount; index += 1) {
+        process.emitData(`chunk-${index}\n`);
+      }
+      yield* waitFor(
+        Effect.map(getEvents, (events) =>
+          events.some(
+            (event) => event.type === "output" && event.data === `chunk-${chunkCount - 1}\n`,
+          ),
+        ),
+        "2000 millis",
+      );
+
+      yield* Deferred.succeed(releaseFirstSnapshot, undefined);
+      const unsubscribe = yield* Fiber.join(attachFiber);
+      yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+
+      // The overflow is answered by a fresh snapshot that covers the dropped
+      // backlog, so the client converges on the latest output.
+      const delivered = yield* Ref.get(snapshots);
+      expect(delivered.length).toBeGreaterThanOrEqual(2);
+      expect(delivered.at(-1)).toContain(`chunk-${chunkCount - 1}`);
+    }),
+  );
+
   it.effect("preserves queued PTY output ordering through exit callbacks", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter, getEvents } = yield* createManager(5, {

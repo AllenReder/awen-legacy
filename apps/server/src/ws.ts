@@ -73,6 +73,7 @@ import {
   type TerminalAttachStreamEvent,
   type TerminalError,
   type TerminalEvent,
+  TerminalStreamOverflowError,
   type TerminalMetadataStreamEvent,
   type PullRequestRef,
   WS_METHODS,
@@ -124,7 +125,7 @@ import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
-import { withTerminalOutputWindow } from "./terminal/OutputProtocol.ts";
+import { terminalEventStream, withTerminalOutputWindow } from "./terminal/OutputProtocol.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import { issueAssetUrl } from "./assets/AssetAccess.ts";
@@ -3587,11 +3588,15 @@ const makeWsRpcLayer = (
           [WS_METHODS.terminalAttach]: (input) =>
             observeRpcStream(
               WS_METHODS.terminalAttach,
-              Stream.callback<TerminalAttachStreamEvent, TerminalError>((queue) =>
-                Effect.acquireRelease(
-                  terminalManager.attachStream(input, (event) => Queue.offer(queue, event)),
-                  (unsubscribe) => Effect.sync(unsubscribe),
-                ),
+              terminalEventStream<
+                TerminalAttachStreamEvent,
+                TerminalError | TerminalStreamOverflowError
+              >(
+                () => new TerminalStreamOverflowError({ terminalId: input.terminalId }),
+                (emit) =>
+                  Effect.acquireRelease(terminalManager.attachStream(input, emit), (unsubscribe) =>
+                    Effect.sync(unsubscribe),
+                  ),
               ),
               { "rpc.aggregate": "terminal" },
             ),
@@ -3622,11 +3627,12 @@ const makeWsRpcLayer = (
           [WS_METHODS.subscribeTerminalEvents]: (_input) =>
             observeRpcStream(
               WS_METHODS.subscribeTerminalEvents,
-              Stream.callback<TerminalEvent>((queue) =>
-                Effect.acquireRelease(
-                  terminalManager.subscribe((event) => Queue.offer(queue, event)),
-                  (unsubscribe) => Effect.sync(unsubscribe),
-                ),
+              terminalEventStream<TerminalEvent, TerminalStreamOverflowError>(
+                (event) => new TerminalStreamOverflowError({ terminalId: event.terminalId }),
+                (emit) =>
+                  Effect.acquireRelease(terminalManager.subscribe(emit), (unsubscribe) =>
+                    Effect.sync(unsubscribe),
+                  ),
               ),
               { "rpc.aggregate": "terminal" },
             ),

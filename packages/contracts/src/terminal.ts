@@ -412,6 +412,24 @@ export class TerminalProviderEnvironmentError extends Schema.TaggedError<Termina
   }
 }
 
+/**
+ * Raised to a subscribed terminal client that stopped reading long enough for
+ * its buffered events to exceed the server's per-subscriber limit.
+ *
+ * The server drops such a subscriber instead of letting its backlog grow until
+ * the daemon runs out of memory; reattaching streams a fresh snapshot.
+ */
+export class TerminalStreamOverflowError extends Schema.TaggedError<TerminalStreamOverflowError>()(
+  "TerminalStreamOverflowError",
+  {
+    terminalId: Schema.String,
+  },
+) {
+  override get message() {
+    return `Terminal stream fell behind and was dropped: ${this.terminalId}`;
+  }
+}
+
 export class TerminalNotRunningError extends Schema.TaggedError<TerminalNotRunningError>()(
   "TerminalNotRunningError",
   {

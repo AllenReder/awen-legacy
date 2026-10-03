@@ -1,8 +1,50 @@
 import { WS_METHODS } from "@awen/contracts";
 import * as Effect from "effect/Effect";
+import * as Queue from "effect/Queue";
+import type * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
 import type { RpcServer } from "effect/unstable/rpc";
 
-const MAX_PENDING_CHUNKS = 8;
+/**
+ * How many events one terminal subscriber may fall behind before its stream is
+ * dropped.
+ *
+ * Terminal output is produced by a PTY that never waits for a client, so the
+ * subscriber queue has a hard cap: an unbounded `Stream.callback` queue grows
+ * with every chunk a stalled client leaves unread until the daemon runs out of
+ * memory. The cap only bounds *transport* backlog, not terminal scrollback.
+ */
+export const TERMINAL_STREAM_BUFFER_SIZE = 256;
+
+/**
+ * A terminal subscriber stream whose queue holds at most
+ * `TERMINAL_STREAM_BUFFER_SIZE` unread events.
+ *
+ * `register` receives the only way to emit: an event offered past that bound is
+ * refused and fails the stream with `onOverflow(event)` instead of being
+ * buffered, so a client that stops reading cannot grow the daemon's memory.
+ */
+export function terminalEventStream<A, E>(
+  onOverflow: (event: A) => E,
+  register: (emit: (event: A) => Effect.Effect<void>) => Effect.Effect<unknown, E, Scope.Scope>,
+): Stream.Stream<A, E> {
+  return Stream.callback(
+    (queue) =>
+      register((event) =>
+        Queue.offer(queue, event).pipe(
+          Effect.flatMap((accepted) =>
+            accepted ? Effect.void : Queue.fail(queue, onOverflow(event)).pipe(Effect.asVoid),
+          ),
+        ),
+      ),
+    {
+      bufferSize: TERMINAL_STREAM_BUFFER_SIZE,
+      strategy: "dropping",
+    },
+  );
+}
+
+export const MAX_PENDING_CHUNKS = 8;
 const MAX_PENDING_BYTES = 64 * 1024;
 const isFull = (sizes: number[]) =>
   sizes.length >= MAX_PENDING_CHUNKS ||

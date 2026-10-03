@@ -121,6 +121,12 @@ const TERMINAL_ENV_BLOCKLIST = new Set(["PORT", "ELECTRON_RENDERER_PORT", "ELECT
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 const MAX_TERMINAL_LABEL_LENGTH = 128;
 const MAX_PENDING_TERMINAL_TITLE_SEQUENCE = 8_192;
+/**
+ * How much terminal output one attached client may fall behind while it is
+ * still receiving its first snapshot. Past this the drop is covered by a fresh
+ * snapshot instead of an ever-growing handshake buffer.
+ */
+const MAX_PENDING_ATTACH_EVENTS = 256;
 const decodeClaudeSettings = Schema.decodeUnknownOption(ClaudeSettings);
 const decodeCodexSettings = Schema.decodeUnknownOption(CodexSettings);
 
@@ -3602,6 +3608,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     return Effect.gen(function* () {
       const bufferedEvents: TerminalEvent[] = [];
       let deliverLive = false;
+      let needsResync = false;
 
       unsubscribe = yield* subscribe((event) => {
         if (event.terminalId !== terminalId) {
@@ -3609,6 +3616,14 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         }
 
         if (!deliverLive) {
+          if (bufferedEvents.length >= MAX_PENDING_ATTACH_EVENTS) {
+            // The client is still receiving its first snapshot. Drop the
+            // handshake backlog; a snapshot taken after the drop covers it, so
+            // the daemon never buffers output without bound for one client.
+            bufferedEvents.length = 0;
+            needsResync = true;
+            return Effect.void;
+          }
           bufferedEvents.push(event);
           return Effect.void;
         }
@@ -3617,12 +3632,22 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         return attachEvent ? listener(attachEvent) : Effect.void;
       });
 
-      const initialSnapshot = yield* openOrAttachForStream(input);
+      let initialSnapshot = yield* openOrAttachForStream(input);
 
       yield* listener({
         type: "snapshot",
         snapshot: initialSnapshot,
       });
+
+      while (needsResync) {
+        needsResync = false;
+        bufferedEvents.length = 0;
+        initialSnapshot = yield* openOrAttachForStream(input);
+        yield* listener({
+          type: "snapshot",
+          snapshot: initialSnapshot,
+        });
+      }
 
       for (const event of bufferedEvents) {
         if (isDuplicateAttachSnapshotEvent(event, initialSnapshot)) {
