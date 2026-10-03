@@ -7,7 +7,7 @@ A pull request runs the four-target installer matrix only when it changes a pack
 ## Required checks
 
 - `quality`: consistent versions, formatting, typecheck, lint and web/server build.
-- `tests`: server and web in two shards each; remaining workspace tests exclude desktop.
+- `tests`: server in three shards; web and the remaining workspace tests (desktop excluded) run whole.
 - `desktop-shell`: Linux build, preload verification, desktop tests and Xvfb startup smoke. Install `pkg-config`, `libsecret-1-dev`, GTK, NSS and audio/display libraries before tests or native compilation.
 - `installers`: Linux x64 daemon, Windows x64 NSIS installer, macOS arm64 and x64 DMGs. Each platform verifies packaged runtime startup and installed Electron behavior. macOS uses native `macos-15` and `macos-15-intel` runners; Windows uses `windows-2025`. Runs on `main`, tags, manual runs and packaging-changing pull requests.
 - `assemble`: exact final inventory plus `SHA256SUMS`, uploaded as `release-assets` after every installer verification succeeds.
