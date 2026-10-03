@@ -98,6 +98,66 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
+describe("HostedBrowserWebview preview configuration failures", () => {
+  const renderWebview = async (threadRef: { environmentId: EnvironmentId; threadId: ThreadId }) => {
+    await act(async () => {
+      renderer = create(
+        <HostedBrowserWebview
+          threadRef={threadRef}
+          tabId="server-tab"
+          runtimeTabId="runtime-tab"
+          initialUrl="https://example.com"
+          viewport={FILL_PREVIEW_VIEWPORT}
+          pictureInPicture={false}
+          profileId="work"
+          zoomFactor={1}
+        />,
+        {
+          createNodeMock: (element) =>
+            element.type === "webview"
+              ? Object.assign(new EventTarget(), { getWebContentsId: () => 41 })
+              : { scrollLeft: 0, scrollTop: 0, scrollTo: () => undefined },
+        },
+      );
+      await ensureClientSettingsHydrated().catch(() => undefined);
+    });
+  };
+
+  it("explains a failed preview configuration and retries it", async () => {
+    mocks.getPreviewConfig.mockRejectedValueOnce(new Error("profile expired"));
+    const threadRef = {
+      environmentId: EnvironmentId.make("host-config-failure"),
+      threadId: ThreadId.make("thread-config-failure"),
+    };
+
+    await renderWebview(threadRef);
+
+    expect(mocks.getPreviewConfig).toHaveBeenCalledTimes(1);
+    const failure = renderer!.root.findByProps({
+      "data-preview-config-error": "PreviewWebviewConfigLoadError",
+    });
+    const failureText = failure
+      .findAllByType("p")
+      .map((node) => node.children.join(""))
+      .join("\n");
+    expect(failureText).toContain("Desktop preview is unavailable");
+    expect(failureText).toContain("Failed to load desktop preview configuration");
+
+    mocks.getPreviewConfig.mockResolvedValueOnce({
+      partition: "persist:awen-preview-work",
+      webPreferences: "contextIsolation=yes",
+      preloadUrl: null,
+    });
+    const retry = renderer!.root.findByType("button");
+    await act(async () => {
+      retry.props.onClick();
+    });
+
+    expect(mocks.getPreviewConfig).toHaveBeenCalledTimes(2);
+    expect(renderer!.root.findAllByType("webview")).toHaveLength(1);
+  });
+});
+
 describe("HostedBrowserWebview settings hydration", () => {
   it("starts a retained background tab only after a settings read succeeds on retry", async () => {
     const firstRead = deferred<ClientSettings | null>();

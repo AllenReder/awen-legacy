@@ -4,6 +4,7 @@ import type { PreviewViewportSetting, ScopedThreadRef } from "@awen/contracts";
 import { useShallow } from "zustand/react/shallow";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { Button } from "~/components/ui/button";
 import { previewBridge } from "~/components/preview/previewBridge";
 import { usePreviewBridge } from "~/components/preview/usePreviewBridge";
 import { useClientSettingsHydrated } from "~/hooks/useSettings";
@@ -20,7 +21,10 @@ import { BrowserDeviceToolbar } from "./BrowserDeviceToolbar";
 import { BrowserViewportResizeHandles } from "./BrowserViewportResizeHandles";
 import { acquireDesktopTab, type AcquiredDesktopTab } from "./desktopTabLifetime";
 import { resolveHostedBrowserWebviewWrapperStyle } from "./hostedBrowserWebviewStyle";
-import { usePreviewWebviewConfig } from "./previewWebviewConfigState";
+import {
+  usePreviewWebviewConfig,
+  type PreviewWebviewConfigError,
+} from "./previewWebviewConfigState";
 import { useBrowserViewportResize } from "./useBrowserViewportResize";
 import {
   INITIAL_WEBVIEW_CRASH_RECOVERY_STATE,
@@ -41,6 +45,32 @@ declare global {
   interface HTMLElementTagNameMap {
     webview: ElectronWebview;
   }
+}
+
+/**
+ * Replaces the guest when its desktop configuration could not be loaded — for
+ * example after the browser profile it names was deleted. Without this the tab
+ * stayed blank with no way back.
+ */
+function PreviewWebviewConfigFailure({
+  error,
+  onRetry,
+}: {
+  readonly error: PreviewWebviewConfigError;
+  readonly onRetry: () => void;
+}) {
+  return (
+    <div
+      className="flex h-full w-full flex-col items-center justify-center gap-3 bg-background px-6 text-center"
+      data-preview-config-error={error._tag}
+    >
+      <p className="text-sm font-medium text-foreground">Desktop preview is unavailable</p>
+      <p className="max-w-md text-sm text-muted-foreground">{error.message}</p>
+      <Button type="button" size="sm" variant="outline" onClick={onRetry}>
+        Retry
+      </Button>
+    </div>
+  );
 }
 
 export function HostedBrowserWebview(props: {
@@ -68,7 +98,8 @@ export function HostedBrowserWebview(props: {
     profileId,
   } = props;
   const clientSettingsHydrated = useClientSettingsHydrated();
-  const config = usePreviewWebviewConfig(threadRef.environmentId, profileId);
+  const configState = usePreviewWebviewConfig(threadRef.environmentId, profileId);
+  const config = configState._tag === "Ready" ? configState.config : null;
   const [initialSrc] = useState(() => initialUrl ?? "about:blank");
   const tabLeaseRef = useRef<AcquiredDesktopTab | null>(null);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
@@ -252,7 +283,7 @@ export function HostedBrowserWebview(props: {
     wrapper.scrollTo({ left: 0, top: 0 });
   }, [runtimeTabId, viewport._tag, viewportHeight, viewportWidth]);
 
-  if (!clientSettingsHydrated || !config) return null;
+  if (!clientSettingsHydrated || configState._tag === "Pending") return null;
 
   const renderingActive = active || backgroundActivity || pictureInPicture || recordingActive;
   const wrapperStyle = resolveHostedBrowserWebviewWrapperStyle({
@@ -278,7 +309,10 @@ export function HostedBrowserWebview(props: {
       data-preview-viewport={runtimeTabId}
     >
       <div className="relative" style={{ width: layout.canvasWidth, height: layout.canvasHeight }}>
-        {deviceToolbarVisible && effectiveViewport._tag !== "fill" ? (
+        {configState._tag === "Unavailable" ? (
+          <PreviewWebviewConfigFailure error={configState.error} onRetry={configState.retry} />
+        ) : null}
+        {config !== null && deviceToolbarVisible && effectiveViewport._tag !== "fill" ? (
           <BrowserDeviceToolbar
             setting={effectiveViewport}
             width={Math.max(1, Math.round(containerSize.width))}
@@ -287,52 +321,54 @@ export function HostedBrowserWebview(props: {
             onChange={commitViewportChange}
           />
         ) : null}
-        <webview
-          key={webviewGeneration}
-          ref={setWebviewRef}
-          // Must be an attribute on the element itself: Electron reads it when the
-          // guest attaches, so setting it from the ref callback lands too late and
-          // the guest attaches with popups disabled. React types `allowpopups` as a
-          // boolean, but react-dom drops boolean values for unrecognized attributes,
-          // so the literal string has to be spread past the type.
-          {...({ allowpopups: "true" } as unknown as { readonly allowpopups?: boolean })}
-          src={webviewGeneration === 0 ? initialSrc : recoverySrc}
-          partition={config.partition}
-          webpreferences={config.webPreferences}
-          {...(config.preloadUrl ? { preload: config.preloadUrl } : {})}
-          data-preview-tab={runtimeTabId}
-          data-preview-server-tab={tabId}
-          data-preview-viewport-mode={effectiveViewport._tag}
-          data-preview-viewport-key={browserViewportSettingKey(effectiveViewport)}
-          data-preview-css-width={
-            fittedSourceViewport
-              ? fittedSourceViewport.width
-              : effectiveViewport._tag === "fill"
-                ? Math.max(1, Math.round(layout.viewportWidth / normalizedZoomFactor))
-                : effectiveViewport.width
-          }
-          data-preview-css-height={
-            fittedSourceViewport
-              ? fittedSourceViewport.height
-              : effectiveViewport._tag === "fill"
-                ? Math.max(1, Math.round(layout.viewportHeight / normalizedZoomFactor))
-                : effectiveViewport.height
-          }
-          aria-hidden={active ? undefined : true}
-          className={cn(
-            "absolute flex overflow-hidden bg-white",
-            active && !layout.fillsPanel && "ring-1 ring-border/70 shadow-sm",
-          )}
-          style={{
-            left: layout.viewportX,
-            top: layout.viewportY,
-            width: layout.viewportWidth / layout.viewportScale,
-            height: layout.viewportHeight / layout.viewportScale,
-            transform: layout.viewportScale < 1 ? `scale(${layout.viewportScale})` : undefined,
-            transformOrigin: "top left",
-          }}
-        />
-        {active && effectiveViewport._tag !== "fill" && !fittedSourceViewport ? (
+        {config !== null ? (
+          <webview
+            key={webviewGeneration}
+            ref={setWebviewRef}
+            // Must be an attribute on the element itself: Electron reads it when the
+            // guest attaches, so setting it from the ref callback lands too late and
+            // the guest attaches with popups disabled. React types `allowpopups` as a
+            // boolean, but react-dom drops boolean values for unrecognized attributes,
+            // so the literal string has to be spread past the type.
+            {...({ allowpopups: "true" } as unknown as { readonly allowpopups?: boolean })}
+            src={webviewGeneration === 0 ? initialSrc : recoverySrc}
+            partition={config.partition}
+            webpreferences={config.webPreferences}
+            {...(config.preloadUrl ? { preload: config.preloadUrl } : {})}
+            data-preview-tab={runtimeTabId}
+            data-preview-server-tab={tabId}
+            data-preview-viewport-mode={effectiveViewport._tag}
+            data-preview-viewport-key={browserViewportSettingKey(effectiveViewport)}
+            data-preview-css-width={
+              fittedSourceViewport
+                ? fittedSourceViewport.width
+                : effectiveViewport._tag === "fill"
+                  ? Math.max(1, Math.round(layout.viewportWidth / normalizedZoomFactor))
+                  : effectiveViewport.width
+            }
+            data-preview-css-height={
+              fittedSourceViewport
+                ? fittedSourceViewport.height
+                : effectiveViewport._tag === "fill"
+                  ? Math.max(1, Math.round(layout.viewportHeight / normalizedZoomFactor))
+                  : effectiveViewport.height
+            }
+            aria-hidden={active ? undefined : true}
+            className={cn(
+              "absolute flex overflow-hidden bg-white",
+              active && !layout.fillsPanel && "ring-1 ring-border/70 shadow-sm",
+            )}
+            style={{
+              left: layout.viewportX,
+              top: layout.viewportY,
+              width: layout.viewportWidth / layout.viewportScale,
+              height: layout.viewportHeight / layout.viewportScale,
+              transform: layout.viewportScale < 1 ? `scale(${layout.viewportScale})` : undefined,
+              transformOrigin: "top left",
+            }}
+          />
+        ) : null}
+        {config !== null && active && effectiveViewport._tag !== "fill" && !fittedSourceViewport ? (
           <>
             <BrowserViewportResizeHandles
               layout={layout}

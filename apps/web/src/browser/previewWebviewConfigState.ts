@@ -1,4 +1,4 @@
-import { useAtomValue } from "@effect/atom-react";
+import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import type {
   DesktopPreviewBridge,
   DesktopPreviewWebviewConfig,
@@ -95,10 +95,32 @@ const previewWebviewConfigAtom = Atom.family((key: string) => {
   );
 });
 
+/**
+ * The desktop preview configuration load, with failure kept distinct from the
+ * first load so the surface can explain itself and offer a retry instead of
+ * rendering nothing.
+ */
+export type PreviewWebviewConfigState =
+  | { readonly _tag: "Pending" }
+  | { readonly _tag: "Ready"; readonly config: DesktopPreviewWebviewConfig }
+  | {
+      readonly _tag: "Unavailable";
+      readonly error: PreviewWebviewConfigError;
+      /** Re-runs the load, for the failure state's retry action. */
+      readonly retry: () => void;
+    };
+
 export function usePreviewWebviewConfig(
   environmentId: EnvironmentId,
   profileId?: string,
-): DesktopPreviewWebviewConfig | null {
-  const result = useAtomValue(previewWebviewConfigAtom(configKey(environmentId, profileId)));
-  return Option.getOrNull(AsyncResult.value(result));
+): PreviewWebviewConfigState {
+  const atom = previewWebviewConfigAtom(configKey(environmentId, profileId));
+  const result = useAtomValue(atom);
+  const retry = useAtomRefresh(atom);
+  const error = AsyncResult.error(result);
+  if (Option.isSome(error)) {
+    return { _tag: "Unavailable", error: error.value, retry };
+  }
+  const config = AsyncResult.value(result);
+  return Option.isSome(config) ? { _tag: "Ready", config: config.value } : { _tag: "Pending" };
 }
