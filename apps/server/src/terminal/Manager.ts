@@ -421,8 +421,18 @@ type DrainProcessEventAction =
 
 interface TerminalManagerState {
   sessions: Map<string, TerminalSessionState>;
-  killFibers: Map<PtyAdapter.PtyProcess, Fiber.Fiber<void, never>>;
+  /**
+   * In-flight SIGKILL escalations keyed by the PTY they will kill. The Session
+   * can already be detached from that PTY, so the terminal id travels with the
+   * fiber for shutdown logging and force-completion.
+   */
+  killFibers: Map<PtyAdapter.PtyProcess, PendingKillEscalation>;
   deletedSessionKeys?: Set<string>;
+}
+
+interface PendingKillEscalation {
+  readonly fiber: Fiber.Fiber<void, never>;
+  readonly terminalId: string;
 }
 
 function truncateTerminalWireLabel(value: string): string {
@@ -2075,6 +2085,12 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   const terminalEventListeners = new Set<(event: TerminalEvent) => Effect.Effect<void>>();
   const workerScope = yield* Scope.make("sequential");
   yield* Effect.addFinalizer(() => Scope.close(workerScope, Exit.void));
+  /**
+   * Set when the shutdown finalizer starts. Kill escalations started from then
+   * on complete inline: a fiber forked into a worker scope that is about to
+   * close would be interrupted before it could send SIGKILL.
+   */
+  let shuttingDown = false;
 
   const publishEvent = (event: TerminalEvent) =>
     Effect.gen(function* () {
@@ -2173,45 +2189,47 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     process: PtyAdapter.PtyProcess | null,
   ) {
     if (!process) return;
-    const fiber: Option.Option<Fiber.Fiber<void, never>> = yield* modifyManagerState<
-      Option.Option<Fiber.Fiber<void, never>>
+    const pending: Option.Option<PendingKillEscalation> = yield* modifyManagerState<
+      Option.Option<PendingKillEscalation>
     >((state) => {
-      const existing: Option.Option<Fiber.Fiber<void, never>> = Option.fromNullishOr(
+      const existing: Option.Option<PendingKillEscalation> = Option.fromNullishOr(
         state.killFibers.get(process),
       );
       if (Option.isNone(existing)) {
-        return [Option.none<Fiber.Fiber<void, never>>(), state] as const;
+        return [Option.none<PendingKillEscalation>(), state] as const;
       }
       const killFibers = new Map(state.killFibers);
       killFibers.delete(process);
       return [existing, { ...state, killFibers }] as const;
     });
-    if (Option.isSome(fiber)) {
-      yield* Fiber.interrupt(fiber.value).pipe(Effect.ignore);
+    if (Option.isSome(pending)) {
+      yield* Fiber.interrupt(pending.value.fiber).pipe(Effect.ignore);
     }
   });
 
   const registerKillFiber = Effect.fn("terminal.registerKillFiber")(function* (
     process: PtyAdapter.PtyProcess,
+    terminalId: string,
     fiber: Fiber.Fiber<void, never>,
   ) {
     yield* modifyManagerState((state) => {
       const killFibers = new Map(state.killFibers);
-      killFibers.set(process, fiber);
+      killFibers.set(process, { fiber, terminalId });
       return [undefined, { ...state, killFibers }] as const;
     });
   });
 
-  const runKillEscalation = Effect.fn("terminal.runKillEscalation")(function* (
+  const sendProcessSignal = Effect.fn("terminal.sendProcessSignal")(function* (
     process: PtyAdapter.PtyProcess,
     terminalId: string,
+    signal: "SIGTERM" | "SIGKILL",
   ) {
-    const terminated = yield* Effect.try({
-      try: () => process.kill("SIGTERM"),
+    return yield* Effect.try({
+      try: () => process.kill(signal),
       catch: (cause) =>
         new TerminalProcessSignalError({
           cause,
-          signal: "SIGTERM",
+          signal,
           terminalPid: process.pid,
         }),
     }).pipe(
@@ -2219,40 +2237,39 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       Effect.catch((error) =>
         Effect.logWarning("failed to kill terminal process", {
           terminalId,
-          signal: "SIGTERM",
+          signal,
           cause: error,
         }).pipe(Effect.as(false)),
       ),
     );
+  });
+
+  const runKillEscalation = Effect.fn("terminal.runKillEscalation")(function* (
+    process: PtyAdapter.PtyProcess,
+    terminalId: string,
+  ) {
+    const terminated = yield* sendProcessSignal(process, terminalId, "SIGTERM");
     if (!terminated) {
       return;
     }
 
     yield* Effect.sleep(processKillGraceMs);
 
-    yield* Effect.try({
-      try: () => process.kill("SIGKILL"),
-      catch: (cause) =>
-        new TerminalProcessSignalError({
-          cause,
-          signal: "SIGKILL",
-          terminalPid: process.pid,
-        }),
-    }).pipe(
-      Effect.catch((error) =>
-        Effect.logWarning("failed to force-kill terminal process", {
-          terminalId,
-          signal: "SIGKILL",
-          cause: error,
-        }),
-      ),
-    );
+    yield* sendProcessSignal(process, terminalId, "SIGKILL");
   });
 
   const startKillEscalation = Effect.fn("terminal.startKillEscalation")(function* (
     process: PtyAdapter.PtyProcess,
     terminalId: string,
   ) {
+    if (shuttingDown) {
+      // Shutdown is tearing the worker scope down; escalating in a fiber now
+      // would be interrupted before SIGKILL, so complete it inline.
+      yield* sendProcessSignal(process, terminalId, "SIGTERM");
+      yield* sendProcessSignal(process, terminalId, "SIGKILL");
+      return;
+    }
+
     const fiber = yield* runKillEscalation(process, terminalId).pipe(
       Effect.ensuring(
         modifyManagerState((state) => {
@@ -2267,7 +2284,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       Effect.forkIn(workerScope),
     );
 
-    yield* registerKillFiber(process, fiber);
+    yield* registerKillFiber(process, terminalId, fiber);
   });
 
   const persistWorker = yield* makeKeyedCoalescingWorker<
@@ -3293,6 +3310,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
 
   yield* Effect.addFinalizer(() =>
     Effect.gen(function* () {
+      shuttingDown = true;
       const sessions = yield* modifyManagerState(
         (state) =>
           [
@@ -3307,6 +3325,24 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       // Stop the debounced writer before the final write, including when a
       // virtual clock has a pending debounce. No older write can race it.
       for (const session of sessions) cleanupProcessHandles(session);
+
+      // `stopProcess` detaches the PTY from its Session before the SIGKILL
+      // escalation fires, so those escalations are unreachable from `sessions`.
+      // Closing the worker scope would interrupt their grace-period sleep and
+      // the SIGKILL would never be sent, leaving an orphan behind: force every
+      // tracked escalation to completion here instead.
+      const pendingEscalations = yield* readManagerState.pipe(
+        Effect.map((state) => [...state.killFibers]),
+      );
+      yield* Effect.forEach(
+        pendingEscalations,
+        ([process, escalation]) =>
+          Fiber.interrupt(escalation.fiber).pipe(
+            Effect.andThen(sendProcessSignal(process, escalation.terminalId, "SIGKILL")),
+          ),
+        { concurrency: "unbounded", discard: true },
+      );
+
       if (sessions.some((session) => session.workspaceId !== null)) {
         yield* Scope.close(workerScope, Exit.void);
       }

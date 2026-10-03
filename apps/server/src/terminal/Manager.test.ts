@@ -633,6 +633,33 @@ it.layer(
     }),
   );
 
+  it.effect("force-completes a detached PTY's pending SIGKILL escalation on shutdown", () =>
+    Effect.gen(function* () {
+      const ptyAdapter = new FakePtyAdapter();
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const { manager } = yield* createManager(5, {
+            ptyAdapter,
+            // Long enough that only shutdown can complete this escalation.
+            processKillGraceMs: 30_000,
+          });
+          const opened = yield* manager.open(openInput());
+          const process = ptyAdapter.processes[0];
+          expect(process).toBeDefined();
+          if (!process) return;
+
+          // Closing the terminal detaches the PTY from the Session straight
+          // away; its SIGKILL escalation is still inside the grace period.
+          yield* manager.close({ terminalId: opened.terminalId });
+          yield* Effect.yieldNow;
+          expect(process.killSignals).toEqual(["SIGTERM"]);
+        }),
+      );
+      // Daemon shutdown must not interrupt that pending escalation.
+      expect(ptyAdapter.processes[0]?.killSignals).toEqual(["SIGTERM", "SIGKILL"]);
+    }),
+  );
+
   it.effect(
     "retains stopped Workspace Sessions beyond the runtime cache limit across reconnect",
     () =>
