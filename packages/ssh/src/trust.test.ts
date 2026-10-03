@@ -1,11 +1,21 @@
 import { assert, describe, it } from "@effect/vitest";
 import type { DesktopSshEnvironmentTarget } from "@awen/contracts";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { HostProcessEnvironment, HostProcessPlatform } from "@awen/shared/hostProcess";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
+import * as Sink from "effect/Sink";
+import * as Stream from "effect/Stream";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import {
   classifySshHostKeyTrust,
   confirmedHostKeyLine,
   fingerprintHostKey,
   knownHostsLookupHost,
+  trustSshHostKey,
 } from "./trust.ts";
 
 const TARGET: DesktopSshEnvironmentTarget = {
@@ -30,6 +40,47 @@ const keyscanOutput = (key = KEY_A) =>
 const knownHostsOutput = (key = KEY_A) =>
   ["# Host devbox.example.test found: line 3", `devbox.example.test ssh-ed25519 ${key}`, ""].join(
     "\n",
+  );
+
+const makeSuccessfulProcess = (stdout: string) => {
+  const output = Stream.make(new TextEncoder().encode(stdout));
+  return ChildProcessSpawner.makeHandle({
+    pid: ChildProcessSpawner.ProcessId(123),
+    stdout: output,
+    stderr: Stream.empty,
+    all: output,
+    exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+    isRunning: Effect.succeed(false),
+    kill: () => Effect.void,
+    stdin: Sink.drain,
+    getInputFd: () => Sink.drain,
+    getOutputFd: () => Stream.empty,
+    unref: Effect.succeed(Effect.void),
+  });
+};
+
+const makeFailedProcess = () =>
+  ChildProcessSpawner.makeHandle({
+    pid: ChildProcessSpawner.ProcessId(123),
+    stdout: Stream.empty,
+    stderr: Stream.empty,
+    all: Stream.empty,
+    exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(1)),
+    isRunning: Effect.succeed(false),
+    kill: () => Effect.void,
+    stdin: Sink.drain,
+    getInputFd: () => Sink.drain,
+    getOutputFd: () => Stream.empty,
+    unref: Effect.succeed(Effect.void),
+  });
+
+const makeTrustSpawner = () =>
+  ChildProcessSpawner.make((command) =>
+    Effect.succeed(
+      command._tag === "StandardCommand" && command.command === "ssh-keygen"
+        ? makeFailedProcess()
+        : makeSuccessfulProcess(keyscanOutput()),
+    ),
   );
 
 describe("classifySshHostKeyTrust", () => {
@@ -111,4 +162,30 @@ describe("classifySshHostKeyTrust", () => {
     const result = classifySshHostKeyTrust("", scanned, TARGET);
     assert.deepEqual(result, { status: "new", keyType: null });
   });
+
+  it.effect("writes a confirmed key under USERPROFILE on Windows", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "awen-ssh-home-" });
+
+      yield* trustSshHostKey(TARGET, "ssh-ed25519", fingerprintHostKey(KEY_A)).pipe(
+        Effect.provideService(HostProcessPlatform, "win32"),
+        Effect.provideService(HostProcessEnvironment, { USERPROFILE: home }),
+      );
+
+      assert.equal(
+        yield* fs.readFileString(path.join(home, ".ssh", "known_hosts")),
+        `devbox.example.test ssh-ed25519 ${KEY_A}\n`,
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.merge(
+          NodeServices.layer,
+          Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, makeTrustSpawner()),
+        ),
+      ),
+      Effect.scoped,
+    ),
+  );
 });
