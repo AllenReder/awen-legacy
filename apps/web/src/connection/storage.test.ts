@@ -1,6 +1,9 @@
 import { ConnectionTransientError, PrimaryConnectionTarget } from "@awen/client-runtime/connection";
 import { EnvironmentId } from "@awen/contracts";
-import { ConnectionCatalogDocument } from "@awen/client-runtime/platform";
+import {
+  type ConnectionCatalogDocument as ConnectionCatalogDocumentType,
+  ConnectionCatalogDocument,
+} from "@awen/client-runtime/platform";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
@@ -10,9 +13,11 @@ import * as Stream from "effect/Stream";
 import { afterEach, vi } from "vite-plus/test";
 
 import {
+  makeBrowserCatalogChangeChannel,
   makeBrowserGitHubRoutingPermissions,
   makeCatalogBackend,
   makeCatalogStore,
+  type CatalogChangeChannel,
 } from "./storage";
 
 const emptyCatalog = {
@@ -64,6 +69,137 @@ describe("makeCatalogStore", () => {
   );
 });
 
+const makeLocalStorageStub = (): Storage => {
+  const values = new Map<string, string>();
+  return {
+    get length() {
+      return values.size;
+    },
+    key: (index) => [...values.keys()][index] ?? null,
+    getItem: (key) => values.get(key) ?? null,
+    setItem: (key, value) => {
+      values.set(key, value);
+    },
+    removeItem: (key) => {
+      values.delete(key);
+    },
+    clear: () => {
+      values.clear();
+    },
+  };
+};
+
+const makeCatalogBackendDouble = () => {
+  let persisted: string | null = null;
+  return {
+    backend: {
+      read: Effect.sync(() => persisted),
+      write: (raw: string) =>
+        Effect.sync(() => {
+          persisted = raw;
+        }),
+    },
+    persisted: () => persisted,
+  };
+};
+
+/**
+ * A shared localStorage bus behind per-tab channel instances: publishing from
+ * one tab delivers the change to every subscribed tab, like a real `storage`
+ * event does for the other tabs.
+ */
+const makeCatalogChangeBus = () => {
+  const listeners = new Set<() => void>();
+  const makeChannel = (): CatalogChangeChannel => ({
+    publish: () => {
+      for (const listener of [...listeners]) listener();
+    },
+    subscribe: (listener) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  });
+  return { makeChannel };
+};
+
+const addDisabledEnvironment =
+  (id: string) =>
+  (document: ConnectionCatalogDocumentType): ConnectionCatalogDocumentType => ({
+    ...document,
+    disabledEnvironmentIds: [...document.disabledEnvironmentIds, EnvironmentId.make(id)],
+  });
+
+describe("makeCatalogStore cross-tab writes", () => {
+  it.effect("re-reads the persisted catalog before applying an update", () =>
+    Effect.gen(function* () {
+      const { backend, persisted } = makeCatalogBackendDouble();
+      const firstTab = yield* makeCatalogStore(backend);
+      const secondTab = yield* makeCatalogStore(backend);
+      yield* firstTab.read;
+      yield* secondTab.read;
+
+      yield* firstTab.update(addDisabledEnvironment("first"));
+      yield* secondTab.update(addDisabledEnvironment("second"));
+
+      expect(decodeCatalog(persisted()!)).toEqual({
+        ...emptyCatalog,
+        disabledEnvironmentIds: [EnvironmentId.make("first"), EnvironmentId.make("second")],
+      });
+    }),
+  );
+
+  it.effect("reloads the persisted catalog when another tab announces a write", () =>
+    Effect.gen(function* () {
+      const { backend } = makeCatalogBackendDouble();
+      const changes = makeCatalogChangeBus();
+      const firstTab = yield* makeCatalogStore(backend, changes.makeChannel());
+      const secondTab = yield* makeCatalogStore(backend, changes.makeChannel());
+
+      yield* firstTab.read;
+      expect(yield* secondTab.read).toEqual(emptyCatalog);
+
+      yield* firstTab.update(addDisabledEnvironment("first"));
+
+      expect(yield* secondTab.read).toEqual({
+        ...emptyCatalog,
+        disabledEnvironmentIds: [EnvironmentId.make("first")],
+      });
+    }),
+  );
+});
+
+describe("browser catalog change channel", () => {
+  it.effect("announces writes to other tabs and ignores unrelated storage keys", () =>
+    Effect.gen(function* () {
+      const localStorage = makeLocalStorageStub();
+      const firstBrowser = Object.assign(new EventTarget(), { localStorage });
+      const secondBrowser = Object.assign(new EventTarget(), { localStorage });
+      const listening = makeBrowserCatalogChangeChannel(secondBrowser);
+      const writing = makeBrowserCatalogChangeChannel(firstBrowser);
+      const listener = vi.fn();
+      const unsubscribe = listening.subscribe(listener);
+
+      writing.publish();
+      expect(localStorage.getItem("awen:connection-catalog-changed")).not.toBeNull();
+      secondBrowser.dispatchEvent(
+        Object.assign(new Event("storage"), { key: "awen:connection-catalog-changed" }),
+      );
+      expect(listener).toHaveBeenCalledTimes(1);
+
+      secondBrowser.dispatchEvent(
+        Object.assign(new Event("storage"), { key: "awen:github-routing:other" }),
+      );
+      expect(listener).toHaveBeenCalledTimes(1);
+
+      unsubscribe();
+      secondBrowser.dispatchEvent(
+        Object.assign(new Event("storage"), { key: "awen:connection-catalog-changed" }),
+      );
+      expect(listener).toHaveBeenCalledTimes(1);
+    }),
+  );
+});
+
 describe("makeCatalogBackend", () => {
   it.effect("fails writes when desktop secure storage declines the catalog", () =>
     Effect.gen(function* () {
@@ -88,23 +224,7 @@ describe("makeCatalogBackend", () => {
 describe("browser GitHub routing permissions", () => {
   it.effect("revokes across runtimes before storage events and resists stale catalog writes", () =>
     Effect.gen(function* () {
-      const values = new Map<string, string>();
-      const localStorage: Storage = {
-        get length() {
-          return values.size;
-        },
-        key: (index) => [...values.keys()][index] ?? null,
-        getItem: (key) => values.get(key) ?? null,
-        setItem: (key, value) => {
-          values.set(key, value);
-        },
-        removeItem: (key) => {
-          values.delete(key);
-        },
-        clear: () => {
-          values.clear();
-        },
-      };
+      const localStorage = makeLocalStorageStub();
       const firstBrowser = Object.assign(new EventTarget(), { localStorage });
       const secondBrowser = Object.assign(new EventTarget(), { localStorage });
       const first = makeBrowserGitHubRoutingPermissions(firstBrowser);

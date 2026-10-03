@@ -34,7 +34,6 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Ref from "effect/Ref";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
@@ -304,23 +303,74 @@ export function makeCatalogBackend(database: IDBDatabase): CatalogBackend {
   };
 }
 
-interface CatalogStore {
+const CATALOG_CHANGE_STORAGE_KEY = "awen:connection-catalog-changed";
+
+export interface CatalogChangeChannel {
+  /** Announces that this tab persisted a catalog document. */
+  readonly publish: () => void;
+  /** Calls `listener` when another tab persisted a catalog document. */
+  readonly subscribe: (listener: () => void) => () => void;
+}
+
+/**
+ * Cross-tab notification bus for the connection catalog.
+ *
+ * The document itself lives in IndexedDB or desktop secure storage, neither of
+ * which reports changes to other tabs, so every tab announces its writes
+ * through localStorage. A `storage` event never fires in the tab that wrote it,
+ * which is exactly the audience that needs to drop its cached document.
+ */
+// A value that differs on every write without pulling randomness through the
+// Effect runtime: this is a change signal, not a credential.
+const catalogChangeNonce = (): string => `${Date.now()}-${Math.random()}`;
+
+export function makeBrowserCatalogChangeChannel(
+  browser: Pick<Window, "localStorage"> & EventTarget = window,
+): CatalogChangeChannel {
+  return {
+    publish: () => {
+      try {
+        // A fresh value every write: a `storage` event is suppressed when the
+        // stored value is unchanged, so a plain timestamp can be missed.
+        browser.localStorage.setItem(CATALOG_CHANGE_STORAGE_KEY, catalogChangeNonce());
+      } catch {
+        // Storage can be unavailable (private mode, quota). Other tabs then
+        // keep their cached document; their own writes still re-read first.
+      }
+    },
+    subscribe: (listener) => {
+      const onStorage = (event: Event) => {
+        if ((event as StorageEvent).key !== CATALOG_CHANGE_STORAGE_KEY) return;
+        listener();
+      };
+      browser.addEventListener("storage", onStorage);
+      return () => browser.removeEventListener("storage", onStorage);
+    },
+  };
+}
+
+export interface CatalogStore {
   readonly read: Effect.Effect<ConnectionCatalogDocumentType, ConnectionTransientError>;
   readonly update: (
     transform: (catalog: ConnectionCatalogDocumentType) => ConnectionCatalogDocumentType,
   ) => Effect.Effect<void, ConnectionTransientError>;
+  /** Stops observing cross-tab catalog changes. */
+  readonly dispose: () => void;
 }
 
 export const makeCatalogStore = Effect.fn("web.connectionStorage.makeCatalogStore")(function* (
   backend: CatalogBackend,
+  changes?: CatalogChangeChannel,
 ) {
-  const state = yield* Ref.make<Option.Option<ConnectionCatalogDocumentType>>(Option.none());
+  // A plain binding rather than a Ref: cross-tab change events invalidate the
+  // document from a DOM listener, and the semaphore already serializes every
+  // read-modify-write that could race with it.
+  let cached: ConnectionCatalogDocumentType | null = null;
   const lock = yield* Semaphore.make(1);
 
   const loadUnlocked = Effect.fn("web.connectionStorage.loadCatalog")(function* () {
-    const cached = yield* Ref.get(state);
-    if (Option.isSome(cached)) {
-      return cached.value;
+    if (cached !== null) {
+      return cached;
     }
     const raw = yield* backend.read;
     let catalog = EMPTY_CONNECTION_CATALOG_DOCUMENT;
@@ -353,7 +403,7 @@ export const makeCatalogStore = Effect.fn("web.connectionStorage.makeCatalogStor
         ),
       );
     }
-    yield* Ref.set(state, Option.some(catalog));
+    cached = catalog;
     return catalog;
   });
 
@@ -362,15 +412,32 @@ export const makeCatalogStore = Effect.fn("web.connectionStorage.makeCatalogStor
     function* (transform) {
       yield* lock.withPermits(1)(
         Effect.gen(function* () {
+          // Re-read the persisted document instead of transforming the cached
+          // snapshot: another tab may have registered or removed an entry since
+          // this store loaded, and writing the transform of a stale snapshot
+          // would publish a whole-document write that drops those changes.
+          cached = null;
           const next = transform(yield* loadUnlocked());
           yield* backend.write(yield* encodeCatalog(next));
-          yield* Ref.set(state, Option.some(next));
+          cached = next;
+          changes?.publish();
         }),
       );
     },
   );
 
-  return { read, update } satisfies CatalogStore;
+  // Another tab writing the catalog cannot be seen in the stored document
+  // until the cache is dropped; this store both announces its own writes and
+  // listens for the other tabs' announcements.
+  const unsubscribe = changes?.subscribe(() => {
+    cached = null;
+  });
+
+  return {
+    read,
+    update,
+    dispose: () => unsubscribe?.(),
+  } satisfies CatalogStore;
 });
 
 const GITHUB_ROUTING_KEY_PREFIX = "awen:github-routing:";
@@ -479,7 +546,9 @@ export const connectionStorageLayer = Layer.effectContext(
     const database = yield* Effect.acquireRelease(openDatabase(), (database) =>
       Effect.sync(() => database.close()),
     );
-    const catalog = yield* makeCatalogStore(makeCatalogBackend(database));
+    const catalogChanges = makeBrowserCatalogChangeChannel();
+    const catalog = yield* makeCatalogStore(makeCatalogBackend(database), catalogChanges);
+    yield* Effect.addFinalizer(() => Effect.sync(() => catalog.dispose()));
     const githubRoutingPermissions = makeBrowserGitHubRoutingPermissions();
 
     const targetStore = ConnectionTargetStore.of({
