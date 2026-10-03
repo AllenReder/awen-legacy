@@ -1696,6 +1696,26 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         assert.equal(result.branch, current);
       }),
     );
+
+    it.effect("refuses a ref name that git would parse as an option", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const head = yield* git(cwd, ["rev-parse", "HEAD"]);
+        // Only external tooling can create such a ref, and `git checkout -f`
+        // would reset the checkout if the name reached git as an argument.
+        yield* git(cwd, ["update-ref", "refs/heads/-f", head]);
+        yield* writeTextFile(cwd, "README.md", "# test\nuncommitted change\n");
+
+        const error = yield* driver.switchRef({ cwd, refName: "-f" }).pipe(Effect.flip);
+
+        assert.equal(error._tag, "GitCommandError");
+        assert.include(error.detail, "-f");
+        assert.equal(yield* git(cwd, ["status", "--porcelain"]), "M README.md");
+        assert.equal(yield* git(cwd, ["branch", "--show-current"]), initialBranch);
+      }),
+    );
   });
 
   describe("worktree operations", () => {

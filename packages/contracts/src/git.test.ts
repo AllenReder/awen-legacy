@@ -3,6 +3,7 @@ import * as Schema from "effect/Schema";
 
 import {
   VcsCreateWorktreeInput,
+  VcsSwitchRefInput,
   GitPreparePullRequestThreadInput,
   GitPreparePullRequestThreadResult,
   GitRunStackedActionResult,
@@ -10,6 +11,7 @@ import {
   GitResolvePullRequestResult,
 } from "./git.ts";
 
+const decodeSwitchRefInput = Schema.decodeUnknownSync(VcsSwitchRefInput);
 const decodeCreateWorktreeInput = Schema.decodeUnknownSync(VcsCreateWorktreeInput);
 const decodePreparePullRequestThreadInput = Schema.decodeUnknownSync(
   GitPreparePullRequestThreadInput,
@@ -43,6 +45,21 @@ describe("VcsCreateWorktreeInput", () => {
     });
 
     expect(parsed.baseRefName).toBe("origin/main");
+  });
+});
+
+describe("VcsSwitchRefInput", () => {
+  it("rejects ref names that git would parse as options", () => {
+    expect(() => decodeSwitchRefInput({ cwd: "/repo", refName: "-f" })).toThrow();
+    expect(() => decodeSwitchRefInput({ cwd: "/repo", refName: "--force" })).toThrow();
+    // The trim happens before the check, so an indented name cannot slip past it.
+    expect(() => decodeSwitchRefInput({ cwd: "/repo", refName: " -f" })).toThrow();
+  });
+
+  it("accepts ordinary ref names", () => {
+    expect(decodeSwitchRefInput({ cwd: "/repo", refName: "feature/branch" }).refName).toBe(
+      "feature/branch",
+    );
   });
 });
 
