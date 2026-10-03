@@ -215,11 +215,55 @@ interface SessionContext {
 }
 
 const CLIENT_FILE_MAX_BYTES = 8 * 1024 * 1024;
+const CLIENT_FILE_MAX_SYMLINK_HOPS = 32;
 
 function isInsideRoot(path: Path.Path, root: string, candidate: string): boolean {
   const relative = path.relative(root, candidate);
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
+
+/**
+ * Resolves an agent-supplied path to its real location, following links in the
+ * final segment as well as in its parents.
+ *
+ * Working up to the nearest existing ancestor is what lets a create through a
+ * not-yet-created directory stay safe: `link/new/file` only passes once the
+ * ancestor that exists has been resolved through its links. Returns `null` for
+ * a path that cannot be resolved (an unresolvable ancestor, or a link chain
+ * past the hop limit), so the caller fails closed instead of judging a lexical
+ * remnant.
+ */
+const resolveClientRealPath = Effect.fn("AntigravityAdapter.resolveClientRealPath")(
+  function* (input: {
+    readonly fileSystem: FileSystem.FileSystem;
+    readonly path: Path.Path;
+    readonly resolved: string;
+  }): Effect.fn.Return<string | null> {
+    const { fileSystem, path } = input;
+    let candidate = input.resolved;
+    const missingTail: Array<string> = [];
+    for (let hop = 0; hop < CLIENT_FILE_MAX_SYMLINK_HOPS; hop += 1) {
+      const real = yield* fileSystem.realPath(candidate).pipe(Effect.orElseSucceed(() => null));
+      if (real !== null) {
+        return missingTail.length === 0 ? real : path.join(real, ...missingTail);
+      }
+      const linkTarget = yield* fileSystem
+        .readLink(candidate)
+        .pipe(Effect.orElseSucceed(() => null));
+      if (linkTarget !== null) {
+        candidate = path.resolve(path.dirname(candidate), linkTarget);
+        continue;
+      }
+      const parent = path.dirname(candidate);
+      if (parent === candidate) {
+        return path.join(candidate, ...missingTail);
+      }
+      missingTail.unshift(path.basename(candidate));
+      candidate = parent;
+    }
+    return null;
+  },
+);
 
 /** Resolves an agent-supplied path and rejects anything outside the session roots. */
 const resolveClientFilePath = Effect.fn("AntigravityAdapter.resolveClientFilePath")(
@@ -231,11 +275,19 @@ const resolveClientFilePath = Effect.fn("AntigravityAdapter.resolveClientFilePat
   }) {
     const { path } = input;
     const resolved = path.resolve(input.requestPath);
-    // Follow symlinks on the parent so a link out of the workspace cannot escape it.
-    const parent = yield* input.fileSystem
-      .realPath(path.dirname(resolved))
-      .pipe(Effect.orElseSucceed(() => path.dirname(resolved)));
-    const real = path.join(parent, path.basename(resolved));
+    // Resolve the full path, including the final segment: stat/read/write
+    // follow a link at the end of the path exactly like one in a parent, so a
+    // parent-only check would compare the link itself instead of its target.
+    const real = yield* resolveClientRealPath({
+      fileSystem: input.fileSystem,
+      path,
+      resolved,
+    });
+    if (real === null) {
+      return yield* EffectAcpErrors.AcpRequestError.invalidParams(
+        `Path '${input.requestPath}' could not be resolved inside the session workspace.`,
+      );
+    }
     const roots = yield* Effect.forEach(input.allowedRoots, (root) =>
       input.fileSystem.realPath(root).pipe(Effect.orElseSucceed(() => root)),
     );

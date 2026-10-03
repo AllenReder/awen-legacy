@@ -31,6 +31,8 @@ import {
   parseSessionUpdateEvent,
   type AcpToolCallState,
 } from "../acp/AcpRuntimeModel.ts";
+import { symlinksSupported } from "@awen/shared/testing/symlinks";
+
 import { makeAntigravityAdapter, type AntigravityAdapterOptions } from "./AntigravityAdapter.ts";
 
 const instanceId = ProviderInstanceId.make("antigravity-test");
@@ -1269,6 +1271,89 @@ it.layer(layer)("AntigravityAdapter", (it) => {
       }).pipe(Effect.flip);
       expect(missing._tag).toBe("AcpRequestError");
     }).pipe(Effect.scoped),
+  );
+
+  it.effect.skipIf(!symlinksSupported)(
+    "rejects a symlinked final segment that escapes the session roots",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const h = yield* makeHarness();
+        const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "awen-agy-link-root-" });
+        const outside = yield* fs.makeTempDirectoryScoped({ prefix: "awen-agy-link-outside-" });
+        yield* fs.writeFileString(path.join(outside, "secret.txt"), "outside");
+        yield* h.adapter.startSession({ threadId, cwd, runtimeMode: "approval-required" });
+        const read = h.fileHandlers.read;
+        const write = h.fileHandlers.write;
+        if (!read || !write) return yield* Effect.die("File handlers were not registered.");
+
+        // The check used to canonicalize only the parent directory, so a link in
+        // the final segment was compared as a lexical path and then followed.
+        yield* fs.symlink(path.join(outside, "secret.txt"), path.join(cwd, "secret-link"));
+        yield* fs.symlink(path.join(outside, "missing.txt"), path.join(cwd, "dangling-link"));
+
+        const linkedRead = yield* read({
+          sessionId: nativeSessionId,
+          path: path.join(cwd, "secret-link"),
+        }).pipe(Effect.flip);
+        expect(linkedRead._tag).toBe("AcpRequestError");
+        const linkedWrite = yield* write({
+          sessionId: nativeSessionId,
+          path: path.join(cwd, "secret-link"),
+          content: "overwritten",
+        }).pipe(Effect.flip);
+        expect(linkedWrite._tag).toBe("AcpRequestError");
+        expect(yield* fs.readFileString(path.join(outside, "secret.txt"))).toBe("outside");
+
+        // A dangling link resolves to a path that does not exist yet, which is
+        // exactly the shape a create-through-link write would otherwise allow.
+        const danglingWrite = yield* write({
+          sessionId: nativeSessionId,
+          path: path.join(cwd, "dangling-link"),
+          content: "created",
+        }).pipe(Effect.flip);
+        expect(danglingWrite._tag).toBe("AcpRequestError");
+        expect(yield* fs.exists(path.join(outside, "missing.txt"))).toBe(false);
+
+        // A create below a link that leaves the root must not be able to walk
+        // the missing segments through that link.
+        const outsideDirectory = path.join(outside, "escape-dir");
+        yield* fs.makeDirectory(outsideDirectory, { recursive: true });
+        yield* fs.symlink(outsideDirectory, path.join(cwd, "directory-link"));
+        const nestedEscape = yield* write({
+          sessionId: nativeSessionId,
+          path: path.join(cwd, "directory-link", "nested", "created.txt"),
+          content: "escaped",
+        }).pipe(Effect.flip);
+        expect(nestedEscape._tag).toBe("AcpRequestError");
+        expect(yield* fs.exists(path.join(outsideDirectory, "nested", "created.txt"))).toBe(false);
+
+        // A chain longer than the resolution limit must fail closed instead of
+        // falling back to a lexical path that is still inside the root.
+        let previousLink = path.join(outside, "chain-missing.txt");
+        for (let hop = 0; hop < 40; hop += 1) {
+          const link = path.join(cwd, `chain-${hop}`);
+          yield* fs.symlink(previousLink, link);
+          previousLink = link;
+        }
+        const chainedWrite = yield* write({
+          sessionId: nativeSessionId,
+          path: path.join(cwd, "chain-39"),
+          content: "escaped",
+        }).pipe(Effect.flip);
+        expect(chainedWrite._tag).toBe("AcpRequestError");
+        expect(yield* fs.exists(path.join(outside, "chain-missing.txt"))).toBe(false);
+
+        // A link that stays inside the root is still followed normally.
+        yield* fs.writeFileString(path.join(cwd, "inside.txt"), "inside");
+        yield* fs.symlink(path.join(cwd, "inside.txt"), path.join(cwd, "inside-link"));
+        const inside = yield* read({
+          sessionId: nativeSessionId,
+          path: path.join(cwd, "inside-link"),
+        });
+        expect(inside.content).toBe("inside");
+      }).pipe(Effect.scoped),
   );
 
   it.effect("does not launch a process for a disabled instance or invalid resume cursor", () =>
