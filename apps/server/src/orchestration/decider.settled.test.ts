@@ -103,6 +103,70 @@ it.layer(NodeServices.layer)("settled thread decider", (it) => {
     }),
   );
 
+  it.effect("reads pending requests from the durable activity window", () =>
+    Effect.gen(function* () {
+      const requestActivity = (): OrchestrationThread["activities"][number] =>
+        ({
+          id: EventId.make("durable-request"),
+          tone: "info",
+          kind: "approval.requested",
+          summary: "Approval requested",
+          payload: { requestId: "durable-request-1" },
+          turnId: null,
+          createdAt: NOW,
+        }) as OrchestrationThread["activities"][number];
+
+      // The command read model boots without activities; the durable window is
+      // the only evidence that this thread is still waiting on the user.
+      const openError = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.settle",
+          commandId: CommandId.make("cmd-settle-durable-request"),
+          threadId: ThreadId.make("thread-1"),
+        },
+        readModel: makeReadModel(null, null, null, []),
+        requestActivities: [requestActivity()],
+      }).pipe(Effect.flip);
+      expect(openError).toMatchObject({
+        _tag: "OrchestrationThreadSettleBlockedError",
+        message: SETTLE_BLOCKED_MESSAGE,
+      });
+
+      const snoozeError = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.snooze",
+          commandId: CommandId.make("cmd-snooze-durable-request"),
+          threadId: ThreadId.make("thread-1"),
+          snoozedUntil: "2026-01-02T00:00:00.000Z",
+        },
+        readModel: makeReadModel(null, null, null, []),
+        requestActivities: [requestActivity()],
+      }).pipe(Effect.flip);
+      expect(snoozeError._tag).toBe("OrchestrationCommandInvariantError");
+
+      // Resolving the request in the durable window clears the block.
+      const resolved = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.settle",
+          commandId: CommandId.make("cmd-settle-durable-resolved"),
+          threadId: ThreadId.make("thread-1"),
+        },
+        readModel: makeReadModel(null, null, null, []),
+        requestActivities: [
+          requestActivity(),
+          {
+            ...requestActivity(),
+            id: EventId.make("durable-resolution"),
+            kind: "approval.resolved",
+            payload: { requestId: "durable-request-1", decision: "accept" },
+          },
+        ],
+      });
+      const events = Array.isArray(resolved) ? resolved : [resolved];
+      expect(events.some((event) => event.type === "thread.settled")).toBe(true);
+    }),
+  );
+
   it.effect("rejects an automatic settle when the thread is pinned active", () =>
     Effect.gen(function* () {
       const command = {
