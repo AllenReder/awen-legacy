@@ -49,7 +49,9 @@ import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as SchemaIssue from "effect/SchemaIssue";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
+import * as SynchronizedRef from "effect/SynchronizedRef";
 
 import { appendUserInputAttachmentPaths } from "../userInputAttachments.ts";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
@@ -491,6 +493,25 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       yield* Deferred.succeed(pending.completion, terminal);
       return true;
     });
+  // Stop and automatic recovery both read-modify-write the same directory
+  // binding. Serialize them per thread so a recovery can never observe the
+  // half-applied state of a stop in flight (adapter session gone, `stopped`
+  // not yet persisted) and then overwrite that stop with a running session.
+  const lifecycleLocks = yield* SynchronizedRef.make(new Map<ThreadId, Semaphore.Semaphore>());
+  const withThreadLifecycleLock = <A, E, R>(
+    threadId: ThreadId,
+    effect: Effect.Effect<A, E, R>,
+  ): Effect.Effect<A, E, R> =>
+    SynchronizedRef.modifyEffect(lifecycleLocks, (locks) => {
+      const existing = locks.get(threadId);
+      if (existing !== undefined) {
+        return Effect.succeed([existing, locks] as const);
+      }
+      return Semaphore.make(1).pipe(
+        Effect.map((lock) => [lock, new Map(locks).set(threadId, lock)] as const),
+      );
+    }).pipe(Effect.flatMap((lock) => lock.withPermit(effect)));
+
   const turnAnalytics = yield* Ref.make<TurnAnalyticsState>({
     sessions: new Map(),
     completedKeys: new Set(),
@@ -1199,71 +1220,91 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       "provider.instance_id": bindingInstanceId,
       "provider.thread_id": input.binding.threadId,
     });
-    return yield* Effect.gen(function* () {
-      const adapter = yield* registry.getByInstance(bindingInstanceId);
-      const hasResumeCursor =
-        input.binding.resumeCursor !== null && input.binding.resumeCursor !== undefined;
-      const hasActiveSession = yield* adapter.hasSession(input.binding.threadId);
-      if (hasActiveSession) {
-        const activeSessions = yield* adapter.listSessions();
-        const existing = activeSessions.find(
-          (session) => session.threadId === input.binding.threadId,
-        );
-        if (existing) {
-          yield* upsertSessionBinding(
-            { ...existing, providerInstanceId: bindingInstanceId },
-            input.binding.threadId,
+    return yield* withThreadLifecycleLock(
+      input.binding.threadId,
+      Effect.gen(function* () {
+        // Re-read the binding now that the lifecycle lock is held: the caller
+        // resolved it before the lock, so a Stop may have committed since.
+        // A binding that turned `stopped` after the caller saw it live means a
+        // concurrent Stop landed first, so that stop wins and this operation
+        // must not restart the session behind it. A binding the caller already
+        // observed as `stopped` is the designed explicit-continue path (a new
+        // turn or a rewind) and is resumed below.
+        const observedBinding = input.binding;
+        const latestBinding =
+          Option.getOrUndefined(yield* directory.getBinding(observedBinding.threadId)) ??
+          observedBinding;
+        if (latestBinding.status === "stopped" && observedBinding.status !== "stopped") {
+          return yield* toValidationError(
+            input.operation,
+            `Cannot recover thread '${latestBinding.threadId}' because its provider session was stopped while the operation was being routed.`,
           );
-          yield* analytics.record("provider.session.recovered", {
-            provider: existing.provider,
-            strategy: "adopt-existing",
-            hasResumeCursor: existing.resumeCursor !== undefined,
-          });
-          return { adapter, session: existing } as const;
         }
-      }
+        const adapter = yield* registry.getByInstance(bindingInstanceId);
+        const hasResumeCursor =
+          latestBinding.resumeCursor !== null && latestBinding.resumeCursor !== undefined;
+        const hasActiveSession = yield* adapter.hasSession(latestBinding.threadId);
+        if (hasActiveSession) {
+          const activeSessions = yield* adapter.listSessions();
+          const existing = activeSessions.find(
+            (session) => session.threadId === latestBinding.threadId,
+          );
+          if (existing) {
+            yield* upsertSessionBinding(
+              { ...existing, providerInstanceId: bindingInstanceId },
+              latestBinding.threadId,
+            );
+            yield* analytics.record("provider.session.recovered", {
+              provider: existing.provider,
+              strategy: "adopt-existing",
+              hasResumeCursor: existing.resumeCursor !== undefined,
+            });
+            return { adapter, session: existing } as const;
+          }
+        }
 
-      if (!hasResumeCursor) {
-        return yield* toValidationError(
-          input.operation,
-          `Cannot recover thread '${input.binding.threadId}' because no provider resume state is persisted.`,
+        if (!hasResumeCursor) {
+          return yield* toValidationError(
+            input.operation,
+            `Cannot recover thread '${latestBinding.threadId}' because no provider resume state is persisted.`,
+          );
+        }
+
+        const persistedCwd = readPersistedCwd(latestBinding.runtimePayload);
+        const persistedModelSelection = readPersistedModelSelection(latestBinding.runtimePayload);
+
+        yield* prepareMcpSession(latestBinding.threadId, bindingInstanceId);
+        const resumed = yield* adapter
+          .startSession({
+            threadId: latestBinding.threadId,
+            provider: latestBinding.provider,
+            providerInstanceId: bindingInstanceId,
+            ...(persistedCwd ? { cwd: persistedCwd } : {}),
+            ...(persistedModelSelection ? { modelSelection: persistedModelSelection } : {}),
+            ...(hasResumeCursor ? { resumeCursor: latestBinding.resumeCursor } : {}),
+            runtimeMode: latestBinding.runtimeMode ?? "full-access",
+          })
+          .pipe(Effect.onError(() => clearMcpSession(latestBinding.threadId)));
+        if (resumed.provider !== adapter.provider) {
+          yield* clearMcpSession(latestBinding.threadId);
+          return yield* toValidationError(
+            input.operation,
+            `Adapter/provider mismatch while recovering thread '${latestBinding.threadId}'. Expected '${adapter.provider}', received '${resumed.provider}'.`,
+          );
+        }
+
+        yield* upsertSessionBinding(
+          { ...resumed, providerInstanceId: bindingInstanceId },
+          latestBinding.threadId,
         );
-      }
-
-      const persistedCwd = readPersistedCwd(input.binding.runtimePayload);
-      const persistedModelSelection = readPersistedModelSelection(input.binding.runtimePayload);
-
-      yield* prepareMcpSession(input.binding.threadId, bindingInstanceId);
-      const resumed = yield* adapter
-        .startSession({
-          threadId: input.binding.threadId,
-          provider: input.binding.provider,
-          providerInstanceId: bindingInstanceId,
-          ...(persistedCwd ? { cwd: persistedCwd } : {}),
-          ...(persistedModelSelection ? { modelSelection: persistedModelSelection } : {}),
-          ...(hasResumeCursor ? { resumeCursor: input.binding.resumeCursor } : {}),
-          runtimeMode: input.binding.runtimeMode ?? "full-access",
-        })
-        .pipe(Effect.onError(() => clearMcpSession(input.binding.threadId)));
-      if (resumed.provider !== adapter.provider) {
-        yield* clearMcpSession(input.binding.threadId);
-        return yield* toValidationError(
-          input.operation,
-          `Adapter/provider mismatch while recovering thread '${input.binding.threadId}'. Expected '${adapter.provider}', received '${resumed.provider}'.`,
-        );
-      }
-
-      yield* upsertSessionBinding(
-        { ...resumed, providerInstanceId: bindingInstanceId },
-        input.binding.threadId,
-      );
-      yield* analytics.record("provider.session.recovered", {
-        provider: resumed.provider,
-        strategy: "resume-thread",
-        hasResumeCursor: resumed.resumeCursor !== undefined,
-      });
-      return { adapter, session: resumed } as const;
-    }).pipe(
+        yield* analytics.record("provider.session.recovered", {
+          provider: resumed.provider,
+          strategy: "resume-thread",
+          hasResumeCursor: resumed.resumeCursor !== undefined,
+        });
+        return { adapter, session: resumed } as const;
+      }),
+    ).pipe(
       withMetrics({
         counter: providerSessionsTotal,
         attributes: providerMetricAttributes(input.binding.provider, {
@@ -1712,22 +1753,40 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
             requestId: turnMetadata.requestId,
           }),
       );
-      yield* directory.upsert({
-        threadId: input.threadId,
-        provider: routed.adapter.provider,
-        providerInstanceId: routed.instanceId,
-        status: "running",
-        ...(turn.resumeCursor !== undefined ? { resumeCursor: turn.resumeCursor } : {}),
-        runtimePayload: {
-          ...(input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {}),
-          activeTurnId: turn.turnId,
-          // Admission and marker consumption must survive the same restart.
-          continueAfterServerUpdate: null,
-          continueAfterServerUpdatePrepared: null,
-          lastRuntimeEvent: "provider.sendTurn",
-          lastRuntimeEventAt: yield* nowIso,
-        },
-      });
+      yield* withThreadLifecycleLock(
+        input.threadId,
+        Effect.gen(function* () {
+          // The adapter accepted the turn outside the lifecycle lock, so a Stop
+          // may have stopped that session in the meantime. Writing `running`
+          // here would overwrite the stop with a session that no longer exists,
+          // so the stop wins and the turn reports that it was lost.
+          const latestBinding = Option.getOrUndefined(yield* directory.getBinding(input.threadId));
+          if (latestBinding?.status === "stopped") {
+            return yield* toValidationError(
+              "ProviderService.sendTurn",
+              `Cannot record the turn for thread '${input.threadId}' because its provider session was stopped while the turn was starting.`,
+            );
+          }
+          yield* directory.upsert({
+            threadId: input.threadId,
+            provider: routed.adapter.provider,
+            providerInstanceId: routed.instanceId,
+            status: "running",
+            ...(turn.resumeCursor !== undefined ? { resumeCursor: turn.resumeCursor } : {}),
+            runtimePayload: {
+              ...(input.modelSelection !== undefined
+                ? { modelSelection: input.modelSelection }
+                : {}),
+              activeTurnId: turn.turnId,
+              // Admission and marker consumption must survive the same restart.
+              continueAfterServerUpdate: null,
+              continueAfterServerUpdatePrepared: null,
+              lastRuntimeEvent: "provider.sendTurn",
+              lastRuntimeEventAt: yield* nowIso,
+            },
+          });
+        }),
+      );
       yield* analytics.record("provider.turn.sent", {
         provider: routed.adapter.provider,
         model: input.modelSelection?.model,
@@ -2001,52 +2060,55 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         payload: rawInput,
       });
       let metricProvider = "unknown";
-      return yield* Effect.gen(function* () {
-        const routed = yield* resolveRoutableSession({
-          threadId: input.threadId,
-          operation: "ProviderService.stopSession",
-          allowRecovery: false,
-        });
-        metricProvider = routed.adapter.provider;
-        yield* Effect.annotateCurrentSpan({
-          "provider.operation": "stop-session",
-          "provider.kind": routed.adapter.provider,
-          "provider.thread_id": input.threadId,
-        });
-        if (routed.isActive) {
-          const session = (yield* routed.adapter.listSessions()).find(
-            (session) => session.threadId === routed.threadId,
-          );
-          if (session) {
-            yield* upsertSessionBinding(
-              { ...session, providerInstanceId: routed.instanceId },
-              input.threadId,
+      return yield* withThreadLifecycleLock(
+        input.threadId,
+        Effect.gen(function* () {
+          const routed = yield* resolveRoutableSession({
+            threadId: input.threadId,
+            operation: "ProviderService.stopSession",
+            allowRecovery: false,
+          });
+          metricProvider = routed.adapter.provider;
+          yield* Effect.annotateCurrentSpan({
+            "provider.operation": "stop-session",
+            "provider.kind": routed.adapter.provider,
+            "provider.thread_id": input.threadId,
+          });
+          if (routed.isActive) {
+            const session = (yield* routed.adapter.listSessions()).find(
+              (session) => session.threadId === routed.threadId,
             );
+            if (session) {
+              yield* upsertSessionBinding(
+                { ...session, providerInstanceId: routed.instanceId },
+                input.threadId,
+              );
+            }
+            yield* routed.adapter.stopSession(routed.threadId);
           }
-          yield* routed.adapter.stopSession(routed.threadId);
-        }
-        const pendingCompaction = pendingCompactions.get(input.threadId);
-        if (pendingCompaction !== undefined) {
-          yield* settleCompaction(input.threadId, pendingCompaction, "turn.aborted");
-        }
-        timedOutNativeCompactions.delete(input.threadId);
-        yield* clearTurnAnalyticsSession(routed.instanceId, input.threadId);
-        yield* clearMcpSession(input.threadId);
-        yield* directory.upsert({
-          threadId: input.threadId,
-          provider: routed.adapter.provider,
-          providerInstanceId: routed.instanceId,
-          status: "stopped",
-          runtimePayload: {
-            activeTurnId: null,
-            continueAfterServerUpdate: null,
-            continueAfterServerUpdatePrepared: null,
-          },
-        });
-        yield* analytics.record("provider.session.stopped", {
-          provider: routed.adapter.provider,
-        });
-      }).pipe(
+          const pendingCompaction = pendingCompactions.get(input.threadId);
+          if (pendingCompaction !== undefined) {
+            yield* settleCompaction(input.threadId, pendingCompaction, "turn.aborted");
+          }
+          timedOutNativeCompactions.delete(input.threadId);
+          yield* clearTurnAnalyticsSession(routed.instanceId, input.threadId);
+          yield* clearMcpSession(input.threadId);
+          yield* directory.upsert({
+            threadId: input.threadId,
+            provider: routed.adapter.provider,
+            providerInstanceId: routed.instanceId,
+            status: "stopped",
+            runtimePayload: {
+              activeTurnId: null,
+              continueAfterServerUpdate: null,
+              continueAfterServerUpdatePrepared: null,
+            },
+          });
+          yield* analytics.record("provider.session.stopped", {
+            provider: routed.adapter.provider,
+          });
+        }),
+      ).pipe(
         withMetrics({
           counter: providerSessionsTotal,
           outcomeAttributes: () =>
