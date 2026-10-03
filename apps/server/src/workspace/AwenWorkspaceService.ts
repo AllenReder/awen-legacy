@@ -105,6 +105,20 @@ function pathSlug(value: string): string {
   return slug.length === 0 ? "detached" : slug;
 }
 
+/**
+ * `pathSlug` is lossy — `feature/a` and `feature-a` both slug to `feature-a` — so
+ * a directory that already exists only belongs to the requested branch when Git
+ * reports that branch is checked out there. This suffix disambiguates the branch
+ * keys that share one slug. FNV-1a, because only spread matters here, not security.
+ */
+function branchPathSuffix(value: string): string {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = Math.imul(hash ^ value.charCodeAt(index), 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
 function allWorkspaces(
   projects: ReadonlyArray<AwenProjectShell>,
 ): ReadonlyArray<AwenWorkspaceShell> {
@@ -515,13 +529,66 @@ export const make = Effect.gen(function* () {
       );
     }
 
-    const managedDefaultPath = pathService.join(
+    const directoryName = input.newBranch ?? `detached-${resolvedBase.commitSha.slice(0, 12)}`;
+    const managedRoot = pathService.join(
       serverConfig.worktreesDir,
       pathService.basename(mainRoot) || "project",
-      pathSlug(input.newBranch ?? `detached-${resolvedBase.commitSha.slice(0, 12)}`),
     );
-    const requestedPath = input.path?.trim() || managedDefaultPath;
-    const requestedAbsolutePath = pathService.resolve(requestedPath);
+    const managedDefaultPath = pathService.join(managedRoot, pathSlug(directoryName));
+    const managedCollisionPath = pathService.join(
+      managedRoot,
+      `${pathSlug(directoryName)}-${branchPathSuffix(directoryName)}`,
+    );
+
+    // `pathSlug` is lossy — `feature/a` and `feature-a` both slug to `feature-a` —
+    // so an existing directory is only known to hold the requested branch when
+    // Git reports that branch there. Another branch, a detached HEAD, or a
+    // failed `git status` must not be reused, or the caller ends up committing
+    // on the wrong branch. A missing directory or a path that is not a checkout
+    // stays reusable so registration retries keep working.
+    const reusableForRequestedBranch = Effect.fn("AwenWorkspaceService.reusableForRequestedBranch")(
+      function* (workspaceRoot: string) {
+        if (input.newBranch === undefined) return true;
+        const exists = yield* fileSystem
+          .exists(workspaceRoot)
+          .pipe(
+            Effect.mapError((cause) =>
+              workspaceError(
+                "path-conflict",
+                `Could not inspect worktree destination '${workspaceRoot}'.`,
+                workspaceRoot,
+                cause,
+              ),
+            ),
+          );
+        if (!exists) return true;
+        const details = yield* git
+          .statusDetailsLocal(workspaceRoot)
+          .pipe(Effect.orElseSucceed(() => null));
+        if (details === null) return false;
+        if (!details.isRepo) return true;
+        return details.branch === input.newBranch;
+      },
+    );
+    const explicitPath = input.path?.trim();
+    let requestedAbsolutePath = pathService.resolve(explicitPath ?? managedDefaultPath);
+    if (!(yield* reusableForRequestedBranch(requestedAbsolutePath))) {
+      if (explicitPath !== undefined) {
+        return yield* workspaceError(
+          "path-conflict",
+          `Destination '${requestedAbsolutePath}' is not checked out on branch '${input.newBranch}'.`,
+          requestedAbsolutePath,
+        );
+      }
+      if (!(yield* reusableForRequestedBranch(managedCollisionPath))) {
+        return yield* workspaceError(
+          "path-conflict",
+          `Worktrees for '${directoryName}' and another branch both resolve to '${managedCollisionPath}'.`,
+          managedCollisionPath,
+        );
+      }
+      requestedAbsolutePath = managedCollisionPath;
+    }
     const projects = yield* readAllProjects();
     const existingRegistered = registeredWorkspaceAt(projects, requestedAbsolutePath);
     if (existingRegistered !== undefined) {

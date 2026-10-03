@@ -89,6 +89,24 @@ function makeRepositoryHandle(root: string, commonDir: string): VcsDriverRegistr
   };
 }
 
+function makeStatusDetails(cwd: string, statusBranch?: (cwd: string) => string | null | undefined) {
+  const branch = statusBranch?.(cwd);
+  return {
+    isRepo: true,
+    hasOriginRemote: false,
+    isDefaultBranch: true,
+    branch: branch === undefined ? "main" : branch,
+    headCommit: "0123456789abcdef0123456789abcdef01234567",
+    upstreamRef: null,
+    hasWorkingTreeChanges: false,
+    workingTree: { files: [], insertions: 0, deletions: 0 },
+    hasUpstream: false,
+    aheadCount: 0,
+    behindCount: 0,
+    aheadOfDefaultCount: 0,
+  };
+}
+
 const makeLayer = (input: {
   readonly root: string;
   readonly sibling: string;
@@ -97,6 +115,8 @@ const makeLayer = (input: {
   readonly dirty?: boolean;
   readonly nonGit?: boolean;
   readonly detectFailure?: boolean;
+  /** Branch that `git statusDetails` reports for a checkout; defaults to `main`. */
+  readonly statusBranch?: (cwd: string) => string | null | undefined;
   readonly onCreate?: (
     input: Parameters<GitWorkflowService.GitWorkflowService["Service"]["createWorktree"]>[0],
   ) => void;
@@ -174,23 +194,15 @@ const makeLayer = (input: {
             ),
           ),
   });
+  const statusDetailsFor = (cwd: string) =>
+    Effect.succeed({
+      ...makeStatusDetails(cwd, input.statusBranch),
+      hasWorkingTreeChanges: input.dirty === true,
+    });
   const gitLayer = Layer.mock(GitVcsDriver.GitVcsDriver)({
     resolveCommit: () => Effect.succeed({ commitSha: "0123456789abcdef0123456789abcdef01234567" }),
-    statusDetails: () =>
-      Effect.succeed({
-        isRepo: true,
-        hasOriginRemote: false,
-        isDefaultBranch: true,
-        branch: "main",
-        headCommit: "0123456789abcdef0123456789abcdef01234567",
-        upstreamRef: null,
-        hasWorkingTreeChanges: input.dirty === true,
-        workingTree: { files: [], insertions: 0, deletions: 0 },
-        hasUpstream: false,
-        aheadCount: 0,
-        behindCount: 0,
-        aheadOfDefaultCount: 0,
-      }),
+    statusDetails: (cwd) => statusDetailsFor(cwd),
+    statusDetailsLocal: (cwd) => statusDetailsFor(cwd),
   });
   const workflowLayer = Layer.mock(GitWorkflowService.GitWorkflowService)({
     createWorktree: (request, _options) => {
@@ -619,6 +631,9 @@ describe("AwenWorkspaceService", () => {
           Parameters<GitWorkflowService.GitWorkflowService["Service"]["createWorktree"]>[0]
         > = [];
         let projectCreateDispatches = 0;
+        // The retry reuses the directory the first attempt kept, and that
+        // directory holds the requested branch in a real checkout.
+        let keptWorktreePath: string | null = null;
         const run = () =>
           Effect.gen(function* () {
             const service = yield* AwenWorkspaceService.AwenWorkspaceService;
@@ -635,6 +650,7 @@ describe("AwenWorkspaceService", () => {
                 commonDir: path.join(parent, ".git"),
                 serverConfigBaseDir: baseDir,
                 failProjectCreateWhile: () => failCreate,
+                statusBranch: (cwd) => (cwd === keptWorktreePath ? "awen/retry-branch" : "main"),
                 onCreate: (input) => {
                   createInputs.push(input);
                 },
@@ -674,6 +690,7 @@ describe("AwenWorkspaceService", () => {
         assert.equal(createInputs.length, 1);
         const managedPath = createInputs[0]?.path;
         assert.include(managedPath ?? "", "awen-retry-branch");
+        keptWorktreePath = managedPath ?? null;
         // The Git half succeeded and only the registration failed, so the
         // directory was kept on disk for the retry to reuse.
         yield* fileSystem.makeDirectory(managedPath ?? "", { recursive: true });
@@ -687,6 +704,95 @@ describe("AwenWorkspaceService", () => {
         assert.equal(second.worktreeCreated, false);
         assert.equal(second.workspace.workspaceRoot, managedPath);
         assert.equal(projectCreateDispatches, 1);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("creates a distinct worktree when another branch owns the managed path", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const parent = yield* fileSystem.makeTempDirectoryScoped({ prefix: "awen-create-" });
+        const serverConfigBaseDir = path.join(parent, "state");
+        const root = path.join(parent, "main");
+        yield* fileSystem.makeDirectory(root, { recursive: true });
+        // `feature/a` and `feature-a` share one slug, so they share one directory.
+        const slugRoot = path.join(
+          serverConfigBaseDir,
+          "worktrees",
+          path.basename(root),
+          "feature-a",
+        );
+        yield* fileSystem.makeDirectory(slugRoot, { recursive: true });
+
+        let project: AwenProjectShell = {
+          ...makeProject(root),
+          workspaces: [mainWorkspace(root), siblingWorkspace(slugRoot)],
+        };
+        let createInput:
+          | Parameters<GitWorkflowService.GitWorkflowService["Service"]["createWorktree"]>[0]
+          | undefined;
+        const result = yield* Effect.gen(function* () {
+          const service = yield* AwenWorkspaceService.AwenWorkspaceService;
+          return yield* service.createWorktree({
+            projectId: project.id,
+            baseRef: "HEAD",
+            newBranch: "feature-a",
+          });
+        }).pipe(
+          Effect.provide(
+            makeLayer({
+              root,
+              sibling: slugRoot,
+              commonDir: path.join(parent, ".git"),
+              serverConfigBaseDir,
+              statusBranch: (cwd) => (cwd === slugRoot ? "feature/a" : "main"),
+              onCreate: (input) => {
+                createInput = input;
+              },
+              onDispatch: (command) => {
+                if (command.type === "project.create") {
+                  project = {
+                    ...project,
+                    workspaces: [
+                      ...project.workspaces,
+                      {
+                        id: workspaceIdForAwenProject(command.projectId),
+                        projectId: project.id,
+                        awenProjectId: command.projectId,
+                        title: command.title,
+                        workspaceRoot: command.workspaceRoot,
+                        role: "worktree",
+                        origin: command.awenWorkspace?.origin,
+                        sessions: [],
+                        createdAt: command.createdAt,
+                        updatedAt: command.createdAt,
+                      },
+                    ],
+                  };
+                }
+              },
+              readProject: () => project,
+              readWorkspace: () => Option.none(),
+            }),
+          ),
+        );
+
+        assert.equal(createInput?.newRefName, "feature-a");
+        assert.notEqual(createInput?.path, slugRoot);
+        assert.isTrue(
+          createInput?.path?.startsWith(
+            `${path.join(serverConfigBaseDir, "worktrees", path.basename(root), "feature-a-")}`,
+          ),
+        );
+        assert.equal(result.worktreeCreated, true);
+        assert.equal(result.worktreePath, createInput?.path);
+        // The checkout that owns the shared slug keeps it.
+        assert.equal(
+          project.workspaces.some((workspace) => workspace.workspaceRoot === slugRoot),
+          true,
+        );
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
   );
