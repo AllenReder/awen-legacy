@@ -121,6 +121,13 @@ const TERMINAL_ENV_BLOCKLIST = new Set(["PORT", "ELECTRON_RENDERER_PORT", "ELECT
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 const MAX_TERMINAL_LABEL_LENGTH = 128;
 const MAX_PENDING_TERMINAL_TITLE_SEQUENCE = 8_192;
+/**
+ * Upper bound for a history-scanner CSI/OSC/DCS sequence that has not been
+ * terminated yet. A process can emit a bare introducer (e.g. `\x1b]`) and then
+ * endless text: the scanner used to keep that tail and re-scan it with every
+ * chunk, so memory and per-chunk cost grew without bound.
+ */
+const MAX_PENDING_TERMINAL_CONTROL_SEQUENCE = 8_192;
 const decodeClaudeSettings = Schema.decodeUnknownOption(ClaudeSettings);
 const decodeCodexSettings = Schema.decodeUnknownOption(CodexSettings);
 
@@ -1424,6 +1431,15 @@ function findEscapeSequenceEndIndex(input: string, start: number): number | null
   return isEscapeFinalByte(input.charCodeAt(cursor)) ? cursor + 1 : start + 1;
 }
 
+/**
+ * Keeps an unterminated control sequence only up to the cap. Beyond it the
+ * sequence is dropped and the next chunk is scanned from a fresh start
+ * ("drop and resynchronize") instead of buffering and re-scanning forever.
+ */
+function retainedPendingControlSequence(input: string, start: number): string {
+  return input.length - start > MAX_PENDING_TERMINAL_CONTROL_SEQUENCE ? "" : input.slice(start);
+}
+
 function sanitizeTerminalHistoryChunk(
   pendingControlSequence: string,
   data: string,
@@ -1442,7 +1458,10 @@ function sanitizeTerminalHistoryChunk(
     if (codePoint === 0x1b) {
       const nextCodePoint = input.charCodeAt(index + 1);
       if (Number.isNaN(nextCodePoint)) {
-        return { visibleText, pendingControlSequence: input.slice(index) };
+        return {
+          visibleText,
+          pendingControlSequence: retainedPendingControlSequence(input, index),
+        };
       }
 
       if (nextCodePoint === 0x5b) {
@@ -1460,7 +1479,10 @@ function sanitizeTerminalHistoryChunk(
           cursor += 1;
         }
         if (cursor >= input.length) {
-          return { visibleText, pendingControlSequence: input.slice(index) };
+          return {
+            visibleText,
+            pendingControlSequence: retainedPendingControlSequence(input, index),
+          };
         }
         continue;
       }
@@ -1473,7 +1495,10 @@ function sanitizeTerminalHistoryChunk(
       ) {
         const terminatorIndex = findStringTerminatorIndex(input, index + 2);
         if (terminatorIndex === null) {
-          return { visibleText, pendingControlSequence: input.slice(index) };
+          return {
+            visibleText,
+            pendingControlSequence: retainedPendingControlSequence(input, index),
+          };
         }
         const sequence = input.slice(index, terminatorIndex);
         const content = stripStringTerminator(input.slice(index + 2, terminatorIndex));
@@ -1489,7 +1514,10 @@ function sanitizeTerminalHistoryChunk(
 
       const escapeSequenceEndIndex = findEscapeSequenceEndIndex(input, index + 1);
       if (escapeSequenceEndIndex === null) {
-        return { visibleText, pendingControlSequence: input.slice(index) };
+        return {
+          visibleText,
+          pendingControlSequence: retainedPendingControlSequence(input, index),
+        };
       }
       append(input.slice(index, escapeSequenceEndIndex));
       index = escapeSequenceEndIndex;
@@ -1511,7 +1539,10 @@ function sanitizeTerminalHistoryChunk(
         cursor += 1;
       }
       if (cursor >= input.length) {
-        return { visibleText, pendingControlSequence: input.slice(index) };
+        return {
+          visibleText,
+          pendingControlSequence: retainedPendingControlSequence(input, index),
+        };
       }
       continue;
     }
@@ -1519,7 +1550,10 @@ function sanitizeTerminalHistoryChunk(
     if (codePoint === 0x9d || codePoint === 0x90 || codePoint === 0x9e || codePoint === 0x9f) {
       const terminatorIndex = findStringTerminatorIndex(input, index + 1);
       if (terminatorIndex === null) {
-        return { visibleText, pendingControlSequence: input.slice(index) };
+        return {
+          visibleText,
+          pendingControlSequence: retainedPendingControlSequence(input, index),
+        };
       }
       const sequence = input.slice(index, terminatorIndex);
       const content = stripStringTerminator(input.slice(index + 1, terminatorIndex));
