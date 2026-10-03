@@ -55,6 +55,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import {
   ProviderAdapterRequestError,
   ProviderAdapterSessionNotFoundError,
+  ProviderSessionDirectoryPersistenceError,
   ProviderUnsupportedError,
   ProviderValidationError,
   ProviderWorkspaceMissingError,
@@ -76,6 +77,7 @@ import {
 import * as ServerConfig from "../../config.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as AnalyticsService from "../../telemetry/AnalyticsService.ts";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { makeAdapterRegistryMock } from "../testUtils/providerAdapterRegistryMock.ts";
 import * as ProjectionSnapshotQuery from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 
@@ -764,6 +766,144 @@ it.effect("ProviderServiceLive flushes deferred completions during shutdown", ()
     yield* Fiber.interrupt(firstSend);
     yield* Fiber.interrupt(secondSend);
     assert.equal(recordedAnalytics.eventsByName("provider.turn.completed").length, 1);
+  }),
+);
+
+const makeFailingPersistenceHarness = (
+  shouldFail: (
+    binding: Parameters<ProviderSessionDirectory.ProviderSessionDirectory["Service"]["upsert"]>[0],
+    attempt: number,
+  ) => boolean,
+) =>
+  Effect.gen(function* () {
+    const codex = makeFakeCodexAdapter();
+    const persistence = yield* Layer.build(
+      ProviderSessionDirectoryLive.pipe(
+        Layer.provide(ProviderSessionRuntime.layer.pipe(Layer.provide(SqlitePersistenceMemory))),
+      ),
+    );
+    const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory.pipe(
+      Effect.provide(persistence),
+    );
+    let attempts = 0;
+    const failingDirectory: ProviderSessionDirectory.ProviderSessionDirectory["Service"] = {
+      ...directory,
+      upsert: (binding, options) => {
+        attempts += 1;
+        if (shouldFail(binding, attempts)) {
+          return Effect.fail(
+            new ProviderSessionDirectoryPersistenceError({
+              operation: "ProviderSessionDirectory.upsert",
+              detail: "Injected persistence failure.",
+            }),
+          );
+        }
+        return directory.upsert(binding, options);
+      },
+    };
+    const providerLayer = makeProviderServiceLive({
+      issueMcpCredential: (request) =>
+        Effect.sync(() => ({
+          config: {
+            environmentId: EnvironmentId.make("test-environment"),
+            threadId: request.threadId,
+            providerSessionId: `provider-${String(request.threadId)}`,
+            providerInstanceId: request.providerInstanceId,
+            endpoint: "http://127.0.0.1:1/mcp",
+            authorizationHeader: "Bearer test",
+            capabilities: request.capabilities,
+          },
+        })),
+    }).pipe(
+      Layer.provide(NodeServices.layer),
+      Layer.provide(
+        Layer.succeed(
+          ProviderAdapterRegistry.ProviderAdapterRegistry,
+          makeAdapterRegistryMock({ [CODEX_DRIVER]: codex.adapter }),
+        ),
+      ),
+      Layer.provide(
+        Layer.succeed(ProviderSessionDirectory.ProviderSessionDirectory, failingDirectory),
+      ),
+      Layer.provide(defaultServerSettingsLayer),
+      Layer.provide(serverConfigTestLayer),
+      Layer.provide(AnalyticsService.layerTest),
+      Layer.provide(
+        Layer.succeed(
+          ProviderEventLoggers.ProviderEventLoggers,
+          ProviderEventLoggers.NoOpProviderEventLoggers,
+        ),
+      ),
+    );
+    return { codex, providerLayer };
+  });
+
+it.effect("ProviderServiceLive rolls back a started session when persisting it fails", () =>
+  Effect.gen(function* () {
+    const { codex, providerLayer } = yield* makeFailingPersistenceHarness(
+      (_binding, attempt) => attempt === 1,
+    );
+    const threadId = asThreadId("thread-start-persist-failure");
+
+    const failure = yield* Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      return yield* provider
+        .startSession(threadId, {
+          provider: CODEX_DRIVER,
+          providerInstanceId: codexInstanceId,
+          threadId,
+          cwd: fixtureCwd("project-start-persist-failure"),
+          runtimeMode: "full-access",
+        })
+        .pipe(Effect.flip);
+    }).pipe(Effect.provide(providerLayer));
+
+    assert.instanceOf(failure, ProviderSessionDirectoryPersistenceError);
+    assert.equal(codex.startSession.mock.calls.length, 1);
+    // The started process must not outlive the failed transaction, because a
+    // thread without a binding is invisible to the reaper.
+    assert.deepEqual(codex.stopSession.mock.calls, [[threadId]]);
+    assert.equal(yield* codex.hasSession(threadId), false);
+    // Neither must the MCP credential handed to that process.
+    assert.equal(McpProviderSession.readMcpProviderSession(threadId), undefined);
+  }),
+);
+
+it.effect("ProviderServiceLive rolls back a resumed session when its binding cannot persist", () =>
+  Effect.gen(function* () {
+    // Running upserts in order: `startSession`, the live binding the stop
+    // records before it tears the session down, then the recovery `sendTurn`
+    // performs for the stopped binding. Only the last one is failed.
+    let runningUpserts = 0;
+    const { codex, providerLayer } = yield* makeFailingPersistenceHarness((binding) => {
+      if (binding.status !== "running") return false;
+      runningUpserts += 1;
+      return runningUpserts === 3;
+    });
+    const threadId = asThreadId("thread-recovery-persist-failure");
+
+    const failure = yield* Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      yield* provider.startSession(threadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId,
+        cwd: fixtureCwd("project-recovery-persist-failure"),
+        runtimeMode: "full-access",
+      });
+      yield* provider.stopSession({ threadId });
+      codex.startSession.mockClear();
+      codex.stopSession.mockClear();
+      return yield* provider
+        .sendTurn({ threadId, input: "resume after stop", attachments: [] })
+        .pipe(Effect.flip);
+    }).pipe(Effect.provide(providerLayer));
+
+    assert.instanceOf(failure, ProviderSessionDirectoryPersistenceError);
+    assert.equal(codex.startSession.mock.calls.length, 1);
+    assert.deepEqual(codex.stopSession.mock.calls, [[threadId]]);
+    assert.equal(yield* codex.hasSession(threadId), false);
+    assert.equal(McpProviderSession.readMcpProviderSession(threadId), undefined);
   }),
 );
 
