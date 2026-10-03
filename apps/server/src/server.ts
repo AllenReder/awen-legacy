@@ -6,9 +6,10 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { EnvironmentHttpApi, ProviderDriverKind, type RepositoryIdentity } from "@awen/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
-import { FetchHttpClient, HttpRouter, HttpServer } from "effect/unstable/http";
+import { FetchHttpClient, HttpRouter, HttpServer, HttpServerRequest } from "effect/unstable/http";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
@@ -23,6 +24,8 @@ import {
   staticAndDevRouteLayer,
   browserApiCorsLayer,
   httpCompressionLayer,
+  requestBodyLimitLayer,
+  HTTP_REQUEST_BODY_LIMIT_BYTES,
 } from "./http.ts";
 import { guardHttpResponseWriteErrors } from "./httpResponseErrorGuard.ts";
 import { fixPath } from "./os-jank.ts";
@@ -556,8 +559,16 @@ export const makeRoutesLayer = Layer.mergeAll(
   Layer.provide(PreviewAutomationBroker.layer),
   Layer.provide(ServerSelfUpdate.layer),
   Layer.provide(commandReadinessLayer),
+  // Inside the CORS middleware so a rejected body still carries its headers.
+  Layer.provide(requestBodyLimitLayer),
   Layer.provide(browserApiCorsLayer),
   Layer.provide(httpCompressionLayer),
+  // Bodies streamed without a Content-Length header bypass the routing guard,
+  // so the Node adapter also needs a hard ceiling: it fails the read once the
+  // body crosses the limit instead of buffering it without bound.
+  Layer.provideMerge(
+    Layer.succeed(HttpServerRequest.MaxBodySize, FileSystem.Size(HTTP_REQUEST_BODY_LIMIT_BYTES)),
+  ),
 );
 
 const makeServerLayer = Layer.unwrap(
