@@ -4421,6 +4421,50 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     }),
   );
 
+  it.effect("refuses the local-mode checkout instead of discarding uncommitted changes", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("awen-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/pr-local-dirty"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "dirty.txt"), "committed\n");
+      yield* runGit(repoDir, ["add", "dirty.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Local dirty PR branch"]);
+
+      const { manager, ghCalls } = yield* makeManager({
+        ghScenario: {
+          pullRequest: {
+            number: 71,
+            title: "Dirty local PR",
+            url: "https://github.com/pingdotgg/codething-mvp/pull/71",
+            baseRefName: "main",
+            headRefName: "feature/pr-local-dirty",
+            state: "open",
+          },
+        },
+      });
+
+      NodeFS.writeFileSync(NodePath.join(repoDir, "dirty.txt"), "uncommitted\n");
+
+      const error = yield* preparePullRequestThread(manager, {
+        cwd: repoDir,
+        reference: "#71",
+        mode: "local",
+      }).pipe(Effect.flip);
+
+      if (error._tag !== "GitManagerError") {
+        return yield* Effect.die(error);
+      }
+      expect(error.detail).toContain("uncommitted");
+      // The forced checkout is the thing that discards the work, so it must not run.
+      expect(ghCalls.some((call) => call.startsWith("pr checkout"))).toBe(false);
+      const status = yield* runGit(repoDir, ["status", "--porcelain"]);
+      expect(status.stdout.trim()).toBe("M dirty.txt");
+      expect(NodeFS.readFileSync(NodePath.join(repoDir, "dirty.txt"), "utf8")).toBe(
+        "uncommitted\n",
+      );
+    }),
+  );
+
   it.effect(
     "restores same-repository upstream tracking after local PR checkout without a remote ref",
     () =>

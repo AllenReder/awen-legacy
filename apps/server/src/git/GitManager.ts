@@ -2326,6 +2326,17 @@ export const make = Effect.gen(function* () {
       const pullRequest = toResolvedPullRequest(pullRequestSummary);
 
       if (input.mode === "local") {
+        // `gh pr checkout <ref> --force` resets the checkout, so a dirty worktree
+        // would silently lose the user's uncommitted work. Refuse before running it.
+        const preCheckoutDetails = yield* gitCore.statusDetailsLocal(input.cwd);
+        if (preCheckoutDetails.hasWorkingTreeChanges) {
+          return yield* new GitManagerError({
+            operation: "preparePullRequestThread",
+            cwd: input.cwd,
+            detail:
+              "Local mode would discard uncommitted changes while checking out the pull request. Commit or stash them first, or use Worktree mode.",
+          });
+        }
         yield* (yield* sourceControlProvider(input.cwd)).checkoutChangeRequest({
           cwd: input.cwd,
           reference: normalizedReference,
