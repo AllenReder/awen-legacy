@@ -640,14 +640,21 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
               ? Effect.void
               : parsed.terminated
                 ? Deferred.succeed(readyDeferred, parsed.url).pipe(Effect.ignore)
-                : confirmSettledReadyUrl(parsed.url).pipe(Effect.ignore),
+                : // Settle in a forked task. Waiting inside this handler would
+                  // stop draining stdout, so the next chunk could never arrive
+                  // and the truncated candidate would always look settled.
+                  confirmSettledReadyUrl(parsed.url).pipe(
+                    Effect.forkIn(runtimeScope),
+                    Effect.asVoid,
+                  ),
           ),
         );
 
       // An unterminated readiness candidate may be a partial chunk of a line
       // still in flight. Give the output a moment to settle: if it grows,
-      // re-parse (the next chunk's handler also runs, so this just avoids
-      // resolving with a truncated URL when no further chunk ever arrives).
+      // re-parse (the next chunk's handler keeps running while this task
+      // sleeps, so a truncated URL is not resolved while the rest of the line
+      // is still on its way).
       const confirmSettledReadyUrl = (candidate: string): Effect.Effect<void> =>
         Effect.gen(function* () {
           if (yield* Deferred.isDone(readyDeferred)) {
@@ -660,7 +667,11 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
           }
           const after = yield* Ref.get(stdoutRef);
           if (after === null || after === before) {
-            yield* Deferred.succeed(readyDeferred, candidate).pipe(Effect.ignore);
+            // Resolve what the buffer holds now, not the candidate this task
+            // was created for: a later chunk can already have been appended
+            // before this task took its first sample.
+            const settled = after === null ? null : parseServerUrlFromOutput(after);
+            yield* Deferred.succeed(readyDeferred, settled?.url ?? candidate).pipe(Effect.ignore);
             return;
           }
           const reparsed = parseServerUrlFromOutput(after);
