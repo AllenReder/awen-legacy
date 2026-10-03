@@ -41,3 +41,19 @@ export function isFileDiffCollapsed(
   const foldedByDefault = foldOverride === "folded";
   return toggledFileKeys.has(fileKey) ? !foldedByDefault : foldedByDefault;
 }
+
+/**
+ * Keeps a parse cache to exactly the entries the caller is still drawing from.
+ *
+ * A parse key carries the patch's own hash, so a refreshed page arrives under a new key while
+ * the one it replaced stays in the map — nothing ever reads it again. Retaining only the live
+ * keys bounds the cache to what is on screen instead of to how often the diff refreshed.
+ */
+export function evictStaleCacheEntries<T>(
+  cache: Map<string, T>,
+  liveKeys: ReadonlySet<string>,
+): void {
+  for (const key of cache.keys()) {
+    if (!liveKeys.has(key)) cache.delete(key);
+  }
+}
