@@ -557,93 +557,102 @@ const make = Effect.gen(function* () {
     yield* publishCheckpointResult(input, files, input.status, true);
   });
 
-  // Capture the files left by a completed or interrupted turn.
-  const captureCheckpointFromTurnCompletion = Effect.fn("captureCheckpointFromTurnCompletion")(
-    function* (event: Extract<ProviderRuntimeEvent, { type: "turn.completed" | "turn.aborted" }>) {
-      const turnId = toTurnId(event.turnId);
-      if (!turnId) {
-        return;
-      }
+  // Capture the files left by a terminal turn event. A provider session that
+  // exited mid-turn counts as interrupted: adapters drop the session and emit
+  // `session.exited` without synthesizing `turn.aborted`.
+  const captureCheckpointFromTerminalRuntimeEvent = Effect.fn(
+    "captureCheckpointFromTerminalRuntimeEvent",
+  )(function* (
+    event: Extract<
+      ProviderRuntimeEvent,
+      { type: "turn.completed" | "turn.aborted" | "session.exited" }
+    >,
+  ) {
+    const turnId = toTurnId(event.turnId);
+    if (!turnId) {
+      return;
+    }
 
-      const thread = yield* resolveThreadDetail(event.threadId);
-      if (!thread) {
-        return;
-      }
+    const thread = yield* resolveThreadDetail(event.threadId);
+    if (!thread) {
+      return;
+    }
 
-      // When a primary turn is active, only that turn may produce completion checkpoints.
-      if (thread.session?.activeTurnId && !sameId(thread.session.activeTurnId, turnId)) {
-        return;
-      }
+    // When a primary turn is active, only that turn may produce completion checkpoints.
+    if (thread.session?.activeTurnId && !sameId(thread.session.activeTurnId, turnId)) {
+      return;
+    }
 
-      // Only skip if a real (non-placeholder) checkpoint already exists for this turn.
-      // ProviderRuntimeIngestion may insert placeholder entries with status "missing"
-      // before this reactor runs; those must not prevent real git capture.
-      if (
-        thread.checkpoints.some(
-          (checkpoint) => checkpoint.turnId === turnId && checkpoint.status !== "missing",
-        )
-      ) {
-        return;
-      }
+    // Only skip if a real (non-placeholder) checkpoint already exists for this turn.
+    // ProviderRuntimeIngestion may insert placeholder entries with status "missing"
+    // before this reactor runs; those must not prevent real git capture.
+    if (
+      thread.checkpoints.some(
+        (checkpoint) => checkpoint.turnId === turnId && checkpoint.status !== "missing",
+      )
+    ) {
+      return;
+    }
 
-      // If a placeholder checkpoint exists for this turn, reuse its turn count
-      // instead of incrementing past it.
-      const existingPlaceholder = thread.checkpoints.find(
-        (checkpoint) => checkpoint.turnId === turnId && checkpoint.status === "missing",
-      );
-      const currentTurnCount = thread.checkpoints.reduce(
-        (maxTurnCount, checkpoint) => Math.max(maxTurnCount, checkpoint.checkpointTurnCount),
-        0,
-      );
-      const nextTurnCount = existingPlaceholder
-        ? existingPlaceholder.checkpointTurnCount
-        : currentTurnCount + 1;
+    // If a placeholder checkpoint exists for this turn, reuse its turn count
+    // instead of incrementing past it.
+    const existingPlaceholder = thread.checkpoints.find(
+      (checkpoint) => checkpoint.turnId === turnId && checkpoint.status === "missing",
+    );
+    const currentTurnCount = thread.checkpoints.reduce(
+      (maxTurnCount, checkpoint) => Math.max(maxTurnCount, checkpoint.checkpointTurnCount),
+      0,
+    );
+    const nextTurnCount = existingPlaceholder
+      ? existingPlaceholder.checkpointTurnCount
+      : currentTurnCount + 1;
 
-      const input: CheckpointCompletion = {
+    const input: CheckpointCompletion = {
+      threadId: thread.id,
+      turnId,
+      thread,
+      turnCount: nextTurnCount,
+      status:
+        event.type === "turn.completed"
+          ? checkpointStatusFromRuntime(event.payload.state)
+          : "ready",
+      assistantMessageId: existingPlaceholder?.assistantMessageId ?? undefined,
+      createdAt: event.createdAt,
+    };
+    yield* Effect.gen(function* () {
+      const checkpointCwd = yield* resolveCheckpointCwd({
         threadId: thread.id,
-        turnId,
         thread,
-        turnCount: nextTurnCount,
-        status:
-          event.type === "turn.aborted"
-            ? "ready"
-            : checkpointStatusFromRuntime(event.payload.state),
-        assistantMessageId: existingPlaceholder?.assistantMessageId ?? undefined,
-        createdAt: event.createdAt,
-      };
-      yield* Effect.gen(function* () {
-        const checkpointCwd = yield* resolveCheckpointCwd({
-          threadId: thread.id,
-          thread,
-          projects: yield* resolveThreadProjects(thread.projectId),
-          preferSessionRuntime: true,
-        });
-        if (!checkpointCwd) {
+        projects: yield* resolveThreadProjects(thread.projectId),
+        preferSessionRuntime: true,
+      });
+      if (!checkpointCwd) {
+        yield* publishCheckpointResult(input, [], "missing", false);
+        return;
+      }
+      const sessionRuntime = yield* resolveSessionRuntimeForThread(thread.id);
+      const recordedTurnContext = yield* executionContexts.find(thread.id, `turn:${turnId}`);
+      yield* captureAndDispatchCheckpoint({
+        ...input,
+        cwd: checkpointCwd,
+        provenanceVerified: Option.isSome(sessionRuntime)
+          ? sessionRuntime.value.cwd === checkpointCwd
+          : recordedTurnContext !== undefined,
+      });
+    }).pipe(
+      Effect.catch((error) =>
+        Effect.gen(function* () {
+          yield* appendCaptureFailureActivity({
+            threadId: thread.id,
+            turnId,
+            detail: error.message,
+            createdAt: event.createdAt,
+          });
           yield* publishCheckpointResult(input, [], "missing", false);
-          return;
-        }
-        const sessionRuntime = yield* resolveSessionRuntimeForThread(thread.id);
-        yield* captureAndDispatchCheckpoint({
-          ...input,
-          cwd: checkpointCwd,
-          provenanceVerified:
-            Option.isSome(sessionRuntime) && sessionRuntime.value.cwd === checkpointCwd,
-        });
-      }).pipe(
-        Effect.catch((error) =>
-          Effect.gen(function* () {
-            yield* appendCaptureFailureActivity({
-              threadId: thread.id,
-              turnId,
-              detail: error.message,
-              createdAt: event.createdAt,
-            });
-            yield* publishCheckpointResult(input, [], "missing", false);
-          }),
-        ),
-      );
-    },
-  );
+        }),
+      ),
+    );
+  });
 
   const ensurePreTurnBaselineFromTurnStart = Effect.fn("ensurePreTurnBaselineFromTurnStart")(
     function* (event: Extract<ProviderRuntimeEvent, { type: "turn.started" }>) {
@@ -1222,12 +1231,42 @@ const make = Effect.gen(function* () {
     }
   });
 
+  /** Capture a terminal turn's files without failing the reactor on capture errors. */
+  const captureTurnCheckpointSafely = Effect.fn("captureTurnCheckpointSafely")(function* (
+    event: Extract<
+      ProviderRuntimeEvent,
+      { type: "turn.completed" | "turn.aborted" | "session.exited" }
+    >,
+  ) {
+    yield* captureCheckpointFromTerminalRuntimeEvent(event).pipe(
+      Effect.catch((error) =>
+        Effect.flatMap(nowIso, (createdAt) =>
+          appendCaptureFailureActivity({
+            threadId: event.threadId,
+            turnId: toTurnId(event.turnId),
+            detail: error.message,
+            createdAt,
+          }).pipe(Effect.catch(() => Effect.void)),
+        ),
+      ),
+    );
+  });
+
   const processRuntimeEvent = Effect.fn("processRuntimeEvent")(function* (
     event: ProviderRuntimeEvent,
   ) {
     if (event.type === "session.exited") {
+      const startedTurnId = startedTurns.get(event.threadId);
+      const turnId = toTurnId(event.turnId) ?? startedTurnId ?? null;
       startedTurns.delete(event.threadId);
       pending.delete(event.threadId);
+      if (turnId === null) {
+        return;
+      }
+      // The exit is the only terminal signal for this turn, so this is the last
+      // chance to capture the files it left behind. Otherwise the next turn's
+      // baseline swallows them and rewind loses the turn.
+      yield* captureTurnCheckpointSafely({ ...event, turnId });
       return;
     }
 
@@ -1280,18 +1319,7 @@ const make = Effect.gen(function* () {
       ) {
         return;
       }
-      yield* captureCheckpointFromTurnCompletion(event).pipe(
-        Effect.catch((error) =>
-          Effect.flatMap(nowIso, (createdAt) =>
-            appendCaptureFailureActivity({
-              threadId: event.threadId,
-              turnId,
-              detail: error.message,
-              createdAt,
-            }).pipe(Effect.catch(() => Effect.void)),
-          ),
-        ),
-      );
+      yield* captureTurnCheckpointSafely(event);
       return;
     }
   });

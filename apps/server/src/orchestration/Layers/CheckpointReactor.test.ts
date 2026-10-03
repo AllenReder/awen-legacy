@@ -93,7 +93,7 @@ type LegacyProviderRuntimeEvent = {
 
 function createProviderServiceHarness(
   cwd: string,
-  hasSession = true,
+  initialHasSession = true,
   sessionCwd = cwd,
   providerName: ProviderSession["provider"] = ProviderDriverKind.make("codex"),
 ) {
@@ -107,6 +107,7 @@ function createProviderServiceHarness(
     ProviderServiceShape["assertConversationRollbackSupported"]
   >(() => Effect.void);
   let currentSessionCwd = sessionCwd;
+  let hasSession = initialHasSession;
 
   const unsupported = <A>() =>
     Effect.die(new Error("Unsupported provider call in test")) as Effect.Effect<A, never>;
@@ -170,6 +171,9 @@ function createProviderServiceHarness(
     waitForSubscription: Deferred.await(streamSubscribed),
     setSessionCwd: (cwd: string) => {
       currentSessionCwd = cwd;
+    },
+    setHasSession: (alive: boolean) => {
+      hasSession = alive;
     },
   };
 }
@@ -885,6 +889,75 @@ describe("CheckpointReactor", () => {
           followUp?.checkpoints.find((checkpoint) => checkpoint.turnId === followUpTurnId),
         ).toMatchObject({ checkpointTurnCount: 2, files: [] });
       }),
+  );
+
+  effectIt.effect("captures a checkpoint when the provider session exits mid-turn", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() =>
+        createHarness({ seedFilesystemCheckpoints: false }),
+      );
+      const threadId = ThreadId.make("thread-1");
+      const turnId = asTurnId("turn-session-exit");
+      const createdAt = "2026-01-01T00:00:00.000Z";
+      yield* harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-exit-running"),
+        threadId,
+        session: {
+          threadId,
+          status: "running",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: turnId,
+          lastError: null,
+          updatedAt: createdAt,
+        },
+        createdAt,
+      });
+      harness.provider.emit({
+        type: "turn.started",
+        eventId: EventId.make("evt-session-exit-start"),
+        provider: ProviderDriverKind.make("codex"),
+        createdAt,
+        threadId,
+        turnId,
+      });
+      expect(yield* harness.nextReceipt).toMatchObject({
+        type: "checkpoint.baseline.captured",
+      });
+
+      NodeFS.writeFileSync(NodePath.join(harness.cwd, "partial.ts"), "export const partial = 1;\n");
+      // The provider drops the session from its registry before emitting the
+      // exit, so the session cwd is no longer observable at capture time.
+      harness.provider.setHasSession(false);
+      harness.provider.emit({
+        type: "session.exited",
+        eventId: EventId.make("evt-session-exit"),
+        provider: ProviderDriverKind.make("codex"),
+        createdAt,
+        threadId,
+        turnId,
+        payload: { reason: "OpenCode session exited.", recoverable: false, exitKind: "error" },
+      });
+      yield* Effect.promise(harness.drain);
+      yield* Effect.promise(harness.drain);
+
+      expect(gitRefExists(harness.cwd, checkpointRefForThreadTurn(threadId, 1))).toBe(true);
+      expect(yield* harness.nextReceipt).toMatchObject({
+        type: "checkpoint.diff.finalized",
+        turnId,
+        checkpointTurnCount: 1,
+      });
+      const thread = (yield* Effect.promise(harness.readModel)).threads.find(
+        (entry) => entry.id === threadId,
+      );
+      expect(thread?.checkpoints).toHaveLength(1);
+      expect(thread?.checkpoints[0]?.status).toBe("ready");
+      expect(thread?.checkpoints[0]?.files.map((file) => file.path)).toEqual(["partial.ts"]);
+      expect(
+        gitShowFileAtRef(harness.cwd, checkpointRefForThreadTurn(threadId, 1), "partial.ts"),
+      ).toBe("export const partial = 1;\n");
+    }),
   );
 
   it("does not capture an aborted turn without a matching start or active session", async () => {
