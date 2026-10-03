@@ -53,6 +53,7 @@ import {
   targetConnectionKey,
 } from "./command.ts";
 import { reportSshProgress, sshProgress, SshEnvironmentProgress } from "./progress.ts";
+import { resolveSshUserHome } from "./userHome.ts";
 
 const scpCommandForPlatform = (platform: NodeJS.Platform): string =>
   platform === "win32" ? "scp.exe" : "scp";
@@ -197,13 +198,13 @@ function sshRunnerLogFields(runner: RemoteAwenRunnerOptions | undefined) {
   return { runner: "archive" };
 }
 
-const localServerPackageCacheDir = Effect.fn("ssh/tunnel.localServerPackageCacheDir")(function* (
-  version: string,
-) {
-  const path = yield* Path.Path;
-  const home = yield* Effect.sync(() => process.env.HOME ?? process.cwd());
-  return path.join(home, ".awen", "caches", "server-packages", version);
-});
+export const localServerPackageCacheDir = Effect.fn("ssh/tunnel.localServerPackageCacheDir")(
+  function* (version: string) {
+    const path = yield* Path.Path;
+    const home = yield* resolveSshUserHome;
+    return path.join(home, ".awen", "caches", "server-packages", version);
+  },
+);
 
 const ensureLocalServerPackage = Effect.fn("ssh/tunnel.ensureLocalServerPackage")(function* (
   runner: RemoteAwenRunnerOptions,
