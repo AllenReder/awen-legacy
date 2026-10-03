@@ -104,9 +104,23 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
               failEnvironmentInternal("orchestration_dispatch_failed", cause),
             ),
           );
-          const normalizedCommand = yield* normalizeDispatchCommand(args.payload).pipe(
-            Effect.catch(() => failEnvironmentInvalidRequest("invalid_command")),
+          // Read the operation receipt before the normalizer touches the file
+          // system so a repeated operationId cannot write attachment copies it
+          // will never reference (the engine answers from that receipt).
+          const commandId = args.payload.commandId;
+          const existingOperationResult = yield* (
+            orchestrationEngine.getOperationResult?.(commandId) ??
+            Effect.succeed({ _tag: "unknown" as const, operationId: commandId })
+          ).pipe(
+            // Best effort: a failed receipt read must still normalize and let
+            // the engine answer, exactly as before this pre-check.
+            Effect.catch(() =>
+              Effect.succeed({ _tag: "unknown" as const, operationId: commandId }),
+            ),
           );
+          const normalizedCommand = yield* normalizeDispatchCommand(args.payload, {
+            materializeAttachments: existingOperationResult._tag === "unknown",
+          }).pipe(Effect.catch(() => failEnvironmentInvalidRequest("invalid_command")));
           const result = yield* orchestrationEngine.dispatch(normalizedCommand).pipe(
             Effect.tapError(() =>
               cleanupFailedUploadedAttachments(args.payload, normalizedCommand),

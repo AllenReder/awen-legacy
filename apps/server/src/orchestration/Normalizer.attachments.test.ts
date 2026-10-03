@@ -186,6 +186,34 @@ describe("normalizeDispatchCommand attachments", () => {
     }).pipe(Effect.provide(testLayer)),
   );
 
+  it.effect("does not claim attachments again when the operation already has a result", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const bytes = Buffer.from("pixels");
+      const pendingPath = NodePath.join(config.attachmentsDir, `pending-${attachmentUuid}.png`);
+      NodeFS.writeFileSync(pendingPath, bytes);
+      const command = turnStartCommand({
+        attachments: [{ id: `pending-${attachmentUuid}`, sizeBytes: bytes.byteLength }],
+      });
+      if (command.type !== "thread.turn.start") {
+        throw new Error("Expected a thread.turn.start command.");
+      }
+
+      // Replayed operations are answered from their durable receipt, so the
+      // normalizer must not materialize a second, unreferenced copy.
+      const normalized = yield* normalizeDispatchCommand(command, {
+        materializeAttachments: false,
+      });
+      if (normalized.type !== "thread.turn.start") {
+        throw new Error("Expected a thread.turn.start command.");
+      }
+
+      expect(normalized.message.attachments).toEqual(command.message.attachments);
+      expect(NodeFS.existsSync(pendingPath)).toBe(true);
+      expect(NodeFS.readdirSync(config.attachmentsDir)).toEqual([`pending-${attachmentUuid}.png`]);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
   it.effect("normalizes inline and uploaded attachments in the same turn", () =>
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;
