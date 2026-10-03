@@ -6,7 +6,10 @@ import * as Option from "effect/Option";
 import { Atom, AtomRegistry } from "effect/unstable/reactivity";
 import { describe, expect, it } from "vite-plus/test";
 
-import { createAllEnvironmentProjectSnapshotsReadyAtom } from "./shell";
+import {
+  createAllEnvironmentProjectSnapshotsReadyAtom,
+  createAuthoritativeProjectEnvironmentIdsAtom,
+} from "./shell";
 
 const LOCAL = EnvironmentId.make("local");
 const REMOTE = EnvironmentId.make("remote");
@@ -65,8 +68,13 @@ function makeHarness(requiresPrimaryEnvironment = true) {
     shellStateValueAtom: shells,
     requiresPrimaryEnvironment,
   });
+  const authoritative = createAuthoritativeProjectEnvironmentIdsAtom({
+    catalogValueAtom: catalog,
+    shellStateValueAtom: shells,
+    requiresPrimaryEnvironment,
+  });
   const registry = AtomRegistry.make();
-  return { catalog, shells, ready, registry };
+  return { catalog, shells, ready, authoritative, registry };
 }
 
 describe("project snapshot readiness", () => {
@@ -128,6 +136,56 @@ describe("project snapshot readiness", () => {
     expect(registry.get(ready)).toBe(false);
     registry.set(catalog, catalogState([LOCAL]));
     expect(registry.get(ready)).toBe(true);
+    registry.dispose();
+  });
+});
+
+describe("authoritative project environments", () => {
+  it("reports each environment as soon as its own snapshot is live", () => {
+    const { catalog, shells, authoritative, registry } = makeHarness();
+    registry.set(catalog, catalogState([LOCAL, REMOTE]));
+    registry.set(shells(LOCAL), shellState("live"));
+    expect([...registry.get(authoritative)]).toEqual([LOCAL]);
+
+    registry.set(shells(REMOTE), shellState("cached"));
+    expect([...registry.get(authoritative)]).toEqual([LOCAL]);
+
+    registry.set(shells(REMOTE), shellState("live"));
+    expect(new Set(registry.get(authoritative))).toEqual(new Set([LOCAL, REMOTE]));
+    registry.dispose();
+  });
+
+  it("claims no environment until the catalog and primary environment are known", () => {
+    const { catalog, shells, authoritative, registry } = makeHarness();
+    expect(registry.get(authoritative).size).toBe(0);
+
+    registry.set(catalog, catalogState([REMOTE]));
+    registry.set(shells(REMOTE), shellState("live"));
+    expect(registry.get(authoritative).size).toBe(0);
+
+    registry.set(catalog, catalogState([LOCAL, REMOTE]));
+    registry.set(shells(LOCAL), shellState("live"));
+    expect(new Set(registry.get(authoritative))).toEqual(new Set([LOCAL, REMOTE]));
+    registry.dispose();
+  });
+
+  it("trusts a live environment when no primary environment is expected", () => {
+    const { catalog, shells, authoritative, registry } = makeHarness(false);
+    registry.set(catalog, catalogState([REMOTE]));
+    registry.set(shells(REMOTE), shellState("live"));
+    expect([...registry.get(authoritative)]).toEqual([REMOTE]);
+    registry.dispose();
+  });
+
+  it("drops an environment that leaves the catalog", () => {
+    const { catalog, shells, authoritative, registry } = makeHarness();
+    registry.set(catalog, catalogState([LOCAL, REMOTE]));
+    registry.set(shells(LOCAL), shellState("live"));
+    registry.set(shells(REMOTE), shellState("live"));
+    expect(registry.get(authoritative).size).toBe(2);
+
+    registry.set(catalog, catalogState([LOCAL]));
+    expect([...registry.get(authoritative)]).toEqual([LOCAL]);
     registry.dispose();
   });
 });

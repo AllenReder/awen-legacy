@@ -1,7 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "@tanstack/react-router";
 
-import { useAwenProjects, useEnvironmentShellSnapshotPresent } from "../state/entities";
+import {
+  useAuthoritativeProjectEnvironmentIds,
+  useAwenProjects,
+  useEnvironmentShellSnapshotPresent,
+} from "../state/entities";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { useEnvironmentCatalogSnapshot } from "../state/environmentCatalogSnapshot";
 import { useEnvironments } from "../state/environments";
@@ -17,6 +21,7 @@ import { MaterialSurface } from "../components/MaterialSurface";
 import { WorkbenchDropOverlay } from "./workbenchDrag";
 import { deepLinkInputFromParams, resolveDeepLink, type DeepLinkResolution } from "./deepLinks";
 import { targetKey, type ViewTarget } from "./viewRegistry";
+import { vanishedSessionViews } from "./workbenchState";
 import "./viewDefinitions";
 import { useWorkbenchStore } from "./workbenchStore";
 import { runtimeTerminalIdForTarget } from "./sessionTarget";
@@ -48,6 +53,8 @@ export function Workbench() {
     (state) => state.reconcileDraftWorkspaceBindings,
   );
   const projects = useAwenProjects();
+  const authoritativeEnvironmentIds = useAuthoritativeProjectEnvironmentIds();
+  const restoredSessionTargets = useWorkbenchStore((state) => state.restoredSessionTargets);
   const { environments } = useEnvironments();
   const connectedEnvironmentIds = useMemo(
     () =>
@@ -111,20 +118,21 @@ export function Workbench() {
       ...connectedEnvironmentIds,
       ...projects.map((project) => project.environmentId),
     ]);
-    if (previous.size > 0) {
-      for (const [key, target] of previous) {
-        if (
-          // A Terminal Session's projection only carries assigned terminals, so
-          // absence can mean a reassignment rather than a removal. A Terminal
-          // View closes explicitly (its close-semantics ticket), not from the
-          // Workspace projection.
-          target.kind === "agentSession" &&
-          observedEnvironmentIds.has(target.environmentId) &&
-          !nextActiveTargets.has(key)
-        ) {
-          useWorkbenchStore.getState().removeSessionViews(target);
-        }
-      }
+    // A Terminal Session's projection only carries assigned terminals, so
+    // absence can mean a reassignment rather than a removal. A Terminal View
+    // closes explicitly (its close-semantics ticket), not from the Workspace
+    // projection.
+    const vanished = vanishedSessionViews({
+      previous,
+      projected: nextActiveTargets,
+      // Session Views the store restored from persistence: the first
+      // authoritative projection also has to prove that they are gone.
+      restored: restoredSessionTargets,
+      observedEnvironmentIds,
+      authoritativeEnvironmentIds,
+    });
+    for (const target of vanished) {
+      useWorkbenchStore.getState().removeSessionViews(target);
     }
     activeSessionTargetsRef.current = nextActiveTargets;
     pruneWorkspaceViews(
@@ -136,7 +144,13 @@ export function Workbench() {
       ),
       [...observedEnvironmentIds],
     );
-  }, [connectedEnvironmentIds, projects, pruneWorkspaceViews]);
+  }, [
+    connectedEnvironmentIds,
+    projects,
+    pruneWorkspaceViews,
+    authoritativeEnvironmentIds,
+    restoredSessionTargets,
+  ]);
 
   useEffect(() => {
     const workspaces = projects.flatMap((project) =>

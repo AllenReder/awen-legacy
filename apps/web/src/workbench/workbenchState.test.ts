@@ -17,6 +17,7 @@ import {
   applySetLayoutMode,
   applySplitFocused,
   applyViewDrop,
+  vanishedSessionViews,
   initialPaneDropTarget,
   applyPruneWorkspaceViews,
   emptyWorkbenchSnapshot,
@@ -1138,6 +1139,103 @@ describe("applyViewDrop", () => {
 
       expect(result).toBeNull();
     });
+  });
+});
+
+describe("vanishedSessionViews", () => {
+  const observed = new Set([ENV_A]);
+  const authoritative = new Set([ENV_A]);
+  const agentInB: Extract<ViewTarget, { kind: "agentSession" }> = {
+    kind: "agentSession",
+    environmentId: ENV_B,
+    agentSessionId: AGENT_X,
+  };
+
+  it("closes a restored Agent Session View the authoritative projection omits", () => {
+    expect(
+      vanishedSessionViews({
+        previous: new Map(),
+        projected: new Map(),
+        restored: [agent(AGENT_X)],
+        observedEnvironmentIds: observed,
+        authoritativeEnvironmentIds: authoritative,
+      }),
+    ).toEqual([agent(AGENT_X)]);
+  });
+
+  it("keeps restored Session Views of Environments whose snapshot is not authoritative", () => {
+    expect(
+      vanishedSessionViews({
+        previous: new Map(),
+        projected: new Map(),
+        restored: [agent(AGENT_X)],
+        observedEnvironmentIds: observed,
+        authoritativeEnvironmentIds: new Set(),
+      }),
+    ).toEqual([]);
+  });
+
+  it("closes a gone Session in a ready Environment while an offline one keeps its Views", () => {
+    expect(
+      vanishedSessionViews({
+        previous: new Map(),
+        projected: new Map(),
+        restored: [agent(AGENT_X), agentInB],
+        observedEnvironmentIds: new Set([ENV_A, ENV_B]),
+        authoritativeEnvironmentIds: new Set([ENV_A]),
+      }),
+    ).toEqual([agent(AGENT_X)]);
+  });
+
+  it("keeps a restored Session the projection still carries", () => {
+    const projected = agent(AGENT_X);
+    expect(
+      vanishedSessionViews({
+        previous: new Map(),
+        projected: new Map([[targetKey(projected), projected]]),
+        restored: [projected],
+        observedEnvironmentIds: observed,
+        authoritativeEnvironmentIds: authoritative,
+      }),
+    ).toEqual([]);
+  });
+
+  it("never closes a Terminal Session View, whose absence can be a reassignment", () => {
+    expect(
+      vanishedSessionViews({
+        previous: new Map(),
+        projected: new Map(),
+        restored: [terminal("term-1")],
+        observedEnvironmentIds: observed,
+        authoritativeEnvironmentIds: authoritative,
+      }),
+    ).toEqual([]);
+  });
+
+  it("ignores Environments the projections have not observed", () => {
+    expect(
+      vanishedSessionViews({
+        previous: new Map([[targetKey(agentInB), agentInB]]),
+        projected: new Map(),
+        restored: [],
+        observedEnvironmentIds: observed,
+        authoritativeEnvironmentIds: authoritative,
+      }),
+    ).toEqual([]);
+  });
+
+  it("keeps comparing consecutive projections after the first", () => {
+    const gone = agent(AGENT_X);
+    const present = agent(AGENT_Y);
+    expect(
+      vanishedSessionViews({
+        previous: new Map([[targetKey(gone), gone]]),
+        projected: new Map([[targetKey(present), present]]),
+        restored: [],
+        observedEnvironmentIds: observed,
+        authoritativeEnvironmentIds: authoritative,
+      }),
+    ).toEqual([gone]);
   });
 });
 

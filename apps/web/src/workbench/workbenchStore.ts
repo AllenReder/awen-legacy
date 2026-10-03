@@ -46,6 +46,7 @@ import {
   applySplitPane,
   applySplitFocused,
   applyViewDrop,
+  sessionViewTargets,
   clearedTab,
   emptyWorkbenchSnapshot,
   type ViewDragSource,
@@ -63,6 +64,12 @@ export type ViewClosureListener = (targets: readonly ViewTarget[]) => void;
 /** Workbench commands and the explicit Pane/Tab close coordinator. */
 export interface WorkbenchStore extends WorkbenchSnapshot {
   readonly focusRequestId: number;
+  /**
+   * Session Views the store restored from persistence for this client. A
+   * remount reuses the same store, so this stays the restored set rather than
+   * whatever happens to be open when a component mounts.
+   */
+  readonly restoredSessionTargets: ReadonlyArray<ViewTarget>;
   /** Tabs currently animating their 220ms fluid collapse before removal. */
   readonly closingTabIds: ReadonlySet<string>;
   readonly closeErrors: ReadonlyMap<string, string>;
@@ -552,6 +559,7 @@ export function createWorkbenchStore(options: WorkbenchStoreOptions = {}) {
     return {
       ...initialSnapshot,
       focusRequestId: 0,
+      restoredSessionTargets: sessionViewTargets(initialSnapshot),
       closingTabIds: new Set<string>(),
       closeErrors: new Map<string, string>(),
       setLayoutMode: (mode) =>
@@ -692,5 +700,6 @@ export function resetWorkbenchStore(): void {
     focusRequestId: 0,
     closingTabIds: new Set<string>(),
     closeErrors: new Map<string, string>(),
+    restoredSessionTargets: [],
   });
 }

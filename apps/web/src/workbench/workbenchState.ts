@@ -1262,6 +1262,58 @@ function applyRemoveMatchingViews(
   );
 }
 
+/** Session View targets a snapshot presents, in Tab and Pane order. */
+export function sessionViewTargets(snapshot: WorkbenchSnapshot): ReadonlyArray<ViewTarget> {
+  const targets: ViewTarget[] = [];
+  for (const tab of snapshot.tabs) {
+    for (const view of tab.panes.values()) {
+      if (isSessionViewTarget(view.target)) targets.push(view.target);
+    }
+  }
+  return targets;
+}
+
+export interface VanishedSessionViewsInput {
+  /** Session targets the last processed projection carried. */
+  readonly previous: ReadonlyMap<string, ViewTarget>;
+  /** Session targets the projection that just arrived carries. */
+  readonly projected: ReadonlyMap<string, ViewTarget>;
+  /** Session Views restored from persistence when this client started. */
+  readonly restored: ReadonlyArray<ViewTarget>;
+  /** Environments whose projections this client has observed. */
+  readonly observedEnvironmentIds: ReadonlySet<string>;
+  /**
+   * Environments whose live snapshot can disprove a restored View. A cached or
+   * missing snapshot cannot: it may simply not list the Session yet.
+   */
+  readonly authoritativeEnvironmentIds: ReadonlySet<string>;
+}
+
+/**
+ * Session Views the projections prove are gone (ADR-0023).
+ *
+ * The first authoritative projection is also compared against the Session
+ * Views restored from persistence, because that is when a Session closed while
+ * this client was away becomes visible. Terminal Sessions are excluded: their
+ * projection only carries assigned terminals, so absence can mean a
+ * reassignment, and a Terminal View closes explicitly instead.
+ */
+export function vanishedSessionViews(input: VanishedSessionViewsInput): ViewTarget[] {
+  const baseline = new Map(input.previous);
+  for (const target of input.restored) {
+    if (!isSessionViewTarget(target)) continue;
+    if (!input.authoritativeEnvironmentIds.has(target.environmentId)) continue;
+    baseline.set(targetKey(target), target);
+  }
+  return [...baseline.values()].filter(
+    (target) =>
+      target.kind === "agentSession" &&
+      (input.observedEnvironmentIds.has(target.environmentId) ||
+        input.authoritativeEnvironmentIds.has(target.environmentId)) &&
+      !input.projected.has(targetKey(target)),
+  );
+}
+
 /**
  * Remove every PaneView displaying this Session from every Tab.
  *
