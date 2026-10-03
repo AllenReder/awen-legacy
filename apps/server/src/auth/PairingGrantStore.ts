@@ -202,6 +202,17 @@ export class PairingGrantStore extends Context.Service<
     readonly consume: (
       credential: string,
     ) => Effect.Effect<BootstrapGrant, BootstrapCredentialError>;
+    /**
+     * Read-only check for credentials this process seeded itself (the
+     * launcher-held desktop/dev bootstrap grants): reports whether the grant
+     * is still live without spending a use.
+     *
+     * Stored one-time pairing links are deliberately not verifiable here.
+     * They can only be validated by spending them (`consume`), and answering
+     * for them would turn an unauthenticated health check into a brute-force
+     * oracle for user-issued credentials.
+     */
+    readonly verify: (credential: string) => Effect.Effect<void, BootstrapCredentialError>;
   }
 >()("@awen/server/auth/PairingGrantStore") {}
 
@@ -519,6 +530,19 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  const verify: PairingGrantStore["Service"]["verify"] = Effect.fn("PairingGrantStore.verify")(
+    function* (credential) {
+      const now = yield* DateTime.now;
+      const seeded = (yield* Ref.get(seededGrantsRef)).get(credential);
+      if (seeded === undefined) {
+        return yield* new UnknownBootstrapCredentialError({});
+      }
+      if (DateTime.isGreaterThanOrEqualTo(now, seeded.expiresAt)) {
+        return yield* new ExpiredBootstrapCredentialError({});
+      }
+    },
+  );
+
   return PairingGrantStore.of({
     issueOneTimeToken,
     listActive,
@@ -527,6 +551,7 @@ export const make = Effect.gen(function* () {
     },
     revoke,
     consume,
+    verify,
   });
 });
 

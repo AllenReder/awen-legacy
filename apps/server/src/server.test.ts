@@ -2128,6 +2128,37 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("checks the desktop credential without issuing a session", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+      const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
+
+      const listClients = Effect.gen(function* () {
+        const response = yield* HttpClient.get("/api/auth/clients", {
+          headers: { cookie: ownerCookie },
+        });
+        assert.equal(response.status, 200);
+        return (yield* response.json) as ReadonlyArray<{ readonly sessionId: string }>;
+      });
+
+      const before = yield* listClients;
+      const accepted = yield* HttpClient.post("/api/auth/credential-check", {
+        body: yield* HttpBody.json({ credential: defaultDesktopBootstrapToken }),
+      });
+      assert.equal(accepted.status, 200);
+      assert.equal(yield* accepted.text, "");
+      // The daemon probe must not add a client session: the exchange endpoint
+      // it replaces minted one per health check.
+      assert.deepEqual(yield* listClients, before);
+
+      const rejected = yield* HttpClient.post("/api/auth/credential-check", {
+        body: yield* HttpBody.json({ credential: "not-the-desktop-token" }),
+      });
+      assert.equal(rejected.status, 401);
+      assert.deepEqual(yield* listClients, before);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("migrates a valid legacy remote-web session cookie", () =>
     Effect.gen(function* () {
       yield* buildAppUnderTest({ config: { mode: "web", host: "192.168.1.50" } });

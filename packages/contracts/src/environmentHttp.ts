@@ -66,6 +66,7 @@ export const EnvironmentInternalErrorReason = Schema.Literals([
   "bootstrap_validation_failed",
   "browser_session_issuance_failed",
   "browser_session_cookie_failed",
+  "credential_check_failed",
   "bearer_session_issuance_failed",
   "websocket_ticket_issuance_failed",
   "pairing_credential_issuance_failed",
@@ -356,6 +357,17 @@ class EnvironmentAuthHttpApi extends HttpApiGroup.make("auth")
     HttpApiEndpoint.post("browserSession", "/api/auth/browser-session", {
       payload: AuthBrowserSessionRequest,
       success: AuthBrowserSessionResult,
+      error: EnvironmentSessionCreationErrors,
+    }),
+  )
+  .add(
+    // Side-effect-free check for the launcher-held bootstrap credential the
+    // local daemon probe carries: the session endpoints consume credentials
+    // and mint a session, and a probe that only wants to know whether its
+    // credential still works must not leave one behind on every check.
+    HttpApiEndpoint.post("credentialCheck", "/api/auth/credential-check", {
+      payload: AuthBrowserSessionRequest,
+      success: Schema.Void,
       error: EnvironmentSessionCreationErrors,
     }),
   )

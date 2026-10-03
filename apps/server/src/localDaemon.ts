@@ -39,6 +39,10 @@ const DISCOVERY_VERSION = 1 as const;
 const LOCK_WAIT_MS = 25;
 const LOCK_TIMEOUT_MS = 30_000;
 const DEFAULT_START_TIMEOUT_MS = 15_000;
+// Kept in sync with the auth HTTP API contract; the probe cannot import the
+// route layer, so the path is spelled out here next to the handshake path.
+const CREDENTIAL_CHECK_PATH = "/api/auth/credential-check";
+
 const DEFAULT_REQUEST_TIMEOUT_MS = 750;
 const DEFAULT_STOP_TIMEOUT_MS = 5_000;
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "localhost", "::1"]);
@@ -456,17 +460,30 @@ export async function inspectLocalDaemon(
   }
   if (credential.length === 0) return { status: "auth-invalid", state };
 
+  const credentialRequest = {
+    method: "POST",
+    headers: { "content-type": "application/json", accept: "application/json" },
+    body: JSON.stringify({ credential }),
+  } satisfies RequestInit;
   let authResponse: JsonResponse;
   try {
+    // Prefer the side-effect-free check: the session exchange mints a browser
+    // session, and the probe runs on every start and status call.
     authResponse = await requestJson(
-      new URL("/api/auth/browser-session", state.origin).toString(),
-      {
-        method: "POST",
-        headers: { "content-type": "application/json", accept: "application/json" },
-        body: JSON.stringify({ credential }),
-      },
+      new URL(CREDENTIAL_CHECK_PATH, state.origin).toString(),
+      credentialRequest,
       requestTimeoutMs,
     );
+    if (authResponse.status === 404 || authResponse.status === 405) {
+      // A daemon from a build that predates the check only speaks the session
+      // exchange. Keep it attachable; it keeps minting a session per probe
+      // until it is replaced.
+      authResponse = await requestJson(
+        new URL("/api/auth/browser-session", state.origin).toString(),
+        credentialRequest,
+        requestTimeoutMs,
+      );
+    }
   } catch {
     return {
       status: "auth-unavailable",

@@ -273,6 +273,25 @@ export const authHttpApiLayer = HttpApiBuilder.group(
         ),
       )
       .handle(
+        "credentialCheck",
+        Effect.fn("environment.auth.credentialCheck")(
+          function* (args) {
+            yield* annotateEnvironmentRequest(args.endpoint.name);
+            yield* serverAuth.verifyCredential(args.payload.credential);
+            // Verification is unauthenticated but still credential-bearing:
+            // keep it out of every cache, like the session exchanges.
+            yield* appendCredentialResponseHeaders;
+            return undefined;
+          },
+          Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
+            failEnvironmentAuthInvalid(EnvironmentAuth.serverAuthCredentialReason(error)),
+          ),
+          Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+            failEnvironmentInternal("credential_check_failed", error),
+          ),
+        ),
+      )
+      .handle(
         "bearerSession",
         Effect.fn("environment.auth.bearerSession")(
           function* (args) {
