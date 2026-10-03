@@ -167,17 +167,18 @@ function shouldRefreshThreadShellSummary(event: OrchestrationEvent): boolean {
   }
 }
 
+/**
+ * Callers pass the rows in the repository's order — `sequence` first, falling
+ * back to timestamp and activity id only for rows that never recorded one. Do
+ * not re-sort here: request and resolution events routinely share a timestamp,
+ * and a client- or uuid-derived id can put the resolution before its request.
+ */
 function derivePendingUserInputCountFromActivities(
   activities: ReadonlyArray<ProjectionThreadActivity>,
 ): number {
   const openRequestIds = new Set<string>();
-  const ordered = [...activities].toSorted(
-    (left, right) =>
-      left.createdAt.localeCompare(right.createdAt) ||
-      left.activityId.localeCompare(right.activityId),
-  );
 
-  for (const activity of ordered) {
+  for (const activity of activities) {
     const requestId = extractActivityRequestId(activity.payload);
     if (requestId === null) {
       continue;

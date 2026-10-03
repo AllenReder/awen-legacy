@@ -3217,6 +3217,142 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
     }),
   );
 
+  it.effect("orders a user-input request and its resolution by event sequence", () =>
+    Effect.gen(function* () {
+      const projectionPipeline = yield* OrchestrationProjectionPipeline;
+      const eventStore = yield* OrchestrationEventStore;
+      const sql = yield* SqlClient.SqlClient;
+      const appendAndProject = (event: Parameters<typeof eventStore.append>[0]) =>
+        eventStore
+          .append(event)
+          .pipe(Effect.flatMap((savedEvent) => projectionPipeline.projectEvent(savedEvent)));
+      const createdAt = "2026-03-02T09:00:00.000Z";
+      const threadId = "thread-sequence-order";
+
+      yield* appendAndProject({
+        type: "project.created",
+        eventId: EventId.make("evt-sequence-order-1"),
+        aggregateKind: "project",
+        aggregateId: ProjectId.make("project-sequence-order"),
+        occurredAt: createdAt,
+        commandId: CommandId.make("cmd-sequence-order-1"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("cmd-sequence-order-1"),
+        metadata: {},
+        payload: {
+          projectId: ProjectId.make("project-sequence-order"),
+          title: "Project Sequence Order",
+          workspaceRoot: "/tmp/project-sequence-order",
+          defaultModelSelection: null,
+          scripts: [],
+          createdAt,
+          updatedAt: createdAt,
+        },
+      });
+
+      yield* appendAndProject({
+        type: "thread.created",
+        eventId: EventId.make("evt-sequence-order-2"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make(threadId),
+        occurredAt: createdAt,
+        commandId: CommandId.make("cmd-sequence-order-2"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("cmd-sequence-order-2"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.make(threadId),
+          projectId: ProjectId.make("project-sequence-order"),
+          title: "Thread Sequence Order",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          runtimeMode: "approval-required",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdAt,
+          updatedAt: createdAt,
+        },
+      });
+
+      // Same timestamp for both rows, and the resolution sorts before the
+      // request by activity id. Only `sequence` puts them back in event order.
+      yield* sql`
+        INSERT INTO projection_thread_activities (
+          activity_id,
+          thread_id,
+          turn_id,
+          tone,
+          kind,
+          summary,
+          payload_json,
+          sequence,
+          created_at
+        )
+        VALUES
+          (
+            'activity-a-resolve',
+            ${threadId},
+            NULL,
+            'info',
+            'user-input.resolved',
+            'User input resolved',
+            json_object('requestId', 'request-sequence-order'),
+            2,
+            ${createdAt}
+          ),
+          (
+            'activity-b-request',
+            ${threadId},
+            NULL,
+            'info',
+            'user-input.requested',
+            'User input requested',
+            json_object('requestId', 'request-sequence-order'),
+            1,
+            ${createdAt}
+          )
+      `;
+
+      // A lifecycle activity still refreshes the shell summary, so projecting
+      // one forces the recount under test. It resolves nothing.
+      yield* appendAndProject({
+        type: "thread.activity-appended",
+        eventId: EventId.make("evt-sequence-order-3"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make(threadId),
+        occurredAt: "2026-03-02T09:00:01.000Z",
+        commandId: CommandId.make("cmd-sequence-order-3"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("cmd-sequence-order-3"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.make(threadId),
+          activity: {
+            id: EventId.make("activity-c-unrelated-resolve"),
+            tone: "info",
+            kind: "user-input.resolved",
+            summary: "User input resolved",
+            payload: { requestId: "request-unrelated" },
+            turnId: null,
+            createdAt: "2026-03-02T09:00:01.000Z",
+          },
+        },
+      });
+
+      const threadRows = yield* sql<{
+        readonly pendingUserInputCount: number;
+      }>`
+        SELECT pending_user_input_count AS "pendingUserInputCount"
+        FROM projection_threads
+        WHERE thread_id = ${threadId}
+      `;
+      assert.deepEqual(threadRows, [{ pendingUserInputCount: 0 }]);
+    }),
+  );
+
   it.effect("maintains shell summaries without decoding message or plan bodies", () =>
     Effect.gen(function* () {
       const projectionPipeline = yield* OrchestrationProjectionPipeline;
