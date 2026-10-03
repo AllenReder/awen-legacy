@@ -223,6 +223,28 @@ export class WebSocketSessionRevokedError extends Schema.TaggedError<WebSocketSe
   }
 }
 
+export class WebSocketTokenAlreadyUsedError extends Schema.TaggedError<WebSocketTokenAlreadyUsedError>()(
+  "WebSocketTokenAlreadyUsedError",
+  {
+    sessionId: AuthSessionId,
+  },
+) {
+  override get message(): string {
+    return "Websocket token has already been used.";
+  }
+}
+
+export class WebSocketTokenInvalidatedError extends Schema.TaggedError<WebSocketTokenInvalidatedError>()(
+  "WebSocketTokenInvalidatedError",
+  {
+    sessionId: AuthSessionId,
+  },
+) {
+  override get message(): string {
+    return "Websocket token is no longer valid.";
+  }
+}
+
 export const SessionCredentialInvalidError = Schema.Union([
   MalformedSessionTokenError,
   InvalidSessionTokenSignatureError,
@@ -238,6 +260,8 @@ export const SessionCredentialInvalidError = Schema.Union([
   UnknownWebSocketSessionError,
   WebSocketSessionExpiredError,
   WebSocketSessionRevokedError,
+  WebSocketTokenAlreadyUsedError,
+  WebSocketTokenInvalidatedError,
 ]);
 export type SessionCredentialInvalidError = typeof SessionCredentialInvalidError.Type;
 export const isSessionCredentialInvalidError = Schema.is(SessionCredentialInvalidError);
@@ -435,6 +459,8 @@ const WebSocketClaims = Schema.Struct({
   v: Schema.Literal(1),
   kind: Schema.Literal("websocket"),
   sid: AuthSessionId,
+  epoch: Schema.String,
+  nonce: Schema.String,
   iat: Schema.Number,
   exp: Schema.Number,
 });
@@ -481,7 +507,25 @@ export const make = Effect.gen(function* () {
   const secretStore = yield* ServerSecretStore.ServerSecretStore;
   const authSessions = yield* AuthSessions.AuthSessionRepository;
   const signingSecret = yield* secretStore.getOrCreateRandom(SIGNING_SECRET_NAME, 32);
+  const websocketTicketEpoch = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
   const connectedSessionsRef = yield* Ref.make(new Map<AuthSessionId, number>());
+  const consumedWebSocketTicketNoncesRef = yield* Ref.make(new Map<string, number>());
+  const pruneConsumedWebSocketTicketNonces = (
+    current: ReadonlyMap<string, number>,
+    now: number,
+  ) => {
+    const next = new Map(current);
+    for (const [nonce, expiresAt] of current) {
+      if (expiresAt <= now) {
+        next.delete(nonce);
+      }
+    }
+    return next;
+  };
+  const pruneExpiredConsumedWebSocketTicketNonces = (now: number) =>
+    Ref.update(consumedWebSocketTicketNoncesRef, (current) =>
+      pruneConsumedWebSocketTicketNonces(current, now),
+    );
   const changesPubSub = yield* PubSub.unbounded<SessionCredentialChange>();
   const cookieInput = {
     mode: serverConfig.mode,
@@ -844,10 +888,15 @@ export const make = Effect.gen(function* () {
     const expiresAt = DateTime.add(issuedAt, {
       milliseconds: Duration.toMillis(input?.ttl ?? DEFAULT_WEBSOCKET_TOKEN_TTL),
     });
+    const nonce = yield* crypto.randomUUIDv4.pipe(
+      Effect.mapError((cause) => new WebSocketTokenIssueError({ sessionId, cause })),
+    );
     const claims: WebSocketClaims = {
       v: 1,
       kind: "websocket",
       sid: sessionId,
+      epoch: websocketTicketEpoch,
+      nonce,
       iat: issuedAt.epochMilliseconds,
       exp: expiresAt.epochMilliseconds,
     };
@@ -891,6 +940,9 @@ export const make = Effect.gen(function* () {
     if (claims.sid.startsWith(REUSABLE_DEV_SESSION_PREFIX) && claims.sid !== devAuth?.sessionId) {
       return yield* new UnknownWebSocketSessionError({ sessionId: claims.sid });
     }
+    if (claims.epoch !== websocketTicketEpoch) {
+      return yield* new WebSocketTokenInvalidatedError({ sessionId: claims.sid });
+    }
 
     const observedAt = yield* DateTime.now;
     const expiresAt = DateTime.make(claims.exp);
@@ -930,6 +982,20 @@ export const make = Effect.gen(function* () {
         sessionId: claims.sid,
         revokedAt: row.value.revokedAt,
       });
+    }
+
+    // Consume before returning so concurrent upgrade attempts cannot both pass
+    // verification. A ticket is single-use even if the transport upgrade fails.
+    const consumed = yield* Ref.modify(consumedWebSocketTicketNoncesRef, (current) => {
+      const next = pruneConsumedWebSocketTicketNonces(current, observedAt.epochMilliseconds);
+      if (next.has(claims.nonce)) {
+        return [false, next] as const;
+      }
+      next.set(claims.nonce, Math.min(claims.exp, row.value.expiresAt.epochMilliseconds));
+      return [true, next] as const;
+    });
+    if (!consumed) {
+      return yield* new WebSocketTokenAlreadyUsedError({ sessionId: claims.sid });
     }
 
     return {
@@ -1023,6 +1089,15 @@ export const make = Effect.gen(function* () {
     }
     return revokedSessionIds.length;
   });
+
+  yield* Effect.forkScoped(
+    Effect.forever(
+      Effect.sleep(Duration.minutes(1)).pipe(
+        Effect.andThen(DateTime.now),
+        Effect.flatMap((now) => pruneExpiredConsumedWebSocketTicketNonces(now.epochMilliseconds)),
+      ),
+    ),
+  );
 
   return SessionStore.of({
     cookieName,
