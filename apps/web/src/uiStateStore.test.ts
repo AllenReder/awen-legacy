@@ -350,10 +350,44 @@ describe("uiStateStore persistence", () => {
         },
       },
       pullRequestMergeMethod: "merge",
+      workspaceSessionOrderById: {},
     });
     expect(parsePersistedState(persisted)).toEqual({
       ...state,
     });
+  });
+
+  it("persists a dragged workspace session order across reloads", () => {
+    const workspaceKey = "env-local:ws-1";
+    const state = reorderWorkspaceSessions(
+      makeUiState(),
+      workspaceKey,
+      ["s1", "s2", "s3"],
+      "s3",
+      "s2",
+      "before",
+    );
+
+    persistState(state);
+
+    const persisted = JSON.parse(
+      localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}",
+    ) as PersistedUiState;
+    expect(persisted.workspaceSessionOrderById).toEqual({
+      [workspaceKey]: ["s1", "s3", "s2"],
+    });
+    expect(parsePersistedState(persisted).workspaceSessionOrderById).toEqual({
+      [workspaceKey]: ["s1", "s3", "s2"],
+    });
+  });
+
+  it("still reads persisted state written before session order was stored", () => {
+    const parsed = parsePersistedState({
+      projectExpandedById: { logical: false },
+      projectOrder: ["physical-a"],
+    });
+
+    expect(parsed.workspaceSessionOrderById).toEqual({});
   });
 
   it("restores the sidebar project scope across reloads", () => {

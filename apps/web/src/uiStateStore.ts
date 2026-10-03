@@ -257,6 +257,7 @@ export function persistState(state: UiState): void {
         threadChangedFilesExpansionVersion: THREAD_CHANGED_FILES_EXPANSION_VERSION,
         threadChangedFilesExpandedById: state.threadChangedFilesExpandedById,
         pullRequestMergeMethod: state.pullRequestMergeMethod,
+        workspaceSessionOrderById: state.workspaceSessionOrderById,
       } satisfies PersistedUiState),
     );
     if (!legacyKeysCleanedUp) {
