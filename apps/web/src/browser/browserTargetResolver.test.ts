@@ -212,6 +212,22 @@ describe("browser target resolver", () => {
     ).toBe("http://localhost:5173/app");
   });
 
+  it("rejects a discovered loopback server instead of falling back to raw localhost", async () => {
+    readPreparedConnection.mockReturnValue(undefined);
+    const { resolveDiscoveredServerUrl } = await import("./browserTargetResolver");
+    expect(() =>
+      resolveDiscoveredServerUrl(EnvironmentId.make("environment-1"), "localhost:5173/app"),
+    ).toThrow(/environment is not connected/i);
+  });
+
+  it("rejects a discovered loopback server whose environment host is not reachable", async () => {
+    readPreparedConnection.mockReturnValue({ httpBaseUrl: "https://example.com:443" });
+    const { resolveDiscoveredServerUrl } = await import("./browserTargetResolver");
+    expect(() =>
+      resolveDiscoveredServerUrl(EnvironmentId.make("environment-1"), "http://127.0.0.1:5173/app"),
+    ).toThrow(/preview gateway/i);
+  });
+
   it("leaves malformed input for the normal navigation error path", async () => {
     const { resolveDiscoveredServerUrl } = await import("./browserTargetResolver");
     expect(resolveDiscoveredServerUrl(EnvironmentId.make("environment-1"), "   ")).toBe("   ");

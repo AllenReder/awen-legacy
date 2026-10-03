@@ -1,7 +1,14 @@
 import type { DiscoveredLocalServer } from "@awen/contracts";
-import { describe, expect, it } from "vite-plus/test";
+import { EnvironmentId } from "@awen/contracts";
+import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { mergeServers } from "./useDiscoveredLocalServers";
+import { mergeServers, resolveReachableScannerServers } from "./useDiscoveredLocalServers";
+
+const readPreparedConnection = vi.hoisted(() => vi.fn());
+
+vi.mock("~/state/session", () => ({ readPreparedConnection }));
+
+beforeEach(() => readPreparedConnection.mockReset());
 
 const scannerServer = (
   overrides: Partial<DiscoveredLocalServer & { requestedUrl: string }>,
@@ -14,6 +21,49 @@ const scannerServer = (
   pid: 1234,
   terminal: null,
   ...overrides,
+});
+
+describe("resolveReachableScannerServers", () => {
+  it("maps a loopback server onto the connected environment host", () => {
+    readPreparedConnection.mockReturnValue({ httpBaseUrl: "http://192.168.1.25:3773" });
+
+    expect(
+      resolveReachableScannerServers(EnvironmentId.make("environment-1"), [
+        scannerServer({ url: "http://localhost:5173/app" }),
+      ]),
+    ).toEqual([
+      expect.objectContaining({
+        url: "http://192.168.1.25:5173/app",
+        requestedUrl: "http://localhost:5173/app",
+      }),
+    ]);
+  });
+
+  it("drops a loopback server while its environment is not connected", () => {
+    readPreparedConnection.mockReturnValue(undefined);
+
+    expect(
+      resolveReachableScannerServers(EnvironmentId.make("environment-1"), [
+        scannerServer({ url: "http://localhost:5173/app" }),
+        scannerServer({ host: "127.0.0.1", url: "http://127.0.0.1:3000/" }),
+      ]),
+    ).toEqual([]);
+  });
+
+  it("keeps loopback servers of a connected local environment", () => {
+    readPreparedConnection.mockReturnValue({ httpBaseUrl: "http://127.0.0.1:3773" });
+
+    expect(
+      resolveReachableScannerServers(EnvironmentId.make("environment-1"), [
+        scannerServer({ url: "http://localhost:5173/app" }),
+      ]),
+    ).toEqual([
+      expect.objectContaining({
+        url: "http://localhost:5173/app",
+        requestedUrl: "http://localhost:5173/app",
+      }),
+    ]);
+  });
 });
 
 describe("mergeServers", () => {
