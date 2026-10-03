@@ -99,11 +99,8 @@ import {
   buildFileEditorKey,
   shouldEnableCommentAnnotations,
 } from "./fileEditorOptions";
-import {
-  isMarkdownPreviewFile,
-  setMarkdownTaskChecked,
-  shouldShowFileExplorer,
-} from "./filePreviewMode";
+import { isMarkdownPreviewFile, shouldShowFileExplorer } from "./filePreviewMode";
+import { applyMarkdownTaskToggle } from "./markdownTaskToggle.logic";
 import { useFileSaveCoordinator } from "./useFileSaveCoordinator";
 import {
   getOptimisticProjectFileQueryData,
@@ -922,6 +919,8 @@ function RenderedMarkdownSurface({
   threadRef,
   readOnly,
   onPendingChange,
+  explicitSave,
+  onDraftChange,
 }: Omit<
   EditableFileSurfaceProps,
   | "resolvedTheme"
@@ -930,15 +929,24 @@ function RenderedMarkdownSurface({
   | "revealRequestId"
   | "wordWrap"
   | "onPostRender"
+  | "explicitSave"
+  | "onDraftChange"
 > & {
   threadRef: ScopedThreadRef;
   readOnly: boolean;
+  // Required on purpose: an explicit-save surface has no coordinator to fall back on, so the
+  // draft sink the toggle feeds is the only thing that can make the change durable.
+  explicitSave: boolean;
+  onDraftChange: (contents: string) => void;
 }) {
+  // An explicit-save surface owns when the file is written: a task-list click is a draft edit
+  // there, so the coordinator must stay inert instead of debouncing a write of its own.
   const saveCoordinator = useFileSaveCoordinator({
     environmentId,
     cwd,
     relativePath,
     onPendingChange: onPendingChange ?? (() => {}),
+    enabled: !explicitSave,
   });
 
   return (
@@ -951,15 +959,24 @@ function RenderedMarkdownSurface({
         onTaskListChange={
           readOnly
             ? undefined
-            : ({ markerOffset, checked }) => {
-                const currentContents =
-                  getOptimisticProjectFileQueryData(environmentId, cwd, relativePath)?.contents ??
-                  contents;
-                const nextContents = setMarkdownTaskChecked(currentContents, markerOffset, checked);
-                if (nextContents === currentContents) return;
-                setProjectFileQueryData(environmentId, cwd, relativePath, nextContents);
-                saveCoordinator.change(nextContents);
-              }
+            : ({ markerOffset, checked }) =>
+                applyMarkdownTaskToggle(
+                  {
+                    contents,
+                    optimisticContents:
+                      getOptimisticProjectFileQueryData(environmentId, cwd, relativePath)
+                        ?.contents ?? null,
+                    markerOffset,
+                    checked,
+                    explicitSave,
+                  },
+                  {
+                    publishContents: (next) =>
+                      setProjectFileQueryData(environmentId, cwd, relativePath, next),
+                    changeDraft: onDraftChange,
+                    scheduleSave: (next) => saveCoordinator.change(next),
+                  },
+                )
         }
       />
     </ScrollArea>
@@ -1627,6 +1644,8 @@ export default function FilePreviewPanel({
                 contents={file.data.contents}
                 readOnly={isHostFile}
                 onPendingChange={onPendingChange}
+                explicitSave={explicitSave}
+                onDraftChange={handleDraftChange}
               />
             ) : tableDelimiter && renderTable ? (
               <DelimitedTablePreview
