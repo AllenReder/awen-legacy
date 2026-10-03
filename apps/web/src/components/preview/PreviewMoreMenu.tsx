@@ -18,6 +18,7 @@ import {
   MenuSubTrigger,
   MenuTrigger,
 } from "~/components/ui/menu";
+import { toastManager } from "~/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 
 import { previewBridge } from "./previewBridge";
@@ -66,6 +67,19 @@ interface Props {
 }
 
 /**
+ * Failure of a bridge call is news the reader needs: every action here is an instruction the
+ * native side may refuse (a profile that is gone, a tab without web contents), and a menu that
+ * closes with no toast reads as success.
+ */
+function reportPreviewMenuFailure(title: string, error: unknown): void {
+  toastManager.add({
+    type: "error",
+    title,
+    description: error instanceof Error ? error.message : "An error occurred.",
+  });
+}
+
+/**
  * Three-dot menu in the chrome row. Wires Hard reload, DevTools, zoom
  * controls, and storage-clearing actions. Only mounted by `PreviewView`
  * when the desktop bridge is present, so we can call it unconditionally.
@@ -86,9 +100,9 @@ export function PreviewMoreMenu({
   if (!previewBridge) return null;
   const bridge = previewBridge;
   const tabDisabled = !tabId || !hasWebContents;
-  const callTab = (op: (tabId: string) => Promise<void>) => () => {
+  const callTab = (op: (tabId: string) => Promise<void>, title: string) => () => {
     if (!tabId) return;
-    void op(tabId).catch(() => undefined);
+    void op(tabId).catch((error) => reportPreviewMenuFailure(title, error));
   };
 
   const zoomLabel = `${Math.round(zoomFactor * 100)}%`;
@@ -109,10 +123,16 @@ export function PreviewMoreMenu({
         <TooltipPopup>More</TooltipPopup>
       </Tooltip>
       <MenuPopup align="end" sideOffset={6} className="min-w-56">
-        <MenuItem onClick={callTab(bridge.hardReload)} disabled={tabDisabled}>
+        <MenuItem
+          onClick={callTab(bridge.hardReload, "Unable to reload the preview")}
+          disabled={tabDisabled}
+        >
           Hard reload
         </MenuItem>
-        <MenuItem onClick={callTab(bridge.openDevTools)} disabled={tabDisabled}>
+        <MenuItem
+          onClick={callTab(bridge.openDevTools, "Unable to open DevTools")}
+          disabled={tabDisabled}
+        >
           Open DevTools
         </MenuItem>
         <MenuItem onClick={onNativePictureInPicture} disabled={tabDisabled}>
@@ -132,7 +152,9 @@ export function PreviewMoreMenu({
                 if (!tabId) return;
                 void bridge
                   .setColorScheme(tabId, value as DesktopPreviewColorScheme)
-                  .catch(() => undefined);
+                  .catch((error) =>
+                    reportPreviewMenuFailure("Unable to change the preview appearance", error),
+                  );
               }}
             >
               {COLOR_SCHEME_OPTIONS.map((option) => (
@@ -160,7 +182,7 @@ export function PreviewMoreMenu({
               variant="outline"
               size="icon-xs"
               type="button"
-              onClick={callTab(bridge.zoomOut)}
+              onClick={callTab(bridge.zoomOut, "Unable to zoom out")}
               aria-label="Zoom out"
               disabled={tabDisabled}
             >
@@ -173,7 +195,7 @@ export function PreviewMoreMenu({
               variant="outline"
               size="icon-xs"
               type="button"
-              onClick={callTab(bridge.zoomIn)}
+              onClick={callTab(bridge.zoomIn, "Unable to zoom in")}
               aria-label="Zoom in"
               disabled={tabDisabled}
             >
@@ -183,7 +205,7 @@ export function PreviewMoreMenu({
               variant="ghost"
               size="icon-xs"
               type="button"
-              onClick={callTab(bridge.resetZoom)}
+              onClick={callTab(bridge.resetZoom, "Unable to reset zoom")}
               aria-label="Reset zoom"
               className="[:hover,[data-pressed]]:bg-foreground/10"
               disabled={tabDisabled}
@@ -213,13 +235,19 @@ export function PreviewMoreMenu({
           ) : null}
           <MenuItem
             onClick={() =>
-              void bridge.clearCookies(environmentId, profileId).catch(() => undefined)
+              void bridge
+                .clearCookies(environmentId, profileId)
+                .catch((error) => reportPreviewMenuFailure("Unable to clear cookies", error))
             }
           >
             Clear cookies
           </MenuItem>
           <MenuItem
-            onClick={() => void bridge.clearCache(environmentId, profileId).catch(() => undefined)}
+            onClick={() =>
+              void bridge
+                .clearCache(environmentId, profileId)
+                .catch((error) => reportPreviewMenuFailure("Unable to clear cache", error))
+            }
           >
             Clear cache
           </MenuItem>
