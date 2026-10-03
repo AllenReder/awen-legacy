@@ -45,6 +45,31 @@ function claudeLine(id: number, outputTokens: number, model = "claude-fable-5"):
   })}\n`;
 }
 
+function codexRolloutLines(
+  events: ReadonlyArray<{
+    readonly sessionId: string;
+    readonly timestamp: string;
+    readonly outputTokens: number;
+  }>,
+): string {
+  const sessionId = events[0]?.sessionId ?? "codex-session";
+  return [
+    { type: "session_meta", payload: { id: sessionId } },
+    { type: "turn_context", payload: { model: "gpt-5.6-sol" } },
+    ...events.map((event) => ({
+      type: "event_msg",
+      timestamp: event.timestamp,
+      payload: {
+        type: "token_count",
+        info: { last_token_usage: { input_tokens: 10, output_tokens: event.outputTokens } },
+      },
+    })),
+  ]
+    .map((line) => encodeUnknownJsonString(line))
+    .join("\n")
+    .concat("\n");
+}
+
 const WINDOW: UsageSummaryInput = {
   timeZone: "UTC",
   sinceDay: UsageDay.make("2026-07-31"),
@@ -209,6 +234,57 @@ describe("UsageService", () => {
         sources.filter((source) => source.fingerprint.provider === "codex").length,
         1,
       );
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("counts Codex archived rollouts inside the same window", () =>
+    Effect.gen(function* () {
+      const { home, settings } = yield* setup;
+      const codexHome = NodePath.join(home, "codex-archive");
+      const sessionsDir = NodePath.join(codexHome, "sessions");
+      const archivedDir = NodePath.join(codexHome, "archived_sessions");
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(sessionsDir, { recursive: true });
+        await NodeFSP.mkdir(NodePath.join(archivedDir, "2026"), { recursive: true });
+        await NodeFSP.writeFile(
+          NodePath.join(sessionsDir, "rollout-live.jsonl"),
+          codexRolloutLines([
+            { sessionId: "live-session", timestamp: "2026-08-01T10:00:00Z", outputTokens: 11 },
+          ]),
+        );
+        await NodeFSP.writeFile(
+          NodePath.join(archivedDir, "2026", "rollout-archived.jsonl"),
+          codexRolloutLines([
+            { sessionId: "archived-session", timestamp: "2026-08-01T11:00:00Z", outputTokens: 21 },
+            // Same archive, different window: the record must stay excluded.
+            { sessionId: "archived-session", timestamp: "2026-06-01T11:00:00Z", outputTokens: 900 },
+          ]),
+        );
+      });
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          serviceLayers({
+            prefix: "usage-service-archived-test",
+            home,
+            settings: {
+              ...settings,
+              providers: {
+                ...settings.providers,
+                codex: { homePath: codexHome },
+              },
+            },
+          }),
+        ),
+      );
+
+      const summary = yield* service.readSummary(WINDOW);
+
+      assert.strictEqual(totalOutputTokens(summary), 32);
+      const codexSources = summary.sources
+        .filter((source) => source.fingerprint.provider === "codex" && source.status === "ok")
+        .map((source) => source.fingerprint.resolvedHomePath)
+        .toSorted();
+      assert.deepEqual(codexSources, [archivedDir, sessionsDir].toSorted());
     }).pipe(Effect.scoped),
   );
 
