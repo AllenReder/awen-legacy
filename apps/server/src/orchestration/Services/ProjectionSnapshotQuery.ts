@@ -35,6 +35,7 @@ import type * as Effect from "effect/Effect";
 
 import type { ProjectionRepositoryError } from "../../persistence/Errors.ts";
 import type { ProjectionPendingApproval } from "../../persistence/Services/ProjectionPendingApprovals.ts";
+import type { ProjectionPendingTurnStart } from "../../persistence/Services/ProjectionTurns.ts";
 
 export interface ProjectionSnapshotCounts {
   readonly projectCount: number;
@@ -99,6 +100,21 @@ export interface ProjectionSnapshotQueryShape {
   readonly listActivitiesByKind: (
     kind: string,
   ) => Effect.Effect<ReadonlyArray<OrchestrationThreadActivity>, ProjectionRepositoryError>;
+
+  /**
+   * Read every pending turn-start placeholder across active (not deleted, not
+   * archived) threads. Rows appear when a turn-start intent commits and are
+   * removed once a turn adopts the message or the start fails, so a surviving
+   * row at startup marks an intent whose adopting session-set never committed.
+   * Startup recovery re-drives those intents at-least-once.
+   *
+   * Optional so existing test doubles and partial layer mocks keep compiling;
+   * `OrchestrationProjectionSnapshotQueryLive` always provides it.
+   */
+  readonly listPendingTurnStarts?: () => Effect.Effect<
+    ReadonlyArray<ProjectionPendingTurnStart>,
+    ProjectionRepositoryError
+  >;
 
   /**
    * Read the lightweight command snapshot used to bootstrap the in-memory

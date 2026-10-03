@@ -1207,6 +1207,74 @@ const make = Effect.gen(function* () {
       { discard: true },
     );
   });
+  // A committed intent is only published on the hot domain stream, so one that
+  // was committed while no reactor was subscribed is never delivered. The
+  // pending-start placeholder is that intent's durable record: it is written
+  // when the turn-start intent projects and removed once a provider turn adopts
+  // the message or the start fails. Re-enqueue every surviving row so the
+  // handler can decide whether the intent still needs a provider call.
+  // Recovery is at-least-once: a crash between the provider send and the
+  // durable turn adoption can re-send the message into the restarted session,
+  // which beats stranding it forever.
+  const recoverPendingTurnStarts: Effect.Effect<void> = Effect.gen(function* () {
+    const listPendingTurnStarts = projectionSnapshotQuery.listPendingTurnStarts;
+    if (!listPendingTurnStarts) {
+      return;
+    }
+    const pendingTurnStarts = yield* listPendingTurnStarts();
+    yield* Effect.forEach(
+      pendingTurnStarts,
+      (row) =>
+        Effect.gen(function* () {
+          const thread = yield* resolveThreadShell(row.threadId);
+          if (!thread) {
+            return;
+          }
+          // The identifier is derived from the intent's durable identity so a
+          // repeated start in one process cannot re-drive the same intent: the
+          // handler's recent-key cache suppresses duplicates of this event.
+          yield* worker.enqueue({
+            sequence: 0,
+            eventId: EventId.make(`server:recovered-turn-start:${row.threadId}:${row.messageId}`),
+            aggregateKind: "thread",
+            aggregateId: row.threadId,
+            occurredAt: row.requestedAt,
+            commandId: null,
+            causationEventId: null,
+            correlationId: null,
+            metadata: {},
+            type: "thread.turn-start-requested",
+            payload: {
+              threadId: row.threadId,
+              messageId: row.messageId,
+              interactionMode: thread.interactionMode,
+              runtimeMode: thread.runtimeMode,
+              createdAt: row.requestedAt,
+              ...(row.sourceProposedPlanThreadId !== null && row.sourceProposedPlanId !== null
+                ? {
+                    sourceProposedPlan: {
+                      threadId: row.sourceProposedPlanThreadId,
+                      planId: row.sourceProposedPlanId,
+                    },
+                  }
+                : {}),
+            },
+          });
+        }),
+      { discard: true },
+    );
+  }).pipe(
+    Effect.catchCause((cause) => {
+      if (Cause.hasInterruptsOnly(cause)) {
+        return Effect.interrupt;
+      }
+      return Effect.logWarning("provider command reactor failed to re-drive pending turn starts", {
+        failureKind: Cause.hasDies(cause) ? "defect" : "failure",
+        reasonCount: cause.reasons.length,
+      });
+    }),
+  );
+
   const processThreadTitleRegenerationSafely = Effect.fn("processThreadTitleRegenerationSafely")(
     function* (event: Extract<ProviderIntentEvent, { type: "thread.meta-updated" }>) {
       if (event.payload.regenerateTitle !== true) {
@@ -1998,8 +2066,10 @@ const make = Effect.gen(function* () {
     const domainEvents = yield* orchestrationEngine.subscribeDomainEvents;
     yield* forkParked(Stream.runForEach(domainEvents, processEvent));
 
-    // Earlier events do not replay. Clear interrupted requests by their captured
-    // IDs, then schedule persisted refinements after subscribing to their events.
+    // The hot stream does not replay earlier events, so re-drive the durable
+    // intents it can no longer deliver (pending turn starts), then clear
+    // interrupted requests by their captured IDs, then schedule persisted
+    // refinements after subscribing to their events.
     const recoverTitles = clearInterruptedThreadTitleRegenerations(
       pendingTitles.interruptedRegenerations,
     ).pipe(
@@ -2023,8 +2093,10 @@ const make = Effect.gen(function* () {
     );
     const activation = yield* ServerActivation;
     if (activation === undefined) {
+      yield* recoverPendingTurnStarts;
       yield* recoverTitles;
     } else {
+      yield* forkParked(recoverPendingTurnStarts);
       yield* forkParked(recoverTitles);
     }
   });
