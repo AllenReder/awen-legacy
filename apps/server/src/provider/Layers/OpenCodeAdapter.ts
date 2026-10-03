@@ -51,6 +51,7 @@ import {
   ProviderAdapterSessionNotFoundError,
   ProviderAdapterValidationError,
 } from "../Errors.ts";
+import { BoundedDedupeMap, BoundedDedupeSet } from "../boundedDedupe.ts";
 import { buildRuntimeInstructions } from "../RuntimeInstructions.ts";
 import { type OpenCodeAdapterShape } from "../Services/OpenCodeAdapter.ts";
 import {
@@ -370,6 +371,16 @@ function isOpenCodeChildRequestEvent(
 const OPENCODE_DEFAULT_TITLE_PATTERN =
   /^(New session - |Child session - )\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 
+/**
+ * Capacity of the per-session replay guards (`resolvedRequestIds`,
+ * `toolCompletedIds`, `taskSettledIds`, `taskEarlyTerminalById`,
+ * `emittedTerminalRequestIds`, `taskStartedIds`, and the per-tool-name/input
+ * caches). They exist so a redelivered event cannot emit twice; a bound is
+ * what stops them growing for the life of a long, subagent-heavy session, at
+ * the cost of treating an id evicted this long ago as unseen.
+ */
+const OPENCODE_DEDUPE_LIMIT = 4096;
+
 function isOpenCodeDefaultTitle(title: string): boolean {
   return OPENCODE_DEFAULT_TITLE_PATTERN.test(title);
 }
@@ -382,19 +393,22 @@ interface OpenCodeSessionContext {
   readonly defaultAgent: string;
   openCodeSessionId: string;
   readonly relatedSessionIds: Set<string>;
-  readonly resolvedRequestIds: Set<string>;
+  readonly resolvedRequestIds: BoundedDedupeSet<string>;
   readonly autoRepliedRequestIds: Set<string>;
-  readonly emittedTerminalRequestIds: Set<string>;
+  readonly emittedTerminalRequestIds: BoundedDedupeSet<string>;
   readonly requestRelationRetries: Map<string, OpenCodeRequestRelationRetry>;
   readonly pendingPermissions: Map<string, PermissionRequest>;
   readonly pendingQuestions: Map<string, OpenCodeForm>;
-  readonly toolNamesById: Map<string, string>;
-  readonly toolInputsById: Map<string, Record<string, unknown>>;
-  readonly taskStartedIds: Set<string>;
-  readonly taskSettledIds: Set<string>;
+  readonly toolNamesById: BoundedDedupeMap<string, string>;
+  readonly toolInputsById: BoundedDedupeMap<string, Record<string, unknown>>;
+  readonly taskStartedIds: BoundedDedupeSet<string>;
+  readonly taskSettledIds: BoundedDedupeSet<string>;
   /** Tool ids that already emitted `item.completed` (replays/redeliveries). */
-  readonly toolCompletedIds: Set<string>;
-  readonly taskEarlyTerminalById: Map<string, { status: "completed" | "failed"; summary?: string }>;
+  readonly toolCompletedIds: BoundedDedupeSet<string>;
+  readonly taskEarlyTerminalById: BoundedDedupeMap<
+    string,
+    { status: "completed" | "failed"; summary?: string }
+  >;
   /** Highest durable event sequence observed for the parent session. */
   lastParentEventSequence: number;
   turnTokenUsage: OpenCodeTurnTokenUsageAccumulator | undefined;
@@ -2968,18 +2982,18 @@ export function makeOpenCodeAdapter(
           defaultAgent: started.defaultAgent,
           openCodeSessionId: started.openCodeSession.id,
           relatedSessionIds: new Set([started.openCodeSession.id]),
-          taskStartedIds: new Set(),
-          taskSettledIds: new Set(),
-          toolCompletedIds: new Set(),
-          taskEarlyTerminalById: new Map(),
-          resolvedRequestIds: new Set(),
+          taskStartedIds: new BoundedDedupeSet(OPENCODE_DEDUPE_LIMIT),
+          taskSettledIds: new BoundedDedupeSet(OPENCODE_DEDUPE_LIMIT),
+          toolCompletedIds: new BoundedDedupeSet(OPENCODE_DEDUPE_LIMIT),
+          taskEarlyTerminalById: new BoundedDedupeMap(OPENCODE_DEDUPE_LIMIT),
+          resolvedRequestIds: new BoundedDedupeSet(OPENCODE_DEDUPE_LIMIT),
           autoRepliedRequestIds: new Set(),
-          emittedTerminalRequestIds: new Set(),
+          emittedTerminalRequestIds: new BoundedDedupeSet(OPENCODE_DEDUPE_LIMIT),
           requestRelationRetries: new Map(),
           pendingPermissions: new Map(),
           pendingQuestions: new Map(),
-          toolNamesById: new Map(),
-          toolInputsById: new Map(),
+          toolNamesById: new BoundedDedupeMap(OPENCODE_DEDUPE_LIMIT),
+          toolInputsById: new BoundedDedupeMap(OPENCODE_DEDUPE_LIMIT),
           lastParentEventSequence: 0,
           turnTokenUsage: undefined,
           activeTurnId: undefined,
