@@ -45,6 +45,12 @@ export interface ThreadPreviewState {
   recentlySeenUrls: string[];
   /** Server process currently authoritative for revision ordering. */
   serverEpoch: string | null;
+  /**
+   * Server epoch of the last authoritative `preview.list` applied, or null
+   * until one arrives. A single session event proves only its own tab, so
+   * consumers that delete absent tabs must wait for this.
+   */
+  listEpoch: string | null;
   /** Latest ordered server revision applied from a list response or event. */
   serverRevision: number;
 }
@@ -58,6 +64,7 @@ const EMPTY_THREAD_PREVIEW_STATE: ThreadPreviewState = Object.freeze({
   desktopByTabId: {},
   recentlySeenUrls: [] as string[],
   serverEpoch: null,
+  listEpoch: null,
   serverRevision: 0,
 });
 
@@ -350,6 +357,7 @@ export function reconcilePreviewServerSessions(
       desktopOverlay: activeTabId ? (desktopByTabId[activeTabId] ?? null) : null,
       recentlySeenUrls,
       serverEpoch: result.serverEpoch,
+      listEpoch: result.serverEpoch,
       serverRevision: result.revision,
     };
   });
