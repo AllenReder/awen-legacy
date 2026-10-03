@@ -73,6 +73,15 @@ function workspaceFile(
   };
 }
 
+function workspaceGit(workspaceId: WorkspaceId = WS_A): Extract<ViewTarget, { kind: "workspace" }> {
+  return {
+    kind: "workspace",
+    definitionId: "gitView",
+    environmentId: ENV_A,
+    workspaceId,
+  };
+}
+
 /** Count Views whose target matches, for uniqueness assertions. */
 function countViews(snapshot: WorkbenchSnapshot, matches: (target: ViewTarget) => boolean): number {
   let count = 0;
@@ -732,6 +741,73 @@ describe("applyViewDrop", () => {
     expect(tabAfter.panes.get(tab.focusedPaneId)?.target).toEqual(agent(AGENT_X));
     expect(countSessionViews(result!.snapshot, agent(AGENT_X))).toBe(1);
     expect(result).toMatchObject({ tabId: tab.id, paneId: tab.focusedPaneId });
+  });
+
+  it("keeps one File View when the same Sidebar View is dropped onto another Pane in its Tab (ADR-0008)", () => {
+    const ids = makeIds();
+    let snap = applyOpenTarget(emptyWorkbenchSnapshot(ids), agent(AGENT_X), ids);
+    const tab = getActiveTab(snap);
+    const agentPaneId = tab.focusedPaneId;
+    snap = applySplitFocused(snap, workspaceFile(), "right", ids);
+    const filePaneId = getActiveTab(snap).focusedPaneId;
+    const fileView = getActiveTab(snap).panes.get(filePaneId)!;
+
+    const result = applyViewDrop(
+      snap,
+      { kind: "sidebar", target: workspaceFile() },
+      { kind: "pane", tabId: tab.id, paneId: agentPaneId, zone: "replace" },
+      ids,
+    );
+
+    expect(result).not.toBeNull();
+    expect(countTargetViews(result!.snapshot, workspaceFile())).toBe(1);
+    const tabAfter = result!.snapshot.tabs.find((candidate) => candidate.id === tab.id)!;
+    expect(tabAfter.panes.get(filePaneId)).toBe(fileView);
+    expect(result!.paneId).toBe(filePaneId);
+  });
+
+  it("focuses the File View already in the Tab instead of opening a duplicate (ADR-0008)", () => {
+    const ids = makeIds();
+    let snap = applyOpenTarget(emptyWorkbenchSnapshot(ids), workspaceFile(), ids);
+    const tab = getActiveTab(snap);
+    const filePaneId = tab.focusedPaneId;
+    snap = applySplitFocused(snap, terminal("term-1"), "right", ids);
+    const terminalPaneId = getActiveTab(snap).focusedPaneId;
+    snap = applySetFocused(snap, terminalPaneId);
+
+    const result = applyViewDrop(
+      snap,
+      { kind: "sidebar", target: workspaceFile() },
+      { kind: "existingTab", tabId: tab.id },
+      ids,
+    );
+
+    expect(result).not.toBeNull();
+    expect(countTargetViews(result!.snapshot, workspaceFile())).toBe(1);
+    expect(result!.paneId).toBe(filePaneId);
+    expect(getActiveTab(result!.snapshot).focusedPaneId).toBe(filePaneId);
+  });
+
+  it("focuses the Git View already in the Tab when Review Changes is dropped again (ADR-0008)", () => {
+    const ids = makeIds();
+    let snap = applyOpenTarget(emptyWorkbenchSnapshot(ids), workspaceGit(), ids);
+    const tab = getActiveTab(snap);
+    const gitPaneId = tab.focusedPaneId;
+    snap = applyCreateTab(snap, ids);
+    const otherTabId = getActiveTab(snap).id;
+
+    const result = applyViewDrop(
+      snap,
+      { kind: "sidebar", target: workspaceGit() },
+      { kind: "existingTab", tabId: tab.id },
+      ids,
+    );
+
+    expect(result).not.toBeNull();
+    expect(countTargetViews(result!.snapshot, workspaceGit())).toBe(1);
+    expect(result!.tabId).toBe(tab.id);
+    expect(result!.paneId).toBe(gitPaneId);
+    expect(result!.snapshot.tabs.find((candidate) => candidate.id === otherTabId)).toBeDefined();
   });
 
   it("opens Sidebar content into an existing Tab and focuses it there", () => {
