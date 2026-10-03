@@ -18,10 +18,12 @@ import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as Option from "effect/Option";
 
 import * as ServerConfig from "../config.ts";
+import { subscribeChanges } from "../utils/subscribeBeforeSnapshot.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as AuthSessions from "../persistence/AuthSessions.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
@@ -398,6 +400,16 @@ export class SessionStore extends Context.Service<
       SessionCredentialInternalError
     >;
     readonly streamChanges: Stream.Stream<SessionCredentialChange>;
+    /**
+     * Subscribes to session changes before returning the stream, so callers can
+     * order the subscription against a snapshot read and no change can slip
+     * through the gap between them.
+     */
+    readonly subscribeChanges: Effect.Effect<
+      Stream.Stream<SessionCredentialChange>,
+      never,
+      Scope.Scope
+    >;
     readonly revoke: (
       sessionId: AuthSessionId,
     ) => Effect.Effect<boolean, SessionCredentialInternalError>;
@@ -1034,6 +1046,9 @@ export const make = Effect.gen(function* () {
     listActive,
     get streamChanges() {
       return Stream.fromPubSub(changesPubSub);
+    },
+    get subscribeChanges() {
+      return subscribeChanges(changesPubSub);
     },
     revoke,
     revokeAllExcept,

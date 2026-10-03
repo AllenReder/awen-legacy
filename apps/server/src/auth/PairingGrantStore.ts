@@ -15,9 +15,11 @@ import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "../config.ts";
+import { subscribeChanges } from "../utils/subscribeBeforeSnapshot.ts";
 import * as AuthPairingLinks from "../persistence/AuthPairingLinks.ts";
 
 export interface BootstrapGrant {
@@ -198,6 +200,16 @@ export class PairingGrantStore extends Context.Service<
       BootstrapCredentialInternalError
     >;
     readonly streamChanges: Stream.Stream<BootstrapCredentialChange>;
+    /**
+     * Subscribes to credential changes before returning the stream, so callers
+     * can order the subscription against a snapshot read and no change can slip
+     * through the gap between them.
+     */
+    readonly subscribeChanges: Effect.Effect<
+      Stream.Stream<BootstrapCredentialChange>,
+      never,
+      Scope.Scope
+    >;
     readonly revoke: (id: string) => Effect.Effect<boolean, BootstrapCredentialInternalError>;
     readonly consume: (
       credential: string,
@@ -524,6 +536,9 @@ export const make = Effect.gen(function* () {
     listActive,
     get streamChanges() {
       return Stream.fromPubSub(changesPubSub);
+    },
+    get subscribeChanges() {
+      return subscribeChanges(changesPubSub);
     },
     revoke,
     consume,

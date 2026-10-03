@@ -514,6 +514,9 @@ const buildAppUnderTest = (options?: {
     environmentTheme?: Partial<EnvironmentTheme.EnvironmentThemeService["Service"]>;
     providerRegistry?: Partial<ProviderRegistry.ProviderRegistry["Service"]>;
     usageLimitSources?: Partial<UsageLimitSources.UsageLimitSources["Service"]>;
+    environmentAuth?: (
+      service: EnvironmentAuth.EnvironmentAuth["Service"],
+    ) => EnvironmentAuth.EnvironmentAuth["Service"];
     providerService?: Partial<ProviderService.ProviderService["Service"]>;
     providerAuth?: Partial<ProviderAuthService["Service"]>;
     providerInstanceRegistry?: Partial<ProviderInstanceRegistry["Service"]>;
@@ -764,6 +767,7 @@ const buildAppUnderTest = (options?: {
               issues: [],
             }),
             streamChanges: Stream.empty,
+            subscribeChanges: Effect.succeed(Stream.empty),
             ...options?.layers?.keybindings,
           }),
           Layer.mock(EnvironmentTheme.EnvironmentThemeService)({
@@ -825,6 +829,7 @@ const buildAppUnderTest = (options?: {
           getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
           updateSettings: () => Effect.succeed(DEFAULT_SERVER_SETTINGS),
           streamChanges: Stream.empty,
+          subscribeChanges: Effect.succeed(Stream.empty),
           ...options?.layers?.serverSettings,
         }),
       ),
@@ -1184,19 +1189,16 @@ const buildAppUnderTest = (options?: {
         if (!subscribed) return grants;
         return {
           ...grants,
-          streamChanges: Stream.unwrap(
-            Effect.gen(function* () {
-              const changes = yield* Queue.unbounded<PairingGrantStore.BootstrapCredentialChange>();
-              yield* grants.streamChanges.pipe(
-                Stream.runForEach((change) => Queue.offer(changes, change)),
-                Effect.forkScoped({ startImmediately: true }),
-              );
-              yield* subscribed;
-              return Stream.fromQueue(changes);
-            }),
-          ),
+          subscribeChanges: Effect.gen(function* () {
+            const changes = yield* grants.subscribeChanges;
+            yield* subscribed;
+            return changes;
+          }),
         };
       }),
+      Layer.updateService(EnvironmentAuth.EnvironmentAuth, (auth) =>
+        options?.layers?.environmentAuth ? options.layers.environmentAuth(auth) : auth,
+      ),
       Layer.provideMerge(makeAuthTestLayer()),
       Layer.provideMerge(ServerSecretStore.layer),
       Layer.provide(workspaceAndProjectServicesLayer),
@@ -2768,6 +2770,56 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         (frame) => frames.push(frame),
       );
     }).pipe(Effect.scoped, Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect(
+    "routes websocket rpc subscribeAuthAccess streams a pairing link created during the snapshot",
+    () =>
+      Effect.gen(function* () {
+        const racedLinkId = yield* Ref.make<string | undefined>(undefined);
+        yield* buildAppUnderTest({
+          layers: {
+            environmentAuth: (auth) => ({
+              ...auth,
+              listPairingLinks: (input) =>
+                Effect.gen(function* () {
+                  // Read the snapshot value first, then publish a change: the
+                  // change must survive into the subscriber's live stream, which
+                  // only holds if the handler subscribed before reading.
+                  const links = yield* auth.listPairingLinks(input);
+                  const raced = yield* auth.createPairingLink({ label: "raced-pairing-link" });
+                  yield* Ref.set(racedLinkId, raced.id);
+                  return links;
+                }),
+            }),
+          },
+        });
+
+        const reader = yield* createBearerSession(defaultDesktopBootstrapToken, {
+          scope: "access:read",
+        });
+        const ticketResponse = yield* HttpClient.post("/api/auth/websocket-ticket", {
+          headers: { authorization: `Bearer ${reader.body.token ?? ""}` },
+        });
+        assert.equal(ticketResponse.status, 200);
+        const { ticket } = (yield* ticketResponse.json) as { ticket: string };
+        const wsUrl = `${yield* getWsServerUrl("/ws", { authenticated: false })}?wsTicket=${encodeURIComponent(ticket)}`;
+        const events = yield* Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            client[WS_METHODS.subscribeAuthAccess]({}).pipe(
+              Stream.takeUntil((event) => event.type === "pairingLinkUpserted"),
+              // Ends the stream so a lost update fails the assertion below
+              // instead of hanging the test.
+              Stream.timeout("15 seconds"),
+              Stream.runCollect,
+            ),
+          ),
+        );
+
+        const update = Array.from(events).find((event) => event.type === "pairingLinkUpserted");
+        assert.isDefined(update);
+        assert.equal(update?.payload.id, yield* Ref.get(racedLinkId));
+      }).pipe(Effect.scoped, Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
   );
 
   it.effect("lists and revokes pairing links for access management sessions", () =>
@@ -4462,8 +4514,19 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           skills: [],
         },
       ] as const;
+      const resolved: ResolvedKeybindingRule = {
+        command: "terminal.toggle",
+        shortcut: {
+          key: "k",
+          metaKey: false,
+          ctrlKey: true,
+          shiftKey: false,
+          altKey: false,
+          modKey: true,
+        },
+      };
       const changeEvent = {
-        keybindings: [],
+        keybindings: [resolved],
         issues: [],
       } as const;
 
@@ -4478,7 +4541,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               keybindings: [],
               issues: [],
             }),
-            streamChanges: Stream.succeed(changeEvent),
+            subscribeChanges: Effect.succeed(Stream.succeed(changeEvent)),
           },
           providerRegistry: {
             getProviders: Effect.succeed(providers),
@@ -4511,9 +4574,60 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.deepEqual(second, {
         version: 1,
         type: "keybindingsUpdated",
-        payload: { keybindings: [], issues: [] },
+        payload: { keybindings: [resolved], issues: [] },
       });
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect(
+    "routes websocket rpc subscribeServerConfig streams a settings change published while the snapshot loads",
+    () =>
+      Effect.gen(function* () {
+        const settingsChanges = yield* PubSub.unbounded<typeof DEFAULT_SERVER_SETTINGS>();
+        const updatedSettings = {
+          ...DEFAULT_SERVER_SETTINGS,
+          enableProviderUpdateChecks: !DEFAULT_SERVER_SETTINGS.enableProviderUpdateChecks,
+        };
+        yield* buildAppUnderTest({
+          layers: {
+            serverSettings: {
+              getSettings: Effect.gen(function* () {
+                // Model a settings write that lands while the handler reads the
+                // snapshot: it is published after the value is read, so a
+                // subscription established after the read would miss it.
+                yield* PubSub.publish(settingsChanges, updatedSettings);
+                return DEFAULT_SERVER_SETTINGS;
+              }),
+              streamChanges: Stream.fromPubSub(settingsChanges),
+              subscribeChanges: PubSub.subscribe(settingsChanges).pipe(
+                Effect.map(Stream.fromSubscription),
+              ),
+            },
+          },
+        });
+
+        const wsUrl = yield* getWsServerUrl("/ws");
+        const events = yield* Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            client[WS_METHODS.subscribeServerConfig]({}).pipe(
+              Stream.takeUntil((event) => event.type === "settingsUpdated"),
+              // Ends the stream so a lost update fails the assertion below
+              // instead of hanging the test.
+              Stream.timeout("15 seconds"),
+              Stream.runCollect,
+            ),
+          ),
+        );
+
+        const update = Array.from(events).find((event) => event.type === "settingsUpdated");
+        assert.isDefined(update);
+        if (update?.type === "settingsUpdated") {
+          assert.equal(
+            update.payload.settings.enableProviderUpdateChecks,
+            updatedSettings.enableProviderUpdateChecks,
+          );
+        }
+      }).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
   );
 
   it.effect("serves config on reconnect without starting provider probes", () =>
