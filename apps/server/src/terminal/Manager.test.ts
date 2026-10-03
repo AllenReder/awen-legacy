@@ -3071,6 +3071,64 @@ it.layer(
     }),
   );
 
+  it.effect("keeps the new generation's queued output when a stale drain resumes", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter, getEvents } = yield* createManager(5);
+      const releaseFirstDrain = yield* Deferred.make<void>();
+      const releaseSecondDrain = yield* Deferred.make<void>();
+      const listenerEntries = yield* Ref.make<ReadonlyArray<string>>([]);
+      const unsubscribe = yield* manager.subscribe((event) => {
+        if (event.type !== "output") return Effect.void;
+        const gate = event.data.includes("first")
+          ? releaseFirstDrain
+          : event.data.includes("second")
+            ? releaseSecondDrain
+            : null;
+        return Ref.update(listenerEntries, (current) => [...current, event.data]).pipe(
+          Effect.andThen(gate === null ? Effect.void : Deferred.await(gate)),
+        );
+      });
+      yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+
+      yield* manager.open(openInput());
+      const firstGeneration = ptyAdapter.processes[0];
+      expect(firstGeneration).toBeDefined();
+      if (!firstGeneration) return;
+
+      // Park the first generation's drain inside its event delivery...
+      firstGeneration.emitData("first\n");
+      yield* waitFor(
+        Effect.map(Ref.get(listenerEntries), (values) =>
+          values.some((value) => value.includes("first")),
+        ),
+      );
+
+      // ...replace it with a new generation, and park that drain too so its
+      // queue still holds output when the stale drain resumes.
+      yield* manager.restart(restartInput());
+      const secondGeneration = ptyAdapter.processes[1];
+      expect(secondGeneration).toBeDefined();
+      if (!secondGeneration) return;
+      secondGeneration.emitData("second\n");
+      yield* waitFor(
+        Effect.map(Ref.get(listenerEntries), (values) =>
+          values.some((value) => value.includes("second")),
+        ),
+      );
+      secondGeneration.emitData("third\n");
+
+      yield* Deferred.succeed(releaseFirstDrain, undefined);
+      yield* Deferred.succeed(releaseSecondDrain, undefined);
+
+      yield* waitFor(
+        Effect.map(getEvents, (events) =>
+          events.some((event) => event.type === "output" && event.data.includes("third")),
+        ),
+      );
+      expect((yield* manager.open(openInput())).history).toContain("third");
+    }),
+  );
+
   it.effect("scoped runtime shutdown stops active terminals cleanly", () =>
     Effect.gen(function* () {
       const scope = yield* Scope.make("sequential");

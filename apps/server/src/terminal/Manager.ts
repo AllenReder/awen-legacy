@@ -2569,9 +2569,9 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     while (true) {
       const action: DrainProcessEventAction = yield* Effect.sync(() => {
         if (session.pid !== expectedPid || !session.process || session.status !== "running") {
-          session.pendingProcessEvents = [];
-          session.pendingProcessEventIndex = 0;
-          session.processEventDrainRunning = false;
+          // The session now belongs to a newer PTY generation. Its queue and
+          // drain flag are that generation's, so a stale drain must only exit:
+          // clearing them here dropped the new generation's queued output.
           return { type: "idle" } as const;
         }
 
