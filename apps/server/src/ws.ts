@@ -2101,6 +2101,15 @@ const makeWsRpcLayer = (
             .refreshStatus(cwd)
             .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid);
 
+        // A workspace file write changes what `git status` reports, so the cached
+        // VCS status is stale the moment the write lands. Refresh it off the
+        // request path: the local half is enough for dirty markers and commit
+        // entry points, and it never touches the network.
+        const refreshVcsLocalStatus = (cwd: string) =>
+          vcsStatusBroadcaster
+            .refreshLocalStatus(cwd)
+            .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid);
+
         return WsRpcGroup.of({
           [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command) =>
             observeRpcEffect(
@@ -3286,6 +3295,7 @@ const makeWsRpcLayer = (
                       cause,
                     }),
                 ),
+                Effect.tap(() => refreshVcsLocalStatus(input.cwd)),
               ),
               { "rpc.aggregate": "workspace" },
             ),

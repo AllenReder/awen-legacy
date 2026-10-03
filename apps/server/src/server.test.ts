@@ -48,6 +48,7 @@ import {
   WsRpcGroup,
   EditorId,
   WorktreeSetupSnapshot,
+  type VcsStatusLocalResult,
   type WorktreeSetupStageId,
 } from "@awen/contracts";
 import { assert, it } from "@effect/vitest";
@@ -5377,6 +5378,55 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(response.relativePath, "nested/created.txt");
       const persisted = yield* fs.readFileString(path.join(workspaceDir, "nested", "created.txt"));
       assert.equal(persisted, "written-by-rpc");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("refreshes VCS status after websocket rpc projects.writeFile", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const workspaceDir = yield* fs.makeTempDirectoryScoped({ prefix: "awen-ws-project-write-" });
+      const refreshedCwd = yield* Deferred.make<string>();
+      const status: VcsStatusLocalResult = {
+        isRepo: true,
+        hasPrimaryRemote: false,
+        isDefaultRef: true,
+        refName: "main",
+        hasWorkingTreeChanges: true,
+        workingTree: { files: [], insertions: 0, deletions: 0 },
+      };
+
+      yield* buildAppUnderTest({
+        layers: {
+          vcsStatusBroadcaster: {
+            refreshLocalStatus: (cwd) =>
+              Deferred.succeed(refreshedCwd, cwd).pipe(Effect.as(status)),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.projectsWriteFile]({
+            cwd: workspaceDir,
+            relativePath: "nested/refreshed.txt",
+            contents: "written-by-rpc",
+          }),
+        ),
+      );
+
+      // A saved file changes the working tree, so the cached VCS status has to go.
+      // The refresh runs off the request path; yield until its fiber has landed.
+      const observedCwd = yield* Effect.gen(function* () {
+        for (let attempt = 0; attempt < 200; attempt += 1) {
+          if (yield* Deferred.isDone(refreshedCwd)) {
+            return yield* Deferred.await(refreshedCwd);
+          }
+          yield* Effect.yieldNow;
+        }
+        return null;
+      });
+      assert.equal(observedCwd, workspaceDir);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
